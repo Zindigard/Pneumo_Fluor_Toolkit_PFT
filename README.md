@@ -16,9 +16,10 @@ Core goals:
 
 ## Repository structure
 - `src/PFT/` — installable Python package (core logic + napari integration)
-- `tests/` — unit tests (pytest)
-- `models/` — local model checkpoints (ignored by git)
-- `results/` — local outputs (ignored by git)
+- `tests/` — tests if file gives correct version of output
+- `models/`,`results/` — local model and outputs (ignored by git, will be added as final versions of model(maybe))
+- `scripts` - small scripts that allow visualization of data and manz other options(in future just for python checking)
+
 
 ## Installation (dev)
 Create/activate your environment, then install in editable mode:
