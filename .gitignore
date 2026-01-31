@@ -1,0 +1,23 @@
+# local outputs
+models/
+results/
+
+# build / install 
+*.egg-info/
+build/
+dist/
+
+# caches
+__pycache__/
+.pytest_cache/
+*.pyc
+
+#  formats
+*.zarr
+*.czi
+*.tif
+*.tiff
+
+# venv
+.venv/
+venv/
