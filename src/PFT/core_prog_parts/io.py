@@ -194,3 +194,38 @@ def load_czi_metadata_only(path: str | Path) -> CziMeta:
         channel_names=channel_names,
         raw_xml_available=xml_ok,
     )
+
+
+
+def read_czi_array_raw(path: str | Path) -> tuple[np.ndarray, str | None]:
+    """Read CZI pixels WITHOUT squeezing and return (arr_raw, axes_string).
+
+    This is useful if you want to export OME-Zarr with perfect axis mapping.
+    Your existing `read_czi_array_squeezed` stays untouched.
+    """
+    path = Path(path)
+    with czifile.CziFile(str(path)) as czi:
+        arr = czi.asarray()
+        axes = getattr(czi, "axes", None)
+    return arr, axes
+
+
+def squeeze_with_axes(arr: np.ndarray, axes: str | None) -> tuple[np.ndarray, str | None]:
+    """Squeeze singleton dims and drop corresponding axis letters.
+
+    If `axes` is None or len(axes)!=arr.ndim, falls back to np.squeeze and returns axes unchanged.
+    """
+    if axes is None or len(axes) != arr.ndim:
+        return np.squeeze(arr), axes
+
+    keep_slices: list[slice | int] = []
+    keep_axes: list[str] = []
+    for letter, size in zip(axes, arr.shape):
+        if size == 1:
+            keep_slices.append(0)
+        else:
+            keep_slices.append(slice(None))
+            keep_axes.append(letter)
+
+    arr2 = arr[tuple(keep_slices)]
+    return arr2, "".join(keep_axes)

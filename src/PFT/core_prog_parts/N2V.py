@@ -25,7 +25,7 @@ except Exception as _n2v_err:
     N2V = _n2v_missing
     N2VConfig = _n2v_missing
 
-PATCH_SIZE       = (64, 64)
+PATCH_SIZE       = (64, 64) 
 N_PATCHES        = 512
 VAL_SPLIT        = 0.10
 TRAIN_EPOCHS     = 20
