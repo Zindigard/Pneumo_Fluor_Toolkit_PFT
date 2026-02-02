@@ -176,7 +176,7 @@ def main() -> None:
     ap.add_argument("--scalebar_um", type=float, default=5.0)
     args = ap.parse_args()
 
-    # interactive if no dataset 
+    # interactive  if no dataset 
     if args.dataset is None:
         dataset = ["2d_time", "2d_wga_dapi", "3d"][_prompt_choice("\nSelect dataset:", ["2d_time", "2d_wga_dapi", "3d"], 0)]
         folder = _choose_folder(dataset)
@@ -205,7 +205,7 @@ def main() -> None:
                     stop_on_error=stop_on_error,
                 )
         else:
-            # 3D metadata only 
+            # 3D metadata only
             files = list_czi_files(folder)
             f = _choose_file_interactive(files)
             meta = load_czi_metadata_only(f)
@@ -216,7 +216,7 @@ def main() -> None:
 
         return
 
-    # choose
+  
     dataset = args.dataset
     folder = Path(args.folder) if args.folder else (
         PATHS.data_2d_time if dataset == "2d_time" else

@@ -20,12 +20,14 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # metadata.txt
-    txt = "\n".join([
-        "=== CZI META (dataclass str) ===",
-        str(meta),
-        "",
-        f"axes_label_saved: {_safe_axes_label(meta)}",
-    ])
+    txt = "\n".join(
+        [
+            "=== CZI META (dataclass str) ===",
+            str(meta),
+            "",
+            f"axes_label_saved: {_safe_axes_label(meta)}",
+        ]
+    )
     (out_dir / "metadata.txt").write_text(txt, encoding="utf-8")
 
     # metadata.xml (raw)
@@ -35,50 +37,31 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
     else:
         (out_dir / "metadata.xml").write_text("No XML metadata available.\n", encoding="utf-8")
 
-""""
-def save_ome_zarr(out_zarr_dir: Path, arr: np.ndarray, meta: CziMeta) -> None:
-   
-    out_zarr_dir.mkdir(parents=True, exist_ok=True)
-
-    # Local import keeps package usable without ome-zarr installed
-    from ome_zarr.io import parse_url
-    from ome_zarr.writer import write_image
-
-    axes_label = _safe_axes_label(meta)
-
-    store = parse_url(str(out_zarr_dir), mode="w").store
-    root = store.root()
-
-    write_image(image=arr, group=root, axes=axes_label)
-
-    # Put scale into attrs (viewers can use it)
-    root.attrs["pixel_size_um"] = {
-        "x": meta.pixel_size_um_x,
-        "y": meta.pixel_size_um_y,
-        "z": meta.pixel_size_um_z,
-    }
-    root.attrs["source_path"] = meta.source_path
-    root.attrs["channel_names"] = meta.channel_names
-"""
 
 def export_2d(
     arr: np.ndarray,
     meta: CziMeta,
     dataset_name: str,
-    preview_mode: str,   # "time_blue" or "wga_dapi"
+    preview_mode: str,  # "time_blue" or "wga_dapi"
     out_base: Path | None = None,
     visualize: bool = False,
     save_preview_png: bool = True,
     scalebar_um: float = 5.0,
     wga_ch: int = 0,
     dapi_ch: int = 1,
+    *,
+    save_omezarr: bool = True,
+    overwrite_omezarr: bool = True,
 ) -> Path:
     """
     Export 2D:
         metadata.txt
         metadata.xml
-        image.ome.zarr/
         preview.png
+        image.ome.zarr
+    Notes
+    -----
+    - If `save_omezarr=True` - write OME-Zarr  to the outputs.
     """
     if out_base is None:
         out_base = _results_img_dir()
@@ -88,9 +71,25 @@ def export_2d(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     write_metadata_txt_xml(out_dir, meta)
-    #save_ome_zarr(out_dir / "image.ome.zarr", arr, meta)
 
-    # Create RGB 
+    if save_omezarr:
+        try:
+            # local import: keeps package usable without ome-zarr installed
+            from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
+
+            save_ome_zarr_next_to_outputs(
+                out_dir=out_dir,
+                arr=arr,
+                meta=meta,
+                overwrite=overwrite_omezarr,
+            )
+        except Exception as e:
+            (out_dir / "omezarr_error.txt").write_text(
+                f"{type(e).__name__}: {e}\n",
+                encoding="utf-8",
+            )
+
+    # Create RGB
     title = f"{dataset_name} | {Path(meta.source_path).name}"
     if preview_mode == "wga_dapi":
         rgb = visualize_2d.rgb_wga_dapi(arr, wga_ch=wga_ch, dapi_ch=dapi_ch)
@@ -109,6 +108,7 @@ def export_2d(
     if visualize:
         visualize_2d.preview_rgb(rgb, title=title, meta=meta, scalebar_um=scalebar_um)
         import matplotlib.pyplot as plt
+
         plt.show()
 
     return out_dir
