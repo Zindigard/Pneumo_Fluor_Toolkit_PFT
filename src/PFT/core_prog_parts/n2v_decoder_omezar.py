@@ -25,14 +25,8 @@ def load_ome_zarr(
     level: int = 0,
     as_numpy: bool = False,
 ) -> Tuple[Any, str]:
-    """Load OME-Zarr and return (array, axes).
-
-    Returns
-    -------
-    data:
-        Dask array when available, otherwise array-like.
-    axes:
-        String such as "cyx", "tcyx", "czyx"
+    """
+    Load OME-Zarr and return (array, axes).
     """
     zarr_dir = Path(zarr_dir)
 
@@ -92,17 +86,9 @@ def ome_zarr_to_n2v_2d_stack(
 ) -> np.ndarray:
     """Convert OME-Zarr into a NumPy stack shaped (N, Y, X, 1) for 2D N2V.
 
-    Selection rules
-    --------------
     - If 'c' exists -> pick `channel`
     - If `time` is not None and 't' exists -> pick that time index
     - If `z` is not None and 'z' exists -> pick that z index
-    - Any remaining leading dims (e.g. time or z) are flattened into N
-
-    normalize
-    ---------
-    - None: no normalization
-    - "percentile": per-frame 1..99.8 percentile normalization to [0,1]
 
     Returns
     -------
