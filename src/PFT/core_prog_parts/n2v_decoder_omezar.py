@@ -1,21 +1,6 @@
 from __future__ import annotations
-
-"""Decode OME-Zarr into arrays that are convenient for Noise2Void (N2V).
-
-This module is intentionally *read/convert only*.
-
-This decoder provides:
-- `load_ome_zarr(...)` -> (array, axes)
-- `ome_zarr_to_n2v_2d_stack(...)` -> numpy array shaped (N, Y, X, 1)
-
-Notes
------
-- OME-Zarr can be lazy (Dask).Should be implemented. 
-"""
-
 from pathlib import Path
 from typing import Any, Tuple
-
 import numpy as np
 
 

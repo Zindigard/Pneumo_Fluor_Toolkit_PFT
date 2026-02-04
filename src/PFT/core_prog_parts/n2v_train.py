@@ -11,6 +11,10 @@ TRAIN_DIR = BASE_DATA / "train"
 VAL_DIR = BASE_DATA / "validation"
 MODELS_DIR = REPO_ROOT / "models"
 
+def load_stack(file_list):
+    return np.concatenate([ome_zarr_to_n2v_2d_stack(f) for f in file_list], axis=0)
+
+
 def run_multifile_training(model_name="PFT_N2V_2D_v1", epochs=25):
     all_zarrs = [f for f in BASE_DATA.glob("*/image.ome.zarr") 
                  if "train" not in str(f) and "validation" not in str(f)]
@@ -27,9 +31,6 @@ def run_multifile_training(model_name="PFT_N2V_2D_v1", epochs=25):
 
     train_files = list(TRAIN_DIR.glob("*/image.ome.zarr"))
     val_files = list(VAL_DIR.glob("*/image.ome.zarr"))
-
-    def load_stack(file_list):
-        return np.concatenate([ome_zarr_to_n2v_2d_stack(f) for f in file_list], axis=0)
 
     print(f"Loading {len(train_files)} training and {len(val_files)} validation stacks...")
     X = load_stack(train_files)
