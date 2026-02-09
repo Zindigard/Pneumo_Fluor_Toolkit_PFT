@@ -17,7 +17,7 @@ MODEL_NAMES = {
 _MODEL_CACHE: Dict[Tuple[str, str], N2V] = {}
 
 
-def _project_root_from_this_file() -> Path:
+def project_root_from_this_file() -> Path:
     """
     File location:
      
@@ -25,16 +25,16 @@ def _project_root_from_this_file() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _models_dir() -> Path:
-    return _project_root_from_this_file() / "models"
+def models_dir() -> Path:
+    return project_root_from_this_file() / "models"
 
 
-def _get_model(dataset: str, key: str) -> N2V:
+def get_model(dataset: str, key: str) -> N2V:
     cache_key = (dataset, key)
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
 
-    model_dir = _models_dir()
+    model_dir = models_dir()
     model_name = MODEL_NAMES[(dataset, key)]
 
     # Load existing model from disk
@@ -42,8 +42,22 @@ def _get_model(dataset: str, key: str) -> N2V:
     _MODEL_CACHE[cache_key] = model
     return model
 
+def percentile_norm01(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
+    """Percentile normalize to [0,1] float32 (robust for uint16 microscopy images)."""
+    x = np.asarray(x)
+    if x.size == 0:
+        return x.astype(np.float32, copy=False)
+    lo, hi = np.percentile(x, [p_low, p_high])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        # Fallback: avoid division by zero / NaNs
+        x0 = x.astype(np.float32, copy=False)
+        m = float(np.max(x0)) if x0.size else 0.0
+        return (x0 / m) if m > 0 else np.zeros_like(x0, dtype=np.float32)
+    x0 = x.astype(np.float32, copy=False)
+    x0 = (x0 - lo) / (hi - lo)
+    return np.clip(x0, 0.0, 1.0)
 
-def _predict_single_channel(img_yx: np.ndarray, model: N2V) -> np.ndarray:
+def predict_single_channel(img_yx: np.ndarray, model: N2V) -> np.ndarray:
     """
     img_yx: (Y, X) or (Y, X, 1)
     returns: (Y, X)
@@ -84,8 +98,9 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
     # (Y,X) -> 2d_time single channel
     if img.ndim == 2:
         dataset = "2d_time"
-        model = _get_model(dataset, "blue")
-        den = _predict_single_channel(img, model)     # (Y,X)
+        model = get_model(dataset, "blue")
+        img_n = percentile_norm01(img)
+        den = predict_single_channel(img_n, model)     # (Y,X)
         return den[..., np.newaxis]                   # (Y,X,1)
 
     # (Y,X,C)
@@ -93,18 +108,22 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
         # (Y,X,1)
         if img.shape[-1] == 1:
             dataset = "2d_time"
-            model = _get_model(dataset, "blue")
-            den = _predict_single_channel(img[..., 0], model)
+            model = get_model(dataset, "blue")
+            ch0 = percentile_norm01(img[..., 0])
+            den = predict_single_channel(ch0, model)
             return den[..., np.newaxis]               # (Y,X,1)
 
         # (Y,X,2) -> 2d_wga_dapi
         if img.shape[-1] == 2:
             dataset = "2d_wga_dapi"
-            model_dapi = _get_model(dataset, "blue_DAPI")
-            model_wga = _get_model(dataset, "green_WGA")
+            model_dapi = get_model(dataset, "blue_DAPI")
+            model_wga = get_model(dataset, "green_WGA")
 
-            den0 = _predict_single_channel(img[..., 0], model_dapi)  # DAPI
-            den1 = _predict_single_channel(img[..., 1], model_wga)   # WGA
+            ch0 = percentile_norm01(img[..., 0])
+            ch1 = percentile_norm01(img[..., 1])
+
+            den0 = predict_single_channel(ch0, model_dapi)  # DAPI
+            den1 = predict_single_channel(ch1, model_wga)   # WGA
             return np.stack([den0, den1], axis=-1)                   # (Y,X,2)
 
     raise ValueError(
