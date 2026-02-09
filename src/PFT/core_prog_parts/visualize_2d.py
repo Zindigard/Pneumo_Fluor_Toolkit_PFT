@@ -84,7 +84,7 @@ def save_rgb_preview_png(
     out_png: Path,
     title: str,
     meta: CziMeta | None = None,
-    scalebar_um: float = 5.0,
+    scalebar_um: float = 4.0,
     dpi: int = 200,
 ) -> None:
     """
@@ -108,7 +108,7 @@ def preview_rgb(
     rgb01: np.ndarray,
     title: str,
     meta: CziMeta | None = None,
-    scalebar_um: float = 5.0,
+    scalebar_um: float = 4.0,
 ) -> None:
     """Show RGB with optional scalebar."""
     fig, ax = _make_figure_black()

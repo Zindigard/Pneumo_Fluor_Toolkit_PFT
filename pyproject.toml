@@ -24,9 +24,30 @@ addopts = "-q"
 io = [
   "czifile",
   "matplotlib",
+  "imageio>=2.31",
+  "scikit-image>=0.22",
   "ome-zarr>=0.12",
   "zarr>=3",
   "numcodecs",
   "dask",
 ]
-dev = ["pytest"]
+
+ml = [
+  "tensorflow",     # heavy -> keep optional
+  "csbdeep",
+  "n2v",
+]
+
+napari = [
+  "napari",
+]
+
+cellpose = [
+  "cellpose",
+]
+
+dev = [
+  "pytest",
+  "ruff",
+  "black",
+]

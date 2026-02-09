@@ -15,7 +15,7 @@ class CziMeta:
     axes: str | None
     header_shape: tuple[int, ...] | None
 
-    # array info (only available when  load pixels)
+    # array info (only available when load pixels)
     squeezed_shape: tuple[int, ...] | None
     squeezed_ndim: int | None
     dtype: str | None
@@ -27,10 +27,9 @@ class CziMeta:
     pixel_size_um_y: float | None
     pixel_size_um_z: float | None
 
-    # Channel names from XML (if available)
+    # Channel names from XML
     channel_names: list[str] | None
 
-    # Whether raw XML metadata was available from czifile
     raw_xml_available: bool
 
 

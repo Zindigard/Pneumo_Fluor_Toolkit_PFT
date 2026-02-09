@@ -66,7 +66,7 @@ def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
                 if non_spatial == 1:
                     return "cyx"
                 if non_spatial == 2:
-                    # guess: CZYX (common for z-stacks) vs TCYX,if second dim looks like Z (not huge), choose CZYX
+                    # CZYX (common for z-stacks) vs TCYX,if second dim looks like Z (not huge), choose CZYX
                     return "czyx" if arr.shape[1] <= 512 else "tcyx"
                 if non_spatial == 3:
                     return "tczyx"

@@ -74,7 +74,6 @@ def export_2d(
 
     if save_omezarr:
         try:
-            # local import: keeps package usable without ome-zarr installed
             from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
 
             save_ome_zarr_next_to_outputs(

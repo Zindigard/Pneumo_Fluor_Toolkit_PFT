@@ -16,7 +16,7 @@ OUT_DIR = BASE_DIR / "zoomed"
 
 
 def sanitize_for_windows(name: str) -> str:
-    # Remove characters in windows paths
+    # Remove characters
     return re.sub(r'[<>:"/\\|?*]', "_", name).strip()
 
 
