@@ -1,0 +1,7 @@
+name: PFT
+display_name: PFT Toolkit
+contributions:
+  readers:
+    - command: PFT.napari.reader:napari_get_reader
+      filename_patterns: ["*.czi"]
+      accepts_directories: false

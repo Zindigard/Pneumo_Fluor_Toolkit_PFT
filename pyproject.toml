@@ -10,6 +10,9 @@ dependencies = [
   "numpy",
 ]
 
+[project.entry-points."napari.manifest"]
+PFT = "PFT.napari:napari.yaml"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
@@ -26,20 +29,20 @@ io = [
   "matplotlib",
   "imageio>=2.31",
   "scikit-image>=0.22",
-  "ome-zarr>=0.12",
-  "zarr>=3",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
   "numcodecs",
   "dask",
 ]
 
 ml = [
-  "tensorflow",     # heavy -> keep optional
+  "tensorflow",
   "csbdeep",
   "n2v",
 ]
 
 napari = [
-  "napari",
+  "napari[all]>=0.6",
 ]
 
 cellpose = [
