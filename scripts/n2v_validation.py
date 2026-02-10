@@ -11,7 +11,7 @@ import matplotlib.font_manager as fm
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from skimage.metrics import structural_similarity as ssim
 from PFT.core_prog_parts.n2v_decoder_omezar import ome_zarr_to_n2v_2d_stack
-from PFT.core_prog_parts.n2v_denoising import denoise_2d_for_cellpose
+from PFT.core_prog_parts.n2v_denoising import denoise_2d_for_cellpose, ome_zarr_to_n2v_2d_stack, normalize_yxc_for_n2v
 from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
 
 
@@ -225,14 +225,14 @@ def load_raw_yxc(sample_zarr_dir: Path, dataset: str) -> np.ndarray:
         ch1 = WGA  (green)= channel 1 in OME-Zarr
     """
     if dataset == "2d_time":
-        raw_stack = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=0, normalize="percentile")  # (N,Y,X,1)
+        raw_stack = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=0, normalize=None)  # (N,Y,X,1)
         raw_yx = raw_stack[0, ..., 0]  # first frame
         return raw_yx[..., None]       # (Y,X,1)
 
-    raw_dapi_stack = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=0, normalize="percentile")
-    raw_wga_stack = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=1, normalize="percentile")
+    raw_dapi_stack = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=0, normalize=None)
+    raw_wga_stack  = ome_zarr_to_n2v_2d_stack(sample_zarr_dir, channel=1, normalize=None)
     raw_dapi = raw_dapi_stack[0, ..., 0]
-    raw_wga = raw_wga_stack[0, ..., 0]
+    raw_wga  = raw_wga_stack[0, ..., 0]
     return np.stack([raw_dapi, raw_wga], axis=-1)  # (Y,X,2) (DAPI, WGA)
 
 
@@ -293,28 +293,32 @@ def main() -> None:
         lines.append("sample\tsplit\tSSIM\tMSE\tMAE\n")
 
     for i, (_split_dirname, split_label, sample_zarr_dir) in enumerate(jobs, 1):
-        sample_name = sample_zarr_dir.name  
+        sample_name = sample_zarr_dir.name
         out_dir = out_img_base / dataset / split_label / sample_name
         out_png = out_dir / "denoised_rgb.png"
         out_zarr = out_dir / "image.ome.zarr"
         out_metrics = out_dir / "metrics.txt"
 
-        # Skip 
+        # Skip
         if out_png.exists() and out_zarr.exists() and out_metrics.exists():
             print(f"[{i}/{total}] SKIP {split_label} {sample_name}")
             continue
 
         print(f"[{i}/{total}] {split_label} {sample_name}")
 
-        # Load raw (YXC), denoise (YXC)
+        # Load no normalization
         raw = load_raw_yxc(sample_zarr_dir, dataset=dataset)
+
+        # Denoise 
         den = denoise_2d_for_cellpose(raw)
 
-        # Save denoised outputs
+        # Compute metrics against the normalized input scale the model saw
+        raw_norm = normalize_yxc_for_n2v(raw)
+        s_val, mse_val, mae_val = compute_metrics(raw_norm, den)
+
+        # Save
         save_rgb_png_with_scalebar(out_png, den, sample_zarr_dir)
         save_denoised_omezarr(out_dir, den, dataset=dataset, source_path=str(sample_zarr_dir))
-
-        s_val, mse_val, mae_val = compute_metrics(raw, den)
 
         ensure_dir(out_dir)
         with open(out_metrics, "w", encoding="utf-8") as f:

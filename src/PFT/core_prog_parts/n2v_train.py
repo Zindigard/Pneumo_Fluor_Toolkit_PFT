@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Iterable
 import numpy as np
 if not hasattr(np, "product"):
-    np.product = np.prod  # type: ignore[attr-defined]
+    np.product = np.prod  # ignore[attr-defined]
 from tensorflow import keras
 from n2v.models import N2VConfig, N2V
 import tensorflow as tf

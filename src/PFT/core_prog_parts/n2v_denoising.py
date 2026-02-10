@@ -43,19 +43,37 @@ def get_model(dataset: str, key: str) -> N2V:
     return model
 
 def percentile_norm01(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
-    """Percentile normalize to [0,1] float32 (robust for uint16 microscopy images)."""
+    """Percentile normalize to [0,1] float32."""
     x = np.asarray(x)
     if x.size == 0:
         return x.astype(np.float32, copy=False)
+
     lo, hi = np.percentile(x, [p_low, p_high])
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        # Fallback: avoid division by zero / NaNs
-        x0 = x.astype(np.float32, copy=False)
-        m = float(np.max(x0)) if x0.size else 0.0
-        return (x0 / m) if m > 0 else np.zeros_like(x0, dtype=np.float32)
-    x0 = x.astype(np.float32, copy=False)
-    x0 = (x0 - lo) / (hi - lo)
-    return np.clip(x0, 0.0, 1.0)
+        # Fallback: min/max
+        lo = float(np.min(x))
+        hi = float(np.max(x))
+        if hi <= lo:
+            return np.zeros_like(x, dtype=np.float32)
+
+    y = (x.astype(np.float32) - float(lo)) / (float(hi) - float(lo))
+    return np.clip(y, 0.0, 1.0)
+
+
+def normalize_yxc_for_n2v(img_yxc: np.ndarray) -> np.ndarray:
+    """
+    percentile per channel -> float32 in [0,1].
+    """
+    img_yxc = np.asarray(img_yxc)
+    if img_yxc.ndim != 3:
+        raise ValueError(f"Expected YXC image, got shape {img_yxc.shape}")
+
+    c = img_yxc.shape[-1]
+    out = np.empty(img_yxc.shape, dtype=np.float32)
+    for ch in range(c):
+        out[..., ch] = percentile_norm01(img_yxc[..., ch])
+    return out
+
 
 def predict_single_channel(img_yx: np.ndarray, model: N2V) -> np.ndarray:
     """
@@ -63,31 +81,24 @@ def predict_single_channel(img_yx: np.ndarray, model: N2V) -> np.ndarray:
     returns: (Y, X)
     """
     if img_yx.ndim == 2:
-        x = img_yx[..., np.newaxis] 
+        x = img_yx[..., np.newaxis]
     elif img_yx.ndim == 3 and img_yx.shape[-1] == 1:
         x = img_yx
     else:
         raise ValueError(f"Expected single-channel (Y,X) or (Y,X,1), got {img_yx.shape}")
 
-    y = model.predict(x, axes="YXC")  # returns (Y,X,1)
-    y = np.asarray(y)
-    if y.ndim == 3 and y.shape[-1] == 1:
-        y = y[..., 0]
-    elif y.ndim == 2:
-        pass
-    else:
-        raise ValueError(f"Unexpected prediction shape {y.shape} from N2V model.")
-    return y
+    y = model.predict(x, axes="YXC")  # (Y,X,1)
+    return np.asarray(y[..., 0], dtype=np.float32)  # (Y,X)
 
 
 def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
     """
-    Denoise 2D datasets and  return YXC.
+    Denoise 2D datasets and return YXC.
 
     Accepted input:
       - (Y,X)
       - (Y,X,1)
-      - (Y,X,2)  with channel order:
+      - (Y,X,2)
 
     Output:
       - (Y,X,1) for single-channel input
@@ -99,9 +110,10 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
     if img.ndim == 2:
         dataset = "2d_time"
         model = get_model(dataset, "blue")
+
         img_n = percentile_norm01(img)
         den = predict_single_channel(img_n, model)     # (Y,X)
-        return den[..., np.newaxis]                   # (Y,X,1)
+        return den[..., np.newaxis]                    # (Y,X,1)
 
     # (Y,X,C)
     if img.ndim == 3:
@@ -109,9 +121,10 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
         if img.shape[-1] == 1:
             dataset = "2d_time"
             model = get_model(dataset, "blue")
+
             ch0 = percentile_norm01(img[..., 0])
             den = predict_single_channel(ch0, model)
-            return den[..., np.newaxis]               # (Y,X,1)
+            return den[..., np.newaxis]                # (Y,X,1)
 
         # (Y,X,2) -> 2d_wga_dapi
         if img.shape[-1] == 2:
@@ -124,7 +137,7 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
 
             den0 = predict_single_channel(ch0, model_dapi)  # DAPI
             den1 = predict_single_channel(ch1, model_wga)   # WGA
-            return np.stack([den0, den1], axis=-1)                   # (Y,X,2)
+            return np.stack([den0, den1], axis=-1)           # (Y,X,2)
 
     raise ValueError(
         f"Unsupported input shape {img.shape}. Expected (Y,X), (Y,X,1) or (Y,X,2)."
