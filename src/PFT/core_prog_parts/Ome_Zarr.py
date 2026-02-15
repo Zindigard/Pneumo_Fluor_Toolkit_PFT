@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -7,9 +8,10 @@ import numpy as np
 
 try:
     from PFT.core_prog_parts.io import CziMeta
-except Exception:  
-    class CziMeta: 
+except Exception:
+    class CziMeta:
         pass
+
 
 _CANONICAL_TYPES = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
 
@@ -47,7 +49,6 @@ def _scale_vector_from_meta_um(axes: str, meta: CziMeta) -> list[float]:
 def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
     """
     Infer an axes string for squeezed arrays.
-
     """
     if arr.ndim == 2:
         return "yx"
@@ -66,7 +67,7 @@ def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
                 if non_spatial == 1:
                     return "cyx"
                 if non_spatial == 2:
-                    # CZYX (common for z-stacks) vs TCYX,if second dim looks like Z (not huge), choose CZYX
+                    # CZYX (common for z-stacks) vs TCYX
                     return "czyx" if arr.shape[1] <= 512 else "tcyx"
                 if non_spatial == 3:
                     return "tczyx"
@@ -79,7 +80,7 @@ def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
         if non_spatial == 3:
             return "tczyx"
 
-    # no channel 
+    # no channel
     if non_spatial == 1:
         return "zyx"
     if non_spatial == 2:
@@ -97,27 +98,7 @@ def save_ome_zarr(
     overwrite: bool = True,
     chunks: tuple[int, ...] | None = None,
 ) -> Path:
-    """Write a single-scale OME-Zarr.
-
-    Param
-    ----------
-    out_zarr_dir:
-        Directory ending with `.ome.zarr` (it is a folder store).
-    arr:
-        Numpy array.
-    axes:
-        Axes string matching arr.ndim. Prefer subset of: t,c,z,y,x.
-    meta:
-        Optional CziMeta (adds pixel sizes + channel names into attrs).
-    overwrite:
-        If True, delete existing folder before writing.
-    chunks:
-        Optional zarr chunk shape.
-
-    Returns
-    -------
-    Path to the written `.ome.zarr` folder.
-    """
+    """Write a single-scale OME-Zarr."""
     out_zarr_dir = Path(out_zarr_dir)
 
     if len(axes) != arr.ndim:
@@ -152,13 +133,12 @@ def save_ome_zarr(
         axes=_axes_dicts(axes),
         coordinate_transformations=coord_tfs,
         chunks=chunks,
-        scaler=None, 
+        scaler=None,
     )
 
     if meta is not None:
-        # store extra attrs
         try:
-            root.attrs["pft_meta"] = asdict(meta)  
+            root.attrs["pft_meta"] = asdict(meta)
         except Exception:
             root.attrs["pft_meta"] = {"source_path": getattr(meta, "source_path", "")}
 
