@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
 
 import numpy as np
 
@@ -10,6 +11,8 @@ try:
     import tifffile as tiff
 except ImportError as e:
     raise ImportError("Missing dependency: tifffile. Install with: pip install tifffile") from e
+
+""" Helper functions for PSF checks and comparisons """
 
 
 def md5_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -93,61 +96,63 @@ def compare_arrays(a: np.ndarray, b: np.ndarray) -> Dict[str, Any]:
     return out
 
 
-def choose_files(psf_dir: Path) -> Tuple[Path, Path]:
-    theo = psf_dir / "theoretical_psf.tif"
-    if not theo.exists():
-        raise FileNotFoundError(f"Missing: {theo}")
-
-    ij = psf_dir / "PSF BW.tif"
-    if ij.exists():
-        return theo, ij
-
-    candidates = sorted(psf_dir.glob("PSF*.tif"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not candidates:
-        raise FileNotFoundError(
-            f"Missing ImageJ PSF file. Expected 'PSF BW.tif' or any 'PSF*.tif' in {psf_dir}"
-        )
-    return theo, candidates[0]
-
-
 def find_project_root(start: Path) -> Path:
-    # Walk up until we find a folder that looks like your repo root
-    # (adjust markers if needed)
     markers = ["pyproject.toml", "setup.cfg", "src", ".git"]
     p = start.resolve()
     for parent in [p] + list(p.parents):
         if any((parent / m).exists() for m in markers):
             return parent
-    # fallback: scripts/.. = repo root
     return start.resolve().parent.parent
+
+
+def _resolve_psf_path(project_root: Path, p: str) -> Path:
+    """Accept either absolute path, or filename relative to <project_root>/results/psf."""
+    path = Path(p)
+    if path.exists():
+        return path
+    candidate = project_root / "results" / "psf" / "generated" / p
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"Could not resolve PSF path: '{p}'. Tried '{path}' and '{candidate}'.")
 
 
 def main() -> int:
     script_path = Path(__file__).resolve()
     project_root = find_project_root(script_path)
 
-    psf_dir = project_root / "results" / "psf"
-    psf_dir.mkdir(parents=True, exist_ok=True)
+    default_a = "PSF BW Blue.tif"
+    default_b = "psf_BW_TV1-T1-SR_Lambda405nm.tif"
 
-    theo_path, ij_path = choose_files(psf_dir)
+    ap = argparse.ArgumentParser(
+        description=(
+            "Compare two PSF TIFFs (metadata + per-pixel stats if shapes match).\n"
+            "Defaults: BW Blue (ImageJ) vs generated BW TV1-T1-SR Lambda405nm."
+        )
+    )
+    ap.add_argument("--a", default=default_a, help=f"First PSF tif (abs path or filename in results/psf). Default: {default_a}")
+    ap.add_argument("--b", default=default_b, help=f"Second PSF tif (abs path or filename in results/psf). Default: {default_b}")
+    ap.add_argument("--out", default=None, help="Output report txt path (default: results/psf/psf_compare_report_custom.txt)")
+    args = ap.parse_args()
 
-    theo_info = read_tiff_info(theo_path)
-    ij_info = read_tiff_info(ij_path)
+    a_path = _resolve_psf_path(project_root, args.a)
+    b_path = _resolve_psf_path(project_root, args.b)
 
-    theo_arr = tiff.imread(str(theo_path))
-    ij_arr = tiff.imread(str(ij_path))
-    comp = compare_arrays(theo_arr, ij_arr)
+    a_info = read_tiff_info(a_path)
+    b_info = read_tiff_info(b_path)
+
+    a_arr = tiff.imread(str(a_path))
+    b_arr = tiff.imread(str(b_path))
+    comp = compare_arrays(a_arr, b_arr)
 
     lines = []
-    lines.append("PSF TIFF COMPARISON REPORT")
+    lines.append("PSF TIFF COMPARISON REPORT (CUSTOM)")
     lines.append("=" * 60)
     lines.append(f"Project root: {project_root}")
-    lines.append(f"PSF folder : {psf_dir}")
     lines.append("")
     lines.append("FILES")
     lines.append("-" * 60)
-    lines.append(f"1) Our PSF   : {theo_path.name}")
-    lines.append(f"2) ImageJ PSF: {ij_path.name}")
+    lines.append(f"A: {a_path}")
+    lines.append(f"B: {b_path}")
     lines.append("")
 
     def dump_info(title: str, info: Dict[str, Any]) -> None:
@@ -170,8 +175,8 @@ def main() -> int:
             lines.append(info["image_description_head"])
         lines.append("")
 
-    dump_info("OUR PSF FILE INFO", theo_info)
-    dump_info("IMAGEJ PSF FILE INFO", ij_info)
+    dump_info("A FILE INFO", a_info)
+    dump_info("B FILE INFO", b_info)
 
     lines.append("COMPARISON")
     lines.append("-" * 60)
@@ -188,9 +193,10 @@ def main() -> int:
             lines.append(f"Pixels different (exact): {comp['n_pixels_different_exact']}")
     lines.append("")
 
-    report_path = psf_dir / "psf_compare_report.txt"
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote report: {report_path}")
+    out_path = Path(args.out) if args.out else (project_root / "results" / "psf" / "psf_compare_report_custom.txt")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote report: {out_path}")
     return 0
 
 

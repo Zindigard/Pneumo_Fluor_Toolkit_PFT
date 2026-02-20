@@ -17,17 +17,12 @@ except Exception as e:
     ) from e
 
 
-# ----------------------------
-# User paths (edit if needed)
-# ----------------------------
 REPO_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
 IN_ROOT = REPO_ROOT / "results" / "img" / "3d_data"
 OUT_ROOT = REPO_ROOT / "results" / "3d"
 
 
-# ----------------------------
-# Helpers
-# ----------------------------
+
 def _safe_float(x: str | None) -> float | None:
     if x is None:
         return None
@@ -129,9 +124,6 @@ def _noise_class_from_percentiles(x: float, p33: float, p66: float) -> str:
     return "high"
 
 
-# ----------------------------
-# OME-Zarr reading
-# ----------------------------
 @dataclass(frozen=True)
 class OmezarrInfo:
     zarr_path: Path
@@ -207,9 +199,6 @@ def _read_omezarr_info(zarr_path: Path) -> OmezarrInfo:
     )
 
 
-# ----------------------------
-# Parse metadata_report.txt
-# ----------------------------
 @dataclass(frozen=True)
 class ReportMeta:
     voxel_dx_um: float | None
@@ -253,11 +242,7 @@ def _match_str(a: float | None, b: float | None) -> str:
     return "match" if _close(a, b, tol=1e-6) else "DIFF"
 
 
-# ----------------------------
-# Metadata uniformity parser
-# ----------------------------
-# We parse important lines from metadata_report.txt.
-# If you later change the report format, update these regexes.
+
 META_PATTERNS: dict[str, re.Pattern] = {
     "modality": re.compile(r"^Modality:\s*(?P<v>.*)$", re.MULTILINE),
     "sim_type": re.compile(r"^SIM type:\s*(?P<v>.*)$", re.MULTILINE),
@@ -327,7 +312,6 @@ def write_metadata_uniformity_txt(
     for d in dataset_to_fields.values():
         all_fields.update(d.keys())
 
-    # stable order
     field_order = [
         "modality",
         "sim_type",
@@ -393,9 +377,6 @@ def write_metadata_uniformity_txt(
     out_txt.write_text("\n".join(lines), encoding="utf-8")
 
 
-# ----------------------------
-# Main analysis per sample
-# ----------------------------
 @dataclass
 class AnalysisResult:
     dataset_rel: str
@@ -454,7 +435,7 @@ def analyze_one(zarr_path: Path) -> AnalysisResult:
     noise_per_z = np.zeros(Z, dtype=np.float64)
     mean_per_z = np.zeros(Z, dtype=np.float64)
 
-    # slice index template (fix non-zyx dims to 0; channel to 0)
+   
     base_idx: list[Any] = []
     for a in axes:
         if a == "z":
@@ -489,7 +470,7 @@ def analyze_one(zarr_path: Path) -> AnalysisResult:
     dy_zarr = info.scale.get("y")
     dz_zarr = info.scale.get("z")
 
-    # Noise summary stats across Z
+    
     noise_mean = float(np.mean(noise_per_z))
     noise_std = float(np.std(noise_per_z))
     noise_cv = float(noise_std / (noise_mean + 1e-12))
@@ -564,14 +545,12 @@ def analyze_one(zarr_path: Path) -> AnalysisResult:
         noise_corr_with_depth=noise_corr,
         intensity_mean_slope_per_slice=mean_slope,
         intensity_corr_with_depth=mean_corr,
-        noise_class=None,  # filled later in global pass
+        noise_class=None, 
         out_txt=out_txt,
     )
 
 
-# ----------------------------
-# Find + write outputs
-# ----------------------------
+
 def find_all_omezarr(in_root: Path) -> list[Path]:
     return sorted(in_root.rglob("image.ome.zarr"))
 
@@ -763,9 +742,7 @@ def write_all_files_statistics_txt(
     out_txt.write_text("\n".join(lines), encoding="utf-8")
 
 
-# ----------------------------
-# Main
-# ----------------------------
+
 def main() -> None:
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -779,7 +756,7 @@ def main() -> None:
     if errors_txt.exists():
         errors_txt.unlink()
 
-    # Run per-file analysis
+    #  per-file analysis
     print(f"Found {len(zarrs)} OME-Zarr(s). Starting analysis...")
     for i, zp in enumerate(zarrs, start=1):
         print(f"[{i}/{len(zarrs)}] {zp}")
@@ -795,7 +772,7 @@ def main() -> None:
         print("No successful analyses.")
         return
 
-    # Assign noise class thresholds (dataset-adaptive)
+   
     noise_mean = np.array([r.noise_mean for r in results], dtype=np.float64)
     finite = noise_mean[np.isfinite(noise_mean)]
     p33 = float(np.percentile(finite, 33))
@@ -804,14 +781,13 @@ def main() -> None:
     for r in results:
         r.noise_class = _noise_class_from_percentiles(r.noise_mean, p33, p66)
 
-    # Write summary CSV
     out_csv = OUT_ROOT / "summary_volume_noise.csv"
     write_summary_csv(results, out_csv)
 
-    # Write all-files summary TXT
+    
     write_all_files_statistics_txt(results, OUT_ROOT / "ALL_FILES_STATISTICS.txt")
 
-    # Metadata uniformity report (NEW)
+    
     dataset_to_fields: dict[str, dict[str, str | None]] = {}
     for r in results:
         report_path = r.zarr_path.parent / "metadata_report.txt"
