@@ -210,3 +210,158 @@ def ome_zarr_to_n2v_2d_stack(
 
     # Return (N, Y, X, 1)
     return stack[..., None]
+
+
+from typing import Optional
+
+def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -> dict[str, object]:
+    """
+    Extract a stable subset of OME-NGFF metadata
+    for comparing 3D images and checking PSFGenerator configs.
+
+    dict
+        Flat dict with keys:
+        - zarr_dir, level
+        - shape, ndim, dtype, chunks (if available)
+        - axes (string, e.g. 'czyx' / 'tczyx')
+        - voxel_size_um: {'x':..., 'y':..., 'z':...} (from multiscales scale if available)
+        - channel_names (attrs/omero if available)
+        - pft_meta_available (bool) + pft_meta (dict or None)
+        - objective_na, objective_magnification, immersion, refractive_index_immersion, refractive_index_sample
+        - modality, sim_mode
+        - source_path 
+    """
+    zarr_dir = Path(zarr_dir)
+
+    # We use zarr directly because it's simple for attrs + chunks/dtype
+    try:
+        import zarr
+    except Exception as e:
+        raise ImportError("Need `zarr` to read OME-Zarr. Install: pip install zarr") from e
+
+    root = zarr.open_group(str(zarr_dir), mode="r")
+
+    array_path = "0"
+    ms = root.attrs.get("multiscales")
+    if isinstance(ms, list) and ms:
+        datasets = ms[0].get("datasets")
+        if isinstance(datasets, list) and datasets:
+            if level >= len(datasets):
+                raise IndexError(f"Requested level={level} but only {len(datasets)} multiscale datasets exist.")
+            p = datasets[level].get("path")
+            if isinstance(p, str) and p.strip():
+                array_path = p.strip()
+
+    arr = root[array_path]
+
+    axes_str: Optional[str] = None
+    if isinstance(ms, list) and ms:
+        axes = ms[0].get("axes")
+        if isinstance(axes, list) and axes:
+            names = []
+            ok = True
+            for a in axes:
+                nm = a.get("name") if isinstance(a, dict) else None
+                if not (isinstance(nm, str) and len(nm) == 1):
+                    ok = False
+                    break
+                names.append(nm.lower())
+            if ok:
+                axes_str = "".join(names)
+
+   
+    if axes_str is None:
+        if arr.ndim == 4:
+            axes_str = "czyx"  
+        elif arr.ndim == 5:
+            axes_str = "tczyx"
+        elif arr.ndim == 3:
+            axes_str = "zyx"
+        elif arr.ndim == 2:
+            axes_str = "yx"
+        else:
+            axes_str = "unknown"
+
+    voxel_um = {"x": None, "y": None, "z": None}
+    if isinstance(ms, list) and ms:
+        datasets = ms[0].get("datasets")
+        if isinstance(datasets, list) and datasets and level < len(datasets):
+            ct = datasets[level].get("coordinateTransformations")
+            if isinstance(ct, list):
+                for t in ct:
+                    if isinstance(t, dict) and t.get("type") == "scale" and isinstance(t.get("scale"), list):
+                        scale = t["scale"]
+                        for ax, sc in zip(axes_str, scale):
+                            if ax in ("x", "y", "z"):
+                                try:
+                                    voxel_um[ax] = float(sc)
+                                except Exception:
+                                    voxel_um[ax] = None
+                        break
+
+    channel_names = root.attrs.get("channel_names")
+    if channel_names is None:
+        omero = root.attrs.get("omero")
+        if isinstance(omero, dict):
+            chs = omero.get("channels")
+            if isinstance(chs, list):
+                labels = []
+                for c in chs:
+                    if isinstance(c, dict) and c.get("label"):
+                        labels.append(c["label"])
+                channel_names = labels or None
+
+    pft_meta = root.attrs.get("pft_meta")
+    def _pft_get(key: str):
+        if isinstance(pft_meta, dict):
+            return pft_meta.get(key)
+        return None
+
+    out: dict[str, object] = {
+        "zarr_dir": str(zarr_dir),
+        "level": int(level),
+        "array_path": array_path,
+        "shape": tuple(arr.shape),
+        "ndim": int(arr.ndim),
+        "dtype": str(getattr(arr, "dtype", "")),
+        "chunks": getattr(arr, "chunks", None),
+        "axes": axes_str,
+        "voxel_size_um": voxel_um,
+        "channel_names": channel_names,
+        "pft_meta_available": isinstance(pft_meta, dict),
+        "pft_meta": pft_meta if isinstance(pft_meta, dict) else None,
+        "objective_na": _pft_get("objective_na"),
+        "objective_magnification": _pft_get("objective_magnification"),
+        "immersion": _pft_get("immersion"),
+        "refractive_index_immersion": _pft_get("refractive_index_immersion"),
+        "refractive_index_sample": _pft_get("refractive_index_sample"),
+        "modality": _pft_get("modality"),
+        "sim_mode": _pft_get("sim_mode"),
+        "source_path": root.attrs.get("source_path") or _pft_get("source_path"),
+    }
+    return out
+
+
+def parse_psfgenerator_config(path: str | Path) -> dict[str, str]:
+    """Parse PSFGenerator 'properties-like' config file as key=value."""
+    path = Path(path)
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def psfgenerator_required_keys() -> list[str]:
+    """Keys we treat as required for generating a PSF compatible """
+    return ["Lambda", "NA", "NX", "NY", "NZ", "ResAxial", "ResLateral", "Type"]
+
+
+def check_config_has_required(cfg: dict[str, str]) -> tuple[bool, list[str]]:
+    req = psfgenerator_required_keys()
+    missing = [k for k in req if k not in cfg]
+    return (len(missing) == 0), missing
+
