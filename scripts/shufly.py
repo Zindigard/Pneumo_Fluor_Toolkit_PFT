@@ -3,6 +3,7 @@ import random
 import shutil
 from pathlib import Path
 
+"""Script to collect OME-Zarr directories from the datasets, rename them, and split into training/validation folders."""
 
 BASE = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\training_files")
 DATASETS = [

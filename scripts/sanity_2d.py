@@ -1,23 +1,12 @@
 from __future__ import annotations
-
-"""
-Sanity check for 2-channel OME-Zarr:
-- Visualize channel 0 and channel 1 of ONE random image/frame
-- Show overlay with ch0->Blue and ch1->Green
-
-Run:
-  python check_channels_one_random.py
-"""
-
 import random
 from pathlib import Path
-
 import numpy as np
 import matplotlib.pyplot as plt
 import zarr
 
+""" Sanity check for 2-channel OME-Zarr """
 
-# -------- YOUR OME-ZARR PATH --------
 OMEZARR_PATH = Path(
     r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\training_files\2d_wga_dapi\training_data\WT_CSP_NHS_ROI2_SIM_omezarr"
 )
@@ -46,12 +35,10 @@ def load_highest_res_array(zarr_path: Path) -> np.ndarray:
     if "0" in root:
         return np.asarray(root["0"])
 
-    # fallback: first array key
     keys = list(root.array_keys())
     if keys:
         return np.asarray(root[keys[0]])
 
-    # fallback: search nested groups for first array
     for gk in root.group_keys():
         g = root[gk]
         ak = list(getattr(g, "array_keys", lambda: [])())
@@ -73,20 +60,15 @@ def choose_random_2d_slice(arr: np.ndarray) -> np.ndarray:
     if a.ndim < 3:
         raise ValueError(f"Expected at least 3D with channels, got shape={a.shape}")
 
-    # Heuristic: treat last two dims as (Y,X) if they are "image-like"
-    # and find channel axis as a small dim <= 4.
     shape = a.shape
     small_axes = [i for i, s in enumerate(shape) if s <= 4]
 
     if not small_axes:
         raise ValueError(f"Cannot find a channel-like axis (<=4) in shape={shape}")
 
-    # Pick one channel axis candidate:
-    # prefer axis not among last two dims (Y,X)
     candidate_axes = [ax for ax in small_axes if ax not in (a.ndim - 1, a.ndim - 2)]
     cax = candidate_axes[0] if candidate_axes else small_axes[0]
 
-    # Build an index selecting random for all non-(Y,X,C) axes
     idx = []
     for ax, size in enumerate(shape):
         if ax == cax:
@@ -94,11 +76,10 @@ def choose_random_2d_slice(arr: np.ndarray) -> np.ndarray:
         elif ax in (a.ndim - 2, a.ndim - 1):
             idx.append(slice(None))  # keep Y,X
         else:
-            idx.append(random.randrange(size))  # pick random T/Z/other
+            idx.append(random.randrange(size))  # pick random 
 
     a2 = a[tuple(idx)]
 
-    # Now a2 should be 3D: (C,Y,X) or (Y,X,C) or (C,X,Y) etc.
     if a2.ndim != 3:
         raise ValueError(f"After slicing, expected 3D but got shape={a2.shape}")
 

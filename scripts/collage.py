@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
+"""Script to create collages of preview images from the datasets for visual comparison."""
 
 BASE_DIR = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\2d_wga_dapi")
 OUT_DIR = BASE_DIR / "collages"          

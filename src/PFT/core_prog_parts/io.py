@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import czifile
 
+"""Helper functions to read CZI files from the datasets, extract metadata and save it in a structured way for inspection."""
 
 @dataclass(frozen=True)
 class CziMeta:

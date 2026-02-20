@@ -8,6 +8,7 @@ import matplotlib.font_manager as fm
 from matplotlib.widgets import RectangleSelector
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
+"""Script to interactively select ROIs in 2D WGA+DAPI previews, crop them and save the results for visualization."""
 
 BASE_DIR = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\2d_wga_dapi")
 PREVIEW_NAME = "preview.png"     

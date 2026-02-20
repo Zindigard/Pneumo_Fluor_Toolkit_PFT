@@ -3,12 +3,13 @@ import argparse
 import shutil
 from pathlib import Path
 
+"""Script to collect OME-Zarr directories from the datasets, rename them, and split into training/validation folders."""
 
 def find_image_omezarr_parents(dataset_root: Path) -> list[Path]:
     """
     Returns a list of sample folders that contain an 'image.ome.zarr' directory.
     Example returned path:
-      .../results/img/2d_wga_dapi/WT_THY_noCSP_ROI3_SIM
+      
     """
     if not dataset_root.exists():
         raise FileNotFoundError(f"Dataset root not found: {dataset_root}")

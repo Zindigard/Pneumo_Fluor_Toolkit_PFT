@@ -1,12 +1,12 @@
 from __future__ import annotations
-
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-
 from PFT.core_prog_parts.io import list_czi_files, load_czi
 from PFT.core_prog_parts.save import export_2d, export_3d
-from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
+from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
+
+"""Script to process CZI files from the datasets, extract metadata, save OME-Zarr copies, and generate previews for training collection."""
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_COLLECTION_DIR = REPO_ROOT / "results" / "training_files"

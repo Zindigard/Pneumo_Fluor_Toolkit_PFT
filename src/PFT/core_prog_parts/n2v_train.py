@@ -8,10 +8,12 @@ if not hasattr(np, "product"):
 from tensorflow import keras
 from n2v.models import N2VConfig, N2V
 import tensorflow as tf
-from PFT.core_prog_parts.n2v_decoder_omezar import load_ome_zarr, ome_zarr_to_n2v_2d_stack
+from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, ome_zarr_to_n2v_2d_stack
+
+"""Script to train N2V models for 2D datasets using OME-Zarr samples as input. Supports random patch sampling or tiling strategies, with interactive dataset/channel selection and Keras 3 compatibility patches."""
+
 TRAIN_DIRNAME = "training_data"
 VAL_DIRNAME = "validation_data"
-
 
 def project_root_from_this_file() -> Path:
     """
@@ -379,7 +381,7 @@ def main() -> None:
     LR = 1e-4
     LOSS = "mse"              # "mse" or "mae"
     SAVE_EVERY = 5
-    NORMALIZE = "percentile"  # or None
+    NORMALIZE = "percentile"  
 
     # sampling strategy
     # "random_patches" 

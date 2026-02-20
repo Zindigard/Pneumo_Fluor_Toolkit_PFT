@@ -1,18 +1,15 @@
 from __future__ import annotations
-
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
-
 import numpy as np
-
 try:
     from PFT.core_prog_parts.io import CziMeta
 except Exception:
     class CziMeta:
         pass
 
-
+"""Helper functions to save OME-Zarr files from numpy arrays and CZI metadata, with proper axes inference and coordinate transformations for pixel sizes."""
 _CANONICAL_TYPES = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
 
 

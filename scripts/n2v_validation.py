@@ -10,10 +10,11 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from skimage.metrics import structural_similarity as ssim
-from PFT.core_prog_parts.n2v_decoder_omezar import ome_zarr_to_n2v_2d_stack
+from PFT.core_prog_parts.decoder_omezar import ome_zarr_to_n2v_2d_stack
 from PFT.core_prog_parts.n2v_denoising import denoise_2d_for_cellpose, ome_zarr_to_n2v_2d_stack, normalize_yxc_for_n2v
-from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
+from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
 
+"""Validation of N2V denoising on 2D datasets."""
 
 TRAIN_DIRNAME = "training_data"
 VAL_DIRNAME = "validation_data"

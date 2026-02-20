@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Tuple
 import numpy as np
 
+"""Helper functions to read OME-Zarr with ome-zarr library and convert to N2V stacks or anyother information type."""
 
 def infer_axes_from_ndim(ndim: int | None) -> str:
     """Fallback axes inference if multiscales axes are missing."""

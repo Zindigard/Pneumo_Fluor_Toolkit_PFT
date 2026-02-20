@@ -2,10 +2,12 @@ import numpy as np
 import zarr
 from pathlib import Path
 import shutil
-
 from PFT.core_prog_parts.io import load_czi
-from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr_next_to_outputs
-from PFT.core_prog_parts.n2v_decoder_omezar import load_ome_zarr
+from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
+from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
+
+"""Script to perform rigorous validation of the OME-Zarr saving/loading process by comparing original CZI data with the OME-Zarr copy at multiple levels (shape, dtype, statistics, bit-level, metadata)."""
+
 
 def run_rigorous_validation(czi_path: str | Path):
     czi_path = Path(czi_path)

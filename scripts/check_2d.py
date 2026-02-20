@@ -1,11 +1,11 @@
 from __future__ import annotations
-
 import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 import numpy as np
+
+"""Script to check the 2D OME-Zarr datasets for metadata uniformity and noise characteristics, and compare reported voxel sizes with OME-Zarr metadata."""
 
 try:
     import zarr

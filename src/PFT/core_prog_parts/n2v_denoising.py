@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 import numpy as np
 from n2v.models import N2V
 
+"""Helper functions to load N2V models for 2D datasets and apply them for denoising."""
 
 #  Model
 MODEL_NAMES = {

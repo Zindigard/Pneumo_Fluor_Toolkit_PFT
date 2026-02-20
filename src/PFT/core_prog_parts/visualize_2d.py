@@ -6,6 +6,7 @@ import matplotlib.font_manager as fm
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from PFT.core_prog_parts.io import CziMeta
 
+"""Helper functions to visualize 2D slices from CZI files, create RGB composites for time sequences and WGA/DAPI channels, add scalebars based on pixel size metadata, and save preview PNGs with proper normalization and formatting for training collection inspection."""
 
 def normalize01(img: np.ndarray, p_low: float = 1.0, p_high: float = 99.8, thr: float = 0.0) -> np.ndarray:
     """Normalize to [0,1]."""

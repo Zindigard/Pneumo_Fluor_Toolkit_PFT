@@ -1,6 +1,5 @@
 from __future__ import annotations
 from pathlib import Path
-
 from PFT.core_prog_parts.io import _parse_scaling_um, _parse_channel_names
 
 def test_parse_scaling_um_from_sample_xml():

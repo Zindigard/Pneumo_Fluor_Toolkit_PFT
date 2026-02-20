@@ -2,8 +2,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import zarr
-
-from PFT.core_prog_parts.Ome_Zarr import save_ome_zarr
+from PFT.core_prog_parts.ome_zarr import save_ome_zarr
 
 pytest.importorskip("ome_zarr") 
 
