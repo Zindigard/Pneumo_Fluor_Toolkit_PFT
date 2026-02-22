@@ -6,7 +6,7 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
-"""Helper functions to ensure Fiji and PSF Generator plugin are available for PSF generation in pipelines."""
+"""Helper functions to ensure Fiji and required plugins are available for pipelines."""
 
 FIJI_ZIP_URLS = [
     "https://downloads.imagej.net/fiji/latest/fiji-latest-win64-jdk.zip",
@@ -14,10 +14,16 @@ FIJI_ZIP_URLS = [
 ]
 
 PSFGEN_JAR_NAME = "PSF_Generator.jar"
-
 PSFGEN_JAR_URLS = [
     "https://bigwww.epfl.ch/algorithms/psfgenerator/PSF_Generator.jar",
     "https://bigwww.epfl.ch/deconvolution/PSF_Generator.jar",
+]
+
+DL2_JAR_NAME = "DeconvolutionLab_2.jar"
+DL2_JAR_URLS = [
+    "https://bigwww.epfl.ch/deconvolution/DeconvolutionLab_2.jar",
+    "https://bigwww.epfl.ch/algorithms/deconvolutionlab2/DeconvolutionLab_2.jar",
+    "https://bigwww.epfl.ch/deconvolution/deconvolutionlab2/DeconvolutionLab_2.jar",
 ]
 
 
@@ -119,9 +125,7 @@ def ensure_fiji_installed(cache_dir: Path) -> Path:
 
 
 def ensure_fiji_in_project(project_root: Path, quiet: bool = True) -> Path:
-    """
-    Convenience wrapper for pipelines.
-    """
+    """Convenience wrapper for pipelines."""
     configure_java_from_conda()
     cache_dir = get_cache_dir(project_root)
     fiji_dir = ensure_fiji_installed(cache_dir)
@@ -131,9 +135,6 @@ def ensure_fiji_in_project(project_root: Path, quiet: bool = True) -> Path:
 
 
 def psf_generator_exists(fiji_dir: Path) -> Path | None:
-    """
-    Returns the PSF_Generator.jar path if present, otherwise None.
-    """
     jar_path = fiji_dir / "plugins" / PSFGEN_JAR_NAME
     if jar_path.exists() and jar_path.stat().st_size > 0:
         return jar_path
@@ -148,12 +149,6 @@ def ensure_psf_generator_exists(
 ) -> Path:
     """
     Ensure PSF Generator exists in Fiji/plugins.
-
-    If it exists: return jar path.
-    If missing:
-      - if auto_download=True: try to download it
-      - otherwise: raise RuntimeError
-
     This function NEVER silently passes when missing.
     """
     plugins_dir = fiji_dir / "plugins"
@@ -201,10 +196,71 @@ def ensure_psf_generator_exists(
     )
 
 
+# --- NEW: DL2 plugin ensure ---
+def deconvolutionlab2_exists(fiji_dir: Path) -> Path | None:
+    jar_path = fiji_dir / "plugins" / DL2_JAR_NAME
+    if jar_path.exists() and jar_path.stat().st_size > 0:
+        return jar_path
+    return None
+
+
+def ensure_deconvolutionlab2_exists(
+    fiji_dir: Path,
+    *,
+    auto_download: bool = True,
+    quiet: bool = True,
+) -> Path:
+    """
+    Ensure DeconvolutionLab2 exists in Fiji/plugins.
+    This function NEVER silently passes when missing.
+    """
+    plugins_dir = fiji_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = deconvolutionlab2_exists(fiji_dir)
+    if existing is not None:
+        return existing
+
+    jar_path = plugins_dir / DL2_JAR_NAME
+
+    if not auto_download:
+        raise RuntimeError(
+            "DeconvolutionLab2 plugin is missing.\n"
+            f"Place {DL2_JAR_NAME} into:\n  {jar_path}\n"
+            "Then rerun."
+        )
+
+    override = os.environ.get("PFT_DL2_JAR_URL", "").strip()
+    urls = [override] if override else list(DL2_JAR_URLS)
+
+    last_err: Optional[Exception] = None
+    for url in urls:
+        try:
+            if not quiet:
+                print("Downloading DeconvolutionLab2 jar:", url, flush=True)
+            urlretrieve(url, jar_path)
+            if jar_path.exists() and jar_path.stat().st_size > 0:
+                return jar_path
+        except (HTTPError, URLError) as e:
+            last_err = e
+            continue
+
+    try:
+        if jar_path.exists() and jar_path.stat().st_size == 0:
+            jar_path.unlink()
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "DeconvolutionLab2 plugin is missing and automatic download failed.\n"
+        f"Place {DL2_JAR_NAME} into:\n  {jar_path}\n"
+        "Or set environment variable PFT_DL2_JAR_URL to a direct jar URL.\n"
+        f"Last error: {last_err}"
+    )
+
+
 def configure_java_from_conda() -> None:
-    """
-    If running in conda on Windows, ensure JAVA_HOME points to env's Library.
-    """
+    """If running in conda on Windows, ensure JAVA_HOME points to env's Library."""
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
         java_home = Path(conda_prefix) / "Library"
@@ -221,6 +277,7 @@ def main() -> int:
     fiji_dir = ensure_fiji_in_project(project_root, quiet=False)
 
     ensure_psf_generator_exists(fiji_dir, auto_download=True, quiet=False)
+    ensure_deconvolutionlab2_exists(fiji_dir, auto_download=True, quiet=False)  # <-- NEW
 
     return 0
 

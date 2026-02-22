@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 from pathlib import Path
 
@@ -8,14 +7,12 @@ from PFT.core_prog_parts.Deconvolution_omezarr import (
     DEFAULT_CHANNEL_WAVELENGTH_NM,
 )
 
-
 DEFAULT_PROJECT_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
 DEFAULT_3D_ROOT = DEFAULT_PROJECT_ROOT / "results" / "img" / "3d_data"
 DEFAULT_OUT_ROOT = DEFAULT_PROJECT_ROOT / "results" / "deconv"
 
 
 def list_image_folders(root_3d: Path) -> list[Path]:
-    """Return folders that contain image.ome.zarr."""
     return [p.parent for p in sorted(root_3d.rglob("image.ome.zarr"))]
 
 
@@ -57,37 +54,31 @@ def interactive_select_dataset(root_3d: Path) -> Path:
 
     print("\nAvailable 3D datasets:")
     for i, f in enumerate(folders):
-        # show relative path for readability
         rel = f.relative_to(root_3d) if root_3d in f.parents else f
         print(f"  [{i}] {rel}")
 
     idx = prompt_int(f"\nSelect dataset index [0-{len(folders)-1}]: ", min_v=0, max_v=len(folders) - 1)
-    folder = folders[idx]
-    in_zarr = folder / "image.ome.zarr"
+    in_zarr = folders[idx] / "image.ome.zarr"
     if not in_zarr.exists():
         raise SystemExit(f"Missing: {in_zarr}")
     return in_zarr
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Interactive runner: DL2 Richardson–Lucy deconvolution on 3-channel OME-Zarr."
-    )
+    ap = argparse.ArgumentParser(description="Interactive DL2 Richardson–Lucy deconvolution for 3D OME-Zarr.")
     ap.add_argument("--root_3d", default=str(DEFAULT_3D_ROOT))
     ap.add_argument("--out_root", default=str(DEFAULT_OUT_ROOT))
 
-    # If you pass these, it can still run non-interactive
+    ap.add_argument("--folder", default=None, help="Folder containing image.ome.zarr (skip selection)")
     ap.add_argument("--iters", type=int, default=None)
     ap.add_argument("--model", choices=["BW", "GL", "RW"], default=None)
     ap.add_argument("--background", type=float, default=None)
-    ap.add_argument("--folder", default=None, help="Optional: folder that contains image.ome.zarr (skip selection)")
 
     args = ap.parse_args()
 
     root_3d = Path(args.root_3d)
     out_root = Path(args.out_root)
 
-    # dataset selection
     if args.folder:
         in_zarr = Path(args.folder) / "image.ome.zarr"
         if not in_zarr.exists():
@@ -95,7 +86,6 @@ def main() -> int:
     else:
         in_zarr = interactive_select_dataset(root_3d)
 
-    # interactive params (unless provided via args)
     model = args.model or prompt_choice("Choose PSF model [BW/GL/RW] (default BW): ", ["BW", "GL", "RW"], default="BW")
     iters = args.iters if args.iters is not None else prompt_int("Iterations (default 15): ", min_v=1, max_v=500, default=15)
     background = args.background if args.background is not None else float(input("Background (default 0.0): ").strip() or "0.0")
@@ -118,8 +108,8 @@ def main() -> int:
     )
 
     print("\nDONE")
-    print(f"  output: {info.out_zarr}")
-    print(f"  outdir: {info.out_dir}")
+    print(f"  output zarr: {info.out_zarr}")
+    print(f"  outdir     : {info.out_dir}")
     return 0
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -10,13 +11,14 @@ import numpy as np
 import tifffile as tiff
 import zarr
 
-from PFT.core_prog_parts.fuji_managment import find_project_root, ensure_fiji_in_project
+from PFT.core_prog_parts.fuji_managment import (
+    find_project_root,
+    ensure_fiji_in_project,
+    ensure_deconvolutionlab2_exists,
+)
 from PFT.core_prog_parts.psf_creator import _find_java_exe
 
 
-# -------------------------
-# Small memory helper (optional)
-# -------------------------
 def _try_import_psutil():
     try:
         import psutil  # type: ignore
@@ -25,34 +27,24 @@ def _try_import_psutil():
         return None
 
 
-def _fmt_mb(x: Optional[int]) -> str:
-    return "n/a" if x is None else f"{x / (1024**2):.1f} MB"
+def mem_box(title: str, t0: float, rss0: Optional[int], rss1: Optional[int], peak_rss: Optional[int],
+            py_peak_bytes: Optional[int]) -> str:
+    def fmt_mb(x: Optional[int]) -> str:
+        return "n/a" if x is None else f"{x / (1024**2):.1f} MB"
 
-
-# -------------------------
-# DL2 discovery
-# -------------------------
-def find_dl2_jar(fiji_dir: Path) -> Path:
-    plugins = fiji_dir / "plugins"
-    candidates = [
-        plugins / "DeconvolutionLab_2.jar",
-        plugins / "DeconvolutionLab2.jar",
-        plugins / "DeconvolutionLab.jar",
+    dt = time.time() - t0
+    lines = [
+        "┌" + "─" * 46 + "┐",
+        f"│ {title:<44} │",
+        "├" + "─" * 46 + "┤",
+        f"│ elapsed: {dt:>7.2f} s{'':<31}│",
+        f"│ RSS start: {fmt_mb(rss0):>10}   RSS end: {fmt_mb(rss1):>10} │",
+        f"│ Peak RSS:  {fmt_mb(peak_rss):>10}   Py peak: {fmt_mb(py_peak_bytes):>10} │",
+        "└" + "─" * 46 + "┘",
     ]
-    for c in candidates:
-        if c.exists():
-            return c
-
-    hits = list(plugins.glob("**/*Deconvolution*Lab*.jar")) + list(plugins.glob("**/*DeconvolutionLab*.jar"))
-    if hits:
-        return hits[0]
-
-    raise FileNotFoundError(f"DeconvolutionLab2 jar not found under: {plugins}")
+    return "\n".join(lines)
 
 
-# -------------------------
-# OME-Zarr loading (channel -> ZYX)
-# -------------------------
 def load_omezarr_channel_zyx(image_omezarr_dir: Path, channel_index: int = 0) -> np.ndarray:
     root = zarr.open(str(image_omezarr_dir), mode="r")
     if "0" not in root:
@@ -65,36 +57,35 @@ def load_omezarr_channel_zyx(image_omezarr_dir: Path, channel_index: int = 0) ->
     if not (0 <= channel_index < arr.shape[0]):
         raise IndexError(f"Channel index {channel_index} out of range for shape {arr.shape}")
 
-    vol = np.asarray(arr[channel_index, :, :, :])  # (Z,Y,X)
-    return vol
+    return np.asarray(arr[channel_index, :, :, :])  # (Z,Y,X)
 
 
-# -------------------------
-# Validation (no changes)
-# -------------------------
-def basic_validity_checks(image_zyx: np.ndarray, psf_path: Path) -> None:
+def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
     if image_zyx.ndim != 3:
         raise ValueError(f"Image must be 3D (Z,Y,X). Got shape={image_zyx.shape}")
-    if not psf_path.exists():
-        raise FileNotFoundError(psf_path)
+    if psf.ndim != 3:
+        raise ValueError(f"PSF must be 3D (Z,Y,X). Got shape={psf.shape}")
 
     if not np.isfinite(image_zyx.astype(np.float64, copy=False)).all():
         raise ValueError("Image contains NaN/Inf.")
+    if not np.isfinite(psf.astype(np.float64, copy=False)).all():
+        raise ValueError("PSF contains NaN/Inf.")
+
     if float(np.max(image_zyx)) <= 0:
         raise ValueError("Image max <= 0 (looks empty).")
+    if float(np.max(psf)) <= 0:
+        raise ValueError("PSF max <= 0 (looks empty).")
+
+    if float(np.min(psf)) < 0:
+        print("WARNING: PSF has negative values. RL usually expects PSF >= 0.")
 
 
-# -------------------------
-# TIFF writing (ImageJ stack; PRESERVE uint16)
-# -------------------------
 def write_imagej_tiff_stack(arr: np.ndarray, out_path: Path, axes: str = "ZYX") -> None:
     """
-    Write an ImageJ-compatible TIFF stack so DeconvolutionLab2 can open it.
-    Preserves dtype and values (no scaling, no normalization, no float conversion).
+    ImageJ-compatible TIFF stack. Preserves dtype and values (no scaling).
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arr = np.ascontiguousarray(arr)
-
     tiff.imwrite(
         str(out_path),
         arr,
@@ -104,10 +95,8 @@ def write_imagej_tiff_stack(arr: np.ndarray, out_path: Path, axes: str = "ZYX") 
     )
 
 
-# -------------------------
-# Run DL2 (Richardson–Lucy ONLY) using ImageJ-style "file <path>"
-# -------------------------
 def run_dl2_cli(
+    *,
     java: Path,
     dl2_jar: Path,
     image_tif: Path,
@@ -116,31 +105,22 @@ def run_dl2_cli(
     iterations: int = 1,
     background: float = 0.0,
 ) -> None:
+    """
+    DL2 Richardson–Lucy. Uses ImageJ-style argument syntax that works on Windows:
+      -image file <path> -psf file <path>
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # IMPORTANT (Windows/DL2): match ImageJ working syntax exactly:
-    # -image file <path>   -psf file <path>
     cmd = [
         str(java),
         "-jar",
         str(dl2_jar),
         "Run",
-        "-image",
-        "file",
-        str(image_tif),
-        "-psf",
-        "file",
-        str(psf_tif),
-        # Hard-lock Richardson–Lucy
-        "-algorithm",
-        "RL",
-        str(background),
-        str(iterations),
-        "-out",
-        "mip",
-        "MLI",
-        "-path",
-        str(out_dir),
+        "-image", "file", str(image_tif),
+        "-psf", "file", str(psf_tif),
+        "-algorithm", "RL", str(background), str(iterations),
+        "-out", "mip", "MLI",
+        "-path", str(out_dir),
     ]
 
     print("Running DL2:\n ", " ".join(cmd))
@@ -150,17 +130,13 @@ def run_dl2_cli(
         raise RuntimeError(f"DL2 failed.\n--- STDERR ---\n{res.stderr}")
 
 
-# -------------------------
-# Main
-# -------------------------
 def main() -> int:
     ap = argparse.ArgumentParser()
-
     ap.add_argument(
         "--omezarr_dir",
         default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\3d_data\20220218_dynamic\DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM\image.ome.zarr",
     )
-    ap.add_argument("--channel", type=int, default=0, help="Channel index.")
+    ap.add_argument("--channel", type=int, default=0)
     ap.add_argument(
         "--psf_tif",
         default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\psf\generated\psf_BW_TV1-T1-SR_Lambda405nm.tif",
@@ -168,84 +144,82 @@ def main() -> int:
     ap.add_argument(
         "--out_dir",
         default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\deconv",
-        help="Root output directory (outputs will be stored here).",
     )
     ap.add_argument("--iters", type=int, default=1)
     ap.add_argument("--background", type=float, default=0.0)
-    ap.add_argument(
-        "--tag",
-        default="DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM",
-        help="Name used to build folder/file names.",
-    )
-
     args = ap.parse_args()
 
-    # memory baseline (optional)
     t0 = time.time()
     psutil = _try_import_psutil()
     proc = psutil.Process() if psutil else None
     rss0 = proc.memory_info().rss if proc else None
 
-    # setup Fiji/Java/DL2
-    start_path = Path(__file__)
-    project_root = find_project_root(start_path.resolve())
+    py_peak = None
+    try:
+        import tracemalloc
+        tracemalloc.start()
+    except Exception:
+        tracemalloc = None  # type: ignore
+
+    project_root = find_project_root(Path(__file__).resolve())
     fiji_dir = ensure_fiji_in_project(project_root, quiet=True)
+
+    # ensure DL2 jar exists 
+    dl2_jar = ensure_deconvolutionlab2_exists(fiji_dir, auto_download=True, quiet=True)
+
     java = _find_java_exe(fiji_dir)
-    dl2_jar = find_dl2_jar(fiji_dir)
 
     omezarr_dir = Path(args.omezarr_dir)
     psf_path = Path(args.psf_tif)
     out_root = Path(args.out_dir)
 
-    if not omezarr_dir.exists():
-        raise FileNotFoundError(omezarr_dir)
-    if not psf_path.exists():
-        raise FileNotFoundError(psf_path)
-
-    # load image (NO changes)
     image_zyx = load_omezarr_channel_zyx(omezarr_dir, channel_index=args.channel)
-    basic_validity_checks(image_zyx, psf_path)
-
-    # PSF info (read-only, does not resave)
-    psf_arr = tiff.imread(str(psf_path))
+    psf = tiff.imread(str(psf_path))
+    basic_validity_checks(image_zyx, psf)
 
     print("Input summary (no changes applied):")
     print(f"  Image: shape={image_zyx.shape}, dtype={image_zyx.dtype}, min={image_zyx.min()}, max={image_zyx.max()}")
-    print(f"  PSF  : path={psf_path}")
-    print(f"        shape={psf_arr.shape}, dtype={psf_arr.dtype}, min={psf_arr.min()}, max={psf_arr.max()}, sum={float(np.sum(psf_arr))}")
+    print(f"  PSF  : shape={psf.shape}, dtype={psf.dtype}, min={psf.min()}, max={psf.max()}, sum={float(np.sum(psf))}")
 
-    # NO TEMP:
-    #   - save ONLY the image stack into run_dir/_inputs (as uint16, preserved)
-    #   - use PSF directly from generated/ path
-    run_dir = out_root / f"{args.tag}__C{args.channel}__iter{args.iters}"
-    inputs_dir = run_dir / "_inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="pft_dl2_") as td:
+        td = Path(td)
+        tmp_img = td / f"tmp_image_C{args.channel}.tif"
+        tmp_psf = td / "tmp_psf.tif"
 
-    img_tif = inputs_dir / f"{args.tag}__C{args.channel}__image.tif"
+        # Use ImageJ-compatible stacks (still preserves uint16 / float32)
+        write_imagej_tiff_stack(image_zyx, tmp_img, axes="ZYX")
+        write_imagej_tiff_stack(psf, tmp_psf, axes="ZYX")
 
-    # Preserve uint16 (no float conversion)
-    write_imagej_tiff_stack(image_zyx, img_tif, axes="ZYX")
+        out_dir = out_root / f"{omezarr_dir.parent.name}__C{args.channel}__iter{args.iters}"
+        run_dl2_cli(
+            java=java,
+            dl2_jar=dl2_jar,
+            image_tif=tmp_img,
+            psf_tif=tmp_psf,
+            out_dir=out_dir,
+            iterations=args.iters,
+            background=args.background,
+        )
 
-    # Run DL2 RL; outputs saved in run_dir
-    run_dl2_cli(
-        java=java,
-        dl2_jar=dl2_jar,
-        image_tif=img_tif,
-        psf_tif=psf_path,  # DO NOT resave PSF
-        out_dir=run_dir,
-        iterations=args.iters,
-        background=args.background,
-    )
+        print(f"\nDL2 finished. Outputs:\n  {out_dir}")
 
-    print("\nDL2 finished.")
-    print(f"  Run folder (outputs): {run_dir}")
-    print(f"  Image input saved in : {img_tif}")
-    print(f"  PSF used from        : {psf_path}")
-
-    # memory end (optional)
     rss1 = proc.memory_info().rss if proc else None
-    print(f"\nMemory RSS: start={_fmt_mb(rss0)} end={_fmt_mb(rss1)}  elapsed={time.time() - t0:.2f}s")
+    peak_rss = None
+    if proc and psutil:
+        try:
+            peak_rss = proc.memory_info().peak_wset
+        except Exception:
+            peak_rss = None
 
+    if "tracemalloc" in globals() and tracemalloc:
+        try:
+            _, peak = tracemalloc.get_traced_memory()
+            py_peak = int(peak)
+            tracemalloc.stop()
+        except Exception:
+            py_peak = None
+
+    print(mem_box("DL2 RL run", t0, rss0, rss1, peak_rss, py_peak))
     return 0
 
 
