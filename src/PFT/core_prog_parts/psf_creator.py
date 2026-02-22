@@ -3,12 +3,12 @@ from pathlib import Path
 import os
 import subprocess
 import shutil
-import tifffile as tiff  
+import tifffile as tiff
+import numpy as np
 from dataclasses import dataclass
 from typing import Mapping, Iterable, Optional, Literal
 
 try:
-    
     from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 except Exception:
     extract_ome_zarr_meta_for_compare = None  # type: ignore
@@ -72,26 +72,31 @@ def _rewrite_with_imagej_metadata(
 ) -> None:
     """
     Read the generated PSF TIFF and rewrite it with ImageJ-compatible metadata.
-
     """
     arr = tiff.imread(str(src_tif)).astype("float32", copy=False)
 
-    # Expect a 3D PSF stack: (Z, Y, X)
+    # --- PSF normalization for deconvolution ---
+    # 1) enforce non-negativity (guards against tiny numerical negatives)
+    # 2) normalize so that sum(PSF) == 1 (energy conservation)
+    arr = np.maximum(arr, 0)
+    s = float(arr.sum())
+    if s > 0:
+        arr = arr / s
+    else:
+        raise ValueError(f"PSF sum is zero after clipping negatives: {src_tif}")
+
     if arr.ndim != 3:
         raise ValueError(f"Expected 3D array (Z,Y,X). Got shape={arr.shape}")
 
     z, y, x = arr.shape
 
-    # TIFF resolution is in "pixels per unit". ImageJ interprets it together with unit.
-    # For nm units, this is fine as a float; tifffile will store it as a rational.
-    # pixels_per_nm = 1 / (nm_per_pixel)
     pixels_per_nm = 1.0 / float(res_lateral_nm)
     resolution = (pixels_per_nm, pixels_per_nm)
 
     ij_meta = {
-        "unit": unit,                 # "nm"
-        "spacing": float(res_axial_nm),# Z-step in nm
-        "axes": "ZYX",                # helps some readers
+        "unit": unit,                  # "nm"
+        "spacing": float(res_axial_nm), # Z-step in nm
+        "axes": "ZYX",                  # helps some readers
         "hyperstack": True,
         "mode": "grayscale",
         "channels": 1,
@@ -119,7 +124,6 @@ def run_psfgenerator_cli(
     """
     Output is written in the same folder and normalized/rewritten to <out_name>
     WITH ImageJ metadata (unit + spacing + XY resolution) so Fiji reads calibration.
-
     """
     project_root = find_project_root(start_path.resolve())
 
@@ -155,7 +159,6 @@ def run_psfgenerator_cli(
     if jar_plugin is None:
         raise FileNotFoundError(f"PSF Generator jar not found in: {fiji_dir / 'plugins'}")
 
-   
     classpath = f"{(fiji_dir / 'jars' / '*')};{jar_plugin}"
 
     final_out = out_dir / out_name
@@ -165,7 +168,6 @@ def run_psfgenerator_cli(
     def list_tifs() -> list[Path]:
         return list(out_dir.glob("*.tif")) + list(out_dir.glob("*.tiff"))
 
-   
     before = {p.name: p.stat().st_mtime for p in list_tifs()}
 
     cmd = [str(java_exe), "-cp", classpath, "PSFGenerator", str(config_path)]
@@ -204,7 +206,6 @@ def run_psfgenerator_cli(
         unit=unit,
     )
 
- 
     orig_copy = out_dir / f"{tmp_src.stem}_orig{tmp_src.suffix}"
     try:
         shutil.move(str(tmp_src), str(orig_copy))
@@ -229,7 +230,6 @@ class PSFJob:
 def write_psfgenerator_config(params: Mapping[str, str], dst: Path) -> None:
     """
     Write PSFGenerator config as key=value text file.
-
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     lines = []
@@ -256,13 +256,13 @@ def update_params_for_image_and_channel(
     - given channel wavelength (Lambda)
     - optionally match NA and sampling (ResLateral/ResAxial) to image voxel size
     - optionally match refractive indices to image metadata
-
     """
     p = dict(base_params)
 
     p["Lambda"] = str(float(wavelength_nm))
-    
+
     p["unit"] = "nm"
+    p["NZ"] = "40"
 
     if match_na_to_image:
         na = img_meta.get("objective_na")
@@ -294,12 +294,11 @@ def update_params_for_image_and_channel(
 
 def _default_channel_wavelengths_from_names(channel_names: list[str]) -> dict[str, float]:
     """
-    Default SIM channel mapping for this project:
+    Default SIM channel mapping:
 
       - TV1-T1-SR  -> 405 nm
       - TV1-T2-SR  -> 488 nm
       - TV1-T3-SR  -> 561 nm
-   
     """
     out: dict[str, float] = {}
     for ch in channel_names:

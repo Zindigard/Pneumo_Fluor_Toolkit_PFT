@@ -1,19 +1,15 @@
 """
-Run PSF generation for 3 models (1 per channel).
+Run PSF generation for 3 models (per channel).
 
-Outputs
--------
-Configs: <project_root>\results\psf\generated\PSFGenerator_BW_<channel>_LambdaXXXnm.txt
-PSFs   : <project_root>\results\psf\generated\psf_BW_<channel>_LambdaXXXnm.tif
 """
 from __future__ import annotations
 import argparse
 from pathlib import Path
+from typing import Tuple
 from PFT.core_prog_parts.psf_creator import generate_psfs_for_image_all_models
 
 
 DEFAULT_PROJECT_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
-DEFAULT_3D_ROOT = DEFAULT_PROJECT_ROOT / "results" / "img" / "3d_data"
 
 
 def _find_first_image_omezarr(root: Path) -> Path:
@@ -23,10 +19,43 @@ def _find_first_image_omezarr(root: Path) -> Path:
     return hits[0]
 
 
+def _parse_models_arg(s: str) -> Tuple[str, ...]:
+    """
+    Accepts:
+      "all" -> ("BW","GL","RW")
+      "BW" or "BW,GL" or "BW GL RW"
+    """
+    s = (s or "").strip()
+    if not s or s.lower() == "all":
+        return ("BW", "GL", "RW")
+
+    parts = [p.strip().upper() for p in s.replace(",", " ").split() if p.strip()]
+    allowed = {"BW", "GL", "RW"}
+    bad = [p for p in parts if p not in allowed]
+    if bad:
+        raise ValueError(f"Unknown model(s): {bad}. Allowed: BW, GL, RW, or 'all'")
+    # keep order but unique
+    out = []
+    for p in parts:
+        if p not in out:
+            out.append(p)
+    return tuple(out)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate PSF for BW model only (per channel).")
-    ap.add_argument("--zarr", default=None, help="Path to image.ome.zarr. If omitted, first found under default 3D root is used.")
-    ap.add_argument("--project_root", default=str(DEFAULT_PROJECT_ROOT), help="Project root (default: D:\\Thesis\\Pneumo_Fluor_Toolkit_PFT)")
+    ap = argparse.ArgumentParser(description="Generate PSFs for BW/GL/RW (per channel).")
+    ap.add_argument(
+        "--zarr",
+        default=None,
+        help="Path to image.ome.zarr. If omitted, first found under results/img/3d_data is used.",
+    )
+    ap.add_argument(
+        "--project_root",
+        default=str(DEFAULT_PROJECT_ROOT),
+        help=r"Project root (default: D:\Thesis\Pneumo_Fluor_Toolkit_PFT)",
+    )
+    ap.add_argument("--models", default="all", help="Models to generate: all | BW | GL | RW | BW,GL | BW GL RW")
+    ap.add_argument("--accuracy", default="Best", help="PSFGenerator accuracy (e.g. Best, Good, Fast)")
     ap.add_argument("--quiet", action="store_true", help="Reduce logging.")
     args = ap.parse_args()
 
@@ -42,14 +71,15 @@ def main() -> int:
     if not zarr_dir.exists():
         raise FileNotFoundError(zarr_dir)
 
-    # BW only
+    models = _parse_models_arg(args.models)
+
     outputs = generate_psfs_for_image_all_models(
         zarr_dir=zarr_dir,
         start_path=Path(__file__),
-        models=("BW",),
-        accuracy="Best",
+        models=models,
+        accuracy=args.accuracy,
         quiet=args.quiet,
-        # Optional override (not needed if your defaults are correct):
+        # Optional override:
         # channel_wavelength_nm={
         #     "TV1-T1-SR": 405.0,
         #     "TV1-T2-SR": 488.0,
@@ -57,21 +87,9 @@ def main() -> int:
         # },
     )
 
-    print("Generated PSFs (BW):")
+    print(f"Generated PSFs (models={models}):")
     for (model, ch), p in outputs.items():
         print(f"  {model} | {ch} -> {p}")
-
-    # ------------------------------------------------------------
-    # If later you want ALL 3 models at once, uncomment this block:
-    #
-    # outputs = generate_psfs_for_image_all_models(
-    #     zarr_dir=zarr_dir,
-    #     start_path=Path(__file__),
-    #     models=("BW", "GL", "RW"),
-    #     accuracy="Best",
-    #     quiet=args.quiet,
-    # )
-    # ------------------------------------------------------------
 
     return 0
 
