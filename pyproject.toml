@@ -5,16 +5,42 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "PFT"
 version = "0.1.0"
+description = "Pneumo-Fluor Toolkit (PFT): fluorescence microscopy utilities (OME-Zarr IO, deconvolution, denoising, visualization)."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "PFT contributors" },
+]
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
+  "tifffile>=2023.9.26",
+  "psutil>=5.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/"
+
+[project.scripts]
+# CLI entrypoints (useful for running the pipeline modules directly)
+pft-psf = "PFT.core_prog_parts.psf_creator:main"
+pft-dl2 = "PFT.core_prog_parts.dl2:main"
+pft-deconv-omezarr = "PFT.core_prog_parts.Deconvolution_omezarr:main"
+pft-decode-omezarr = "PFT.core_prog_parts.decoder_omezar:main"
+pft-n2v-train = "PFT.core_prog_parts.n2v_train:main"
+pft-n2v-denoise = "PFT.core_prog_parts.n2v_denoising:main"
+pft-visualize-2d = "PFT.core_prog_parts.visualize_2d:main"
 
 [project.entry-points."napari.manifest"]
 PFT = "PFT.napari:napari.yaml"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"PFT" = [
+  "napari/napari.yaml",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -54,3 +80,22 @@ dev = [
   "ruff",
   "black",
 ]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  "results",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
