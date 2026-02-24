@@ -248,8 +248,6 @@ def patch_modelcheckpoint_suffix_for_keras3() -> None:
 def patch_save_weights_suffix_for_keras3() -> None:
     """
     Keras 3 requires save_weights() filename ending with `.weights.h5`.
-    n2v calls save_weights('weights_last.h5') directly, so patch Model.save_weights
-    to auto-fix the suffix.
     """
     import tensorflow as tf
 
@@ -269,8 +267,6 @@ def patch_save_weights_suffix_for_keras3() -> None:
 def patch_disable_care_tensorboard_image() -> None:
     """
     n2v uses csbdeep.utils.tf.CARETensorBoardImage(model=..., data=..., ...).
-    On Keras 3 this callback is incompatible, so we replace it with a no-op
-    that ACCEPTS arbitrary args/kwargs.
     """
 
     class _NoOpCallback(tf.keras.callbacks.Callback):
@@ -375,7 +371,7 @@ def train_one_model(
 
 def main() -> None:
     EPOCHS = 100
-    STEPS_PER_EPOCH = 200
+    STEPS_PER_EPOCH = 250
     BATCH_SIZE = 128
     PATCH_SHAPE = (64, 64)
     LR = 1e-4
@@ -389,8 +385,8 @@ def main() -> None:
     SAMPLING_MODE = "random_patches"   
 
     # random_patches mode 
-    PATCHES_PER_FILE_TRAIN = 256
-    PATCHES_PER_FILE_VAL = 64
+    PATCHES_PER_FILE_TRAIN = 1024
+    PATCHES_PER_FILE_VAL = 256
     RANDOM_SEED = 0
 
     # tiling mode 

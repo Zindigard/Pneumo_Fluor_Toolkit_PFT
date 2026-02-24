@@ -7,7 +7,7 @@ from typing import Optional, List, Union, Tuple
 import napari
 import zarr
 
-from qtpy.QtCore import QEvent
+from qtpy.QtCore import QEvent, Qt
 from qtpy.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -20,7 +20,6 @@ from qtpy.QtWidgets import (
     QMessageBox,
 )
 
-#  dask for lazy diff computation
 try:
     import dask.array as da
 
@@ -28,8 +27,6 @@ try:
 except Exception:
     da = None
     _HAVE_DASK = False
-
-
 
 def find_project_root(start: Path) -> Path:
     start = start.resolve()
@@ -50,7 +47,6 @@ def discover_3d_omezarrs(project_root: Path) -> List[Path]:
     if not base.exists():
         return []
     return sorted([p for p in base.rglob("image.ome.zarr") if p.is_dir()])
-
 
 def resolve_to_image_omezarr(path: Union[str, Path]) -> Path:
     """
@@ -104,6 +100,35 @@ def as_lazy(x):
         return da.from_array(x, chunks="auto")
     return da.from_array(x, chunks=chunks, asarray=False)
 
+def install_wheel_scroll_z(viewer: napari.Viewer) -> None:
+    """
+    Make mouse wheel scroll through Z slices (first non-displayed axis)
+    instead of zooming. Keep zoom on Ctrl+wheel.
+    """
+    qt_viewer = viewer.window._qt_viewer
+
+    orig_wheel_event = qt_viewer.canvas.native.wheelEvent
+
+    def wheelEvent(event):
+        if event.modifiers() & Qt.ControlModifier:
+            return orig_wheel_event(event)
+
+        delta = event.angleDelta().y()
+        step = -1 if delta > 0 else 1  
+
+        not_displayed = [ax for ax in range(viewer.dims.ndim) if ax not in viewer.dims.displayed]
+        if not_displayed:
+            ax = not_displayed[0]
+            new_val = int(viewer.dims.point[ax]) + step
+
+            start, stop, _ = viewer.dims.range[ax]
+            new_val = max(int(start), min(int(stop - 1), new_val))
+            viewer.dims.set_point(ax, new_val)
+
+        event.accept()
+
+    qt_viewer.canvas.native.wheelEvent = wheelEvent
+
 
 @dataclass
 class CompareState:
@@ -152,6 +177,7 @@ class OmeZarr3DCompareWidget(QWidget):
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(QLabel("3D OME-Zarr Compare (A | B | abs(A−B))"))
 
+ 
         self.layout().addWidget(QLabel("Image A:"))
         row_a = QHBoxLayout()
         self.combo_a = QComboBox()
@@ -197,10 +223,10 @@ class OmeZarr3DCompareWidget(QWidget):
         row_crop.addWidget(self.btn_crop_reset)
         self.layout().addLayout(row_crop)
 
-        # --- info ---
         self.info = QLabel(
             "Controls:\n"
-            "  • Mouse wheel / Z slider = scroll Z\n"
+            "  • Mouse wheel = scroll Z slices\n"
+            "  • Ctrl + wheel = zoom\n"
             "  • Q = channel 0 (Blue), W = channel 1 (Green), E = channel 2 (Red)\n"
             "Difference pane:\n"
             "  • abs(A−B) is GRAYSCALE (black=0 diff, brighter=more diff)\n"
@@ -211,7 +237,7 @@ class OmeZarr3DCompareWidget(QWidget):
         self.layout().addWidget(self.info)
 
         self.viewer.grid.enabled = True
-        self.viewer.grid.spacing = 20  
+        self.viewer.grid.spacing = 20 
 
         qt_viewer = self.viewer.window._qt_viewer
         qt_viewer.canvas.native.setStyleSheet("background-color: white;")
@@ -226,7 +252,6 @@ class OmeZarr3DCompareWidget(QWidget):
         self._drop_filter = DropFilter(qt_viewer, self._handle_drop)
         qt_viewer.installEventFilter(self._drop_filter)
 
-    
     def show_error(self, title: str, msg: str) -> None:
         QMessageBox.critical(self, title, msg)
 
@@ -352,6 +377,7 @@ class OmeZarr3DCompareWidget(QWidget):
         self._clear_image_layers_keep_roi()
         self._add_layers_for_channel(self.state.selected_channel)
 
+        # slice-by-slice Z view
         self.viewer.dims.ndisplay = 2
 
     def apply_crop_from_rectangle(self) -> None:
@@ -364,7 +390,7 @@ class OmeZarr3DCompareWidget(QWidget):
             self.show_error("No ROI", "Draw a rectangle in the CROP_ROI layer first.")
             return
 
-        rect = self.roi_layer.data[-1]
+        rect = self.roi_layer.data[-1]  #
         ys = rect[:, 0]
         xs = rect[:, 1]
 
@@ -391,6 +417,7 @@ class OmeZarr3DCompareWidget(QWidget):
 
         self._clear_image_layers_keep_roi()
 
+        # Z,Y,X
         a = self.state.arr_a[ch, :, :, :]
         b = self.state.arr_b[ch, :, :, :]
 
@@ -419,7 +446,7 @@ class OmeZarr3DCompareWidget(QWidget):
         layer_b = self.viewer.add_image(bL, name=f"B • C{ch}", colormap=cmap, blending="additive")
         layer_b.grid_position = (0, 1)
 
-        # Absolute  is GRAYSCALE
+        # AbsD
         layer_d = self.viewer.add_image(diff, name=f"abs(A−B) • C{ch}", colormap="gray")
         layer_d.grid_position = (0, 2)
 
@@ -442,9 +469,11 @@ def main() -> None:
     viewer = napari.Viewer(title="PFT • 3D OME-Zarr Compare Viewer")
     widget = OmeZarr3DCompareWidget(viewer, project_root=project_root)
     viewer.window.add_dock_widget(widget, area="right")
+
+    install_wheel_scroll_z(viewer)
+
     napari.run()
 
 
 if __name__ == "__main__":
     main()
-
