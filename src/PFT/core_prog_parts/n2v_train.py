@@ -1,25 +1,32 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
-from typing import Iterable
 import numpy as np
-if not hasattr(np, "product"):
-    np.product = np.prod  # ignore[attr-defined]
 from tensorflow import keras
 from n2v.models import N2VConfig, N2V
 import tensorflow as tf
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, ome_zarr_to_n2v_2d_stack
 
-"""Script to train N2V models for 2D datasets using OME-Zarr samples as input. Supports random patch sampling or tiling strategies, with interactive dataset/channel selection and Keras 3 compatibility patches."""
+"""
+Script to train N2V models for 2D datasets using OME-Zarr samples as input.
+Supports random patch sampling or tiling strategies, with interactive dataset/channel selection
+and Keras 3 compatibility patches.
+
+This version:
+- uses tiling for NON-overlapping patches
+- prints detailed data + model config summary
+- checks model directory is created
+- saves publication-ready history plots (PNG/PDF/SVG)
+"""
 
 TRAIN_DIRNAME = "training_data"
 VAL_DIRNAME = "validation_data"
 
-def project_root_from_this_file() -> Path:
-    """
-    Root from file location:
 
-    """
+def project_root_from_this_file() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
@@ -42,6 +49,7 @@ def infer_axes_shape_channels(zarr_dir: Path) -> tuple[str, tuple[int, ...], int
     if c_idx >= len(shape):
         return axes, shape, 1
     return axes, shape, int(shape[c_idx])
+
 
 def ensure_nyx1(x: np.ndarray) -> np.ndarray:
     """Ensure stack is (N, Y, X, 1)."""
@@ -66,6 +74,7 @@ def sample_random_patches_from_stack(
     """
     Sample random patches from a stack shaped (N, Y, X, 1).
     Returns (n_patches, py, px, 1).
+    NOTE: patches CAN overlap in random mode.
     """
     stack = ensure_nyx1(stack)
     n, h, w, _ = stack.shape
@@ -79,7 +88,7 @@ def sample_random_patches_from_stack(
         t = int(rng.integers(0, n))
         y0 = int(rng.integers(0, h - py + 1))
         x0 = int(rng.integers(0, w - px + 1))
-        out[i] = stack[t, y0:y0 + py, x0:x0 + px, :]
+        out[i] = stack[t, y0 : y0 + py, x0 : x0 + px, :]
     return out
 
 
@@ -93,6 +102,7 @@ def tile_stack_to_frames(
     Tile each frame in a stack (N, Y, X, 1) into tiles of tile_shape.
     Returns list of frames shaped (tile_y, tile_x, 1).
 
+    If stride is None -> stride == tile size -> NON-overlapping tiles.
     """
     stack = ensure_nyx1(stack)
     n, h, w, _ = stack.shape
@@ -110,26 +120,24 @@ def tile_stack_to_frames(
     for t in range(n):
         frame = stack[t, ..., 0]  # (Y,X)
 
-        y_starts = range(0, h, sy)
-        x_starts = range(0, w, sx)
-
-        for y0 in y_starts:
-            for x0 in x_starts:
+        for y0 in range(0, h, sy):
+            for x0 in range(0, w, sx):
                 y1, x1 = y0 + ty, x0 + tx
                 if y1 <= h and x1 <= w:
                     tiles.append(frame[y0:y1, x0:x1][..., None])
                 else:
                     if drop_incomplete:
                         continue
-                    # pad incomplete tiles (rarely needed; optional)
+                    # pad incomplete tiles (optional)
                     tile = np.zeros((ty, tx), dtype=frame.dtype)
                     yy = min(ty, h - y0)
                     xx = min(tx, w - x0)
                     if yy > 0 and xx > 0:
-                        tile[:yy, :xx] = frame[y0:y0 + yy, x0:x0 + xx]
+                        tile[:yy, :xx] = frame[y0 : y0 + yy, x0 : x0 + xx]
                     tiles.append(tile[..., None])
 
     return tiles
+
 
 def load_random_patches_dataset(
     samples: list[Path],
@@ -142,15 +150,19 @@ def load_random_patches_dataset(
 ) -> np.ndarray:
     """
     Loads each OME-Zarr sample and draws random patches from it.
-    Returns (total_patches, py, px, 1).
+    Returns (total_patches, py, px, 1) float32.
     """
     rng = np.random.default_rng(seed)
     all_patches: list[np.ndarray] = []
 
     for p in samples:
-        x = ome_zarr_to_n2v_2d_stack(p, channel=channel, time=None, z=None, normalize=normalize)  # (N,Y,X,1)
+        x = ome_zarr_to_n2v_2d_stack(
+            p, channel=channel, time=None, z=None, normalize=normalize
+        )  # (N,Y,X,1)
         x = ensure_nyx1(x)
-        patches = sample_random_patches_from_stack(x, patch_shape=patch_shape, n_patches=patches_per_file, rng=rng)
+        patches = sample_random_patches_from_stack(
+            x, patch_shape=patch_shape, n_patches=patches_per_file, rng=rng
+        )
         all_patches.append(patches)
 
     out = np.concatenate(all_patches, axis=0).astype(np.float32, copy=False)
@@ -168,52 +180,26 @@ def load_tiled_frames_dataset(
 ) -> list[np.ndarray]:
     """
     Loads OME-Zarr samples and returns a list of tiles (frames) shaped (tile_y, tile_x, 1).
-    Use this if you want to keep all content deterministically via tiling.
+  
     """
     frames: list[np.ndarray] = []
     for p in samples:
-        x = ome_zarr_to_n2v_2d_stack(p, channel=channel, time=None, z=None, normalize=normalize)  # (N,Y,X,1)
+        x = ome_zarr_to_n2v_2d_stack(
+            p, channel=channel, time=None, z=None, normalize=normalize
+        )  # (N,Y,X,1)
         x = ensure_nyx1(x)
-        frames.extend(tile_stack_to_frames(x, tile_shape=tile_shape, stride=stride, drop_incomplete=drop_incomplete))
+        frames.extend(
+            tile_stack_to_frames(
+                x, tile_shape=tile_shape, stride=stride, drop_incomplete=drop_incomplete
+            )
+        )
     return frames
 
-def build_callbacks(log_dir: Path, ckpt_dir: Path, save_every: int):
-    ensure_dir(log_dir)
-    ensure_dir(ckpt_dir)
-
-    callbacks = [
-        keras.callbacks.CSVLogger(str(log_dir / "history.csv"), append=True),
-        keras.callbacks.TensorBoard(log_dir=str(log_dir / "tensorboard"), histogram_freq=0),
-        keras.callbacks.ModelCheckpoint(
-            filepath=str(ckpt_dir / "best.weights.h5"),
-            monitor="val_loss",
-            save_best_only=True,
-            save_weights_only=True,
-            verbose=1,
-        ),
-    ]
-
-    class EveryNEpochs(keras.callbacks.Callback):
-        def __init__(self, n: int, out_dir: Path):
-            super().__init__()
-            self.n = int(n)
-            self.out_dir = out_dir
-
-        def on_epoch_end(self, epoch, logs=None):
-            if (epoch + 1) % self.n == 0:
-                path = self.out_dir / f"epoch_{epoch+1:04d}.weights.h5"
-                self.model.save_weights(str(path))
-                print(f"[CKPT] saved: {path}")
-
-    callbacks.append(EveryNEpochs(save_every, ckpt_dir))
-    return callbacks
 
 def patch_modelcheckpoint_suffix_for_keras3() -> None:
     """
     Keras 3 requires: save_weights_only=True -> filepath must end with '.weights.h5'.
-
     """
-
     try:
         import keras as standalone_keras  # type: ignore
     except Exception:
@@ -225,17 +211,14 @@ def patch_modelcheckpoint_suffix_for_keras3() -> None:
         def __init__(self, filepath, *args, **kwargs):
             save_weights_only = bool(kwargs.get("save_weights_only", False))
             fp = str(filepath)
-
             if save_weights_only and not fp.endswith(".weights.h5"):
                 if fp.endswith(".h5"):
-                    fp = fp[:-3] + ".weights.h5"   
+                    fp = fp[:-3] + ".weights.h5"
                 else:
-                    fp = fp + ".weights.h5"        
-
+                    fp = fp + ".weights.h5"
             super().__init__(fp, *args, **kwargs)
 
     tf.keras.callbacks.ModelCheckpoint = PatchedModelCheckpoint
-
     if standalone_keras is not None:
         standalone_keras.callbacks.ModelCheckpoint = PatchedModelCheckpoint
 
@@ -245,12 +228,11 @@ def patch_modelcheckpoint_suffix_for_keras3() -> None:
     except Exception:
         pass
 
+
 def patch_save_weights_suffix_for_keras3() -> None:
     """
     Keras 3 requires save_weights() filename ending with `.weights.h5`.
     """
-    import tensorflow as tf
-
     orig_save_weights = tf.keras.Model.save_weights
 
     def patched_save_weights(self, filepath, *args, **kwargs):
@@ -264,11 +246,12 @@ def patch_save_weights_suffix_for_keras3() -> None:
 
     tf.keras.Model.save_weights = patched_save_weights
 
+
 def patch_disable_care_tensorboard_image() -> None:
     """
-    n2v uses csbdeep.utils.tf.CARETensorBoardImage(model=..., data=..., ...).
+    n2v uses csbdeep.utils.tf.CARETensorBoardImage(...).
+    Disable if it causes issues (headless / deps).
     """
-
     class _NoOpCallback(tf.keras.callbacks.Callback):
         def __init__(self, *args, **kwargs):
             super().__init__()
@@ -284,6 +267,7 @@ def patch_disable_care_tensorboard_image() -> None:
         n2v_std.CARETensorBoardImage = _NoOpCallback
     except Exception:
         pass
+
 
 def choose_dataset_interactive() -> str:
     options = ["2d_time", "2d_wga_dapi"]
@@ -303,7 +287,6 @@ def choose_channels_for_wga_dapi(detected_c: int) -> list[int]:
       - channel 0 (blue=DAPI)
       - channel 1 (green=WGA)
       - both
-
     """
     if detected_c < 2:
         print(f"[WARN] Expected 2 channels, detected C={detected_c}. Will train only channel 0.")
@@ -325,6 +308,64 @@ def choose_channels_for_wga_dapi(detected_c: int) -> list[int]:
         print("Invalid input. Please enter 0, 1, or b.")
 
 
+def save_training_history_plot(
+    history,
+    out_dir: Path,
+    *,
+    title: str,
+    logy: bool = False,
+) -> None:
+    """
+    Save a publication-ready training curve plot:
+      - loss and val_loss vs epoch
+      - exports: PNG (600 dpi), PDF, SVG
+    """
+    ensure_dir(out_dir)
+
+    hist = getattr(history, "history", None)
+    if not isinstance(hist, dict) or "loss" not in hist:
+        print("[WARN] No 'loss' in history; skipping plot.")
+        return
+
+    loss = np.asarray(hist.get("loss", []), dtype=float)
+    val_loss = hist.get("val_loss", None)
+    val_loss = np.asarray(val_loss, dtype=float) if val_loss is not None else None
+
+    epochs = np.arange(1, len(loss) + 1)
+
+    fig_w_in = 3.35
+    fig_h_in = 2.35
+    fig, ax = plt.subplots(figsize=(fig_w_in, fig_h_in), constrained_layout=True)
+
+    ax.plot(epochs, loss, linewidth=1.6, label="Train loss")
+    if val_loss is not None and len(val_loss) == len(loss):
+        ax.plot(epochs, val_loss, linewidth=1.6, label="Validation loss")
+
+    ax.set_title(title, fontsize=10, pad=6)
+    ax.set_xlabel("Epoch", fontsize=9)
+    ax.set_ylabel("Loss", fontsize=9)
+
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=6))
+    ax.tick_params(axis="both", labelsize=8)
+
+    ax.grid(True, which="major", linewidth=0.6, alpha=0.35)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    if logy:
+        ax.set_yscale("log")
+
+    ax.legend(frameon=False, fontsize=8, loc="best")
+
+    base = out_dir / "training_curve"
+    fig.savefig(base.with_suffix(".png"), dpi=600)
+    fig.savefig(base.with_suffix(".pdf"))
+    fig.savefig(base.with_suffix(".svg"))
+    plt.close(fig)
+
+    print(f"[PLOT] saved: {base}.png/.pdf/.svg")
+
+
 def train_one_model(
     *,
     model_name: str,
@@ -338,7 +379,6 @@ def train_one_model(
     patch_shape: tuple[int, int],
     learning_rate: float,
     loss: str,
-    save_every: int,
 ) -> None:
     # --- N2V config ---
     config = N2VConfig(
@@ -351,6 +391,7 @@ def train_one_model(
         train_loss=str(loss),  # "mse" or "mae"
     )
 
+    # Keras3-safe checkpoint names (N2V internals)
     if hasattr(config, "train_checkpoint"):
         config.train_checkpoint = "weights_best.weights.h5"
     if hasattr(config, "train_checkpoint_best"):
@@ -362,46 +403,64 @@ def train_one_model(
 
     model = N2V(config, model_name, basedir=str(models_base))
 
+    model_dir = models_base / model_name
+    exists = model_dir.exists() and model_dir.is_dir()
+    print("\n========== MODEL DIRECTORY CHECK ==========")
+    print(f"Model directory path:  {model_dir}")
+    print(f"Directory exists:      {exists}")
+    print("==========================================\n")
+
     patch_modelcheckpoint_suffix_for_keras3()
     patch_save_weights_suffix_for_keras3()
     patch_disable_care_tensorboard_image()
-    model.train(X, X_val)
 
+    history = model.train(X, X_val)
+
+    hist_keys = sorted(list(getattr(history, "history", {}).keys()))
+    print("\n========== TRAINING HISTORY KEYS ==========")
+    print(hist_keys)
+    print("===========================================\n")
+
+    out_dir = logs_base / model_name
+    save_training_history_plot(
+        history,
+        out_dir,
+        title=f"N2V training — {model_name}",
+        logy=False,
+    )
 
 
 def main() -> None:
+
     EPOCHS = 100
     STEPS_PER_EPOCH = 250
     BATCH_SIZE = 128
     PATCH_SHAPE = (64, 64)
     LR = 1e-4
     LOSS = "mse"              # "mse" or "mae"
-    SAVE_EVERY = 5
-    NORMALIZE = "percentile"  
+    NORMALIZE = "percentile"  # per-frame percentile normalization -> [0,1] float32
 
-    # sampling strategy
-    # "random_patches" 
-    # "tiling"         
-    SAMPLING_MODE = "random_patches"   
 
-    # random_patches mode 
+    SAMPLING_MODE = "tiling"
+
+
     PATCHES_PER_FILE_TRAIN = 1024
     PATCHES_PER_FILE_VAL = 256
     RANDOM_SEED = 0
 
-    # tiling mode 
-    TILE_SHAPE = (1024, 1024)          # (Y, X)
-    TILE_STRIDE = None                 # None -> non-overlapping; int/(sy,sx) for overlap
+   
+    TILE_SHAPE = (64, 64)            
+    TILE_STRIDE = None                # None -> NON-overlapping
     DROP_INCOMPLETE_TILES = True
 
     root = project_root_from_this_file()
-
     training_base = root / "results" / "training_files"
     logs_base = root / "results" / "N2V_denoised" / "logs"
     models_base = root / "models"
 
     ensure_dir(logs_base)
     ensure_dir(models_base)
+
 
     dataset = choose_dataset_interactive()
     dataset_root = training_base / dataset
@@ -428,12 +487,7 @@ def main() -> None:
         channels = choose_channels_for_wga_dapi(detected_c=c)
 
     for ch in channels:
-        ch_name = (
-            "blue"
-            if dataset == "2d_time"
-            else ("blue_DAPI" if ch == 0 else "green_WGA")
-        )
-
+        ch_name = "blue" if dataset == "2d_time" else ("blue_DAPI" if ch == 0 else "green_WGA")
         print(f"\n=== Training {dataset} | channel {ch} ({ch_name}) ===")
 
         model_name = f"n2v_{dataset}_{ch_name}_p{PATCH_SHAPE[0]}x{PATCH_SHAPE[1]}"
@@ -478,17 +532,56 @@ def main() -> None:
             )
 
             if not frames_train:
-                raise RuntimeError("Tiling produced 0 training frames. Check TILE_SHAPE/STRIDE and input sizes.")
+                raise RuntimeError("Tiling produced 0 training tiles. Check TILE_SHAPE/STRIDE and input sizes.")
             if not frames_val:
-                raise RuntimeError("Tiling produced 0 validation frames. Check TILE_SHAPE/STRIDE and input sizes.")
+                raise RuntimeError("Tiling produced 0 validation tiles. Check TILE_SHAPE/STRIDE and input sizes.")
 
-            X = np.stack(frames_train, axis=0).astype(np.float32, copy=False)  # (Ntiles, Ty, Tx, 1)
+            X = np.stack(frames_train, axis=0).astype(np.float32, copy=False)
             X_val = np.stack(frames_val, axis=0).astype(np.float32, copy=False)
 
         else:
             raise ValueError("SAMPLING_MODE must be 'random_patches' or 'tiling'")
 
-        print(f"[INFO] X: {X.shape} | X_val: {X_val.shape} | dtype: {X.dtype}")
+        print("\n========== DATA SUMMARY ==========")
+
+        print("\n--- TRAINING DATA ---")
+        print(f"Number of patches:     {X.shape[0]}")
+        print(f"Patch shape:           {X.shape[1:]}  (Y, X, C)")
+        print(f"Full tensor shape:     {X.shape}")
+        print(f"Dtype:                 {X.dtype}")
+        print(f"Min / Max:             {X.min():.5f} / {X.max():.5f}")
+        print(f"NaN count:             {np.isnan(X).sum()}")
+
+        print("\n--- VALIDATION DATA ---")
+        print(f"Number of patches:     {X_val.shape[0]}")
+        print(f"Patch shape:           {X_val.shape[1:]}  (Y, X, C)")
+        print(f"Full tensor shape:     {X_val.shape}")
+        print(f"Dtype:                 {X_val.dtype}")
+        print(f"Min / Max:             {X_val.min():.5f} / {X_val.max():.5f}")
+        print(f"NaN count:             {np.isnan(X_val).sum()}")
+
+        print("=================================\n")
+
+        # -----------------------------
+        # Print MODEL config summary
+        # -----------------------------
+        print("========== MODEL CONFIGURATION ==========")
+        print(f"Model name:           {model_name}")
+        print(f"Sampling mode:        {SAMPLING_MODE}")
+        print(f"Epochs:               {EPOCHS}")
+        print(f"Steps per epoch:      {STEPS_PER_EPOCH}")
+        print(f"Batch size:           {BATCH_SIZE}")
+        print(f"Patch shape:          {PATCH_SHAPE}")
+        print(f"Learning rate:        {LR}")
+        print(f"Loss function:        {LOSS}")
+        print(f"Normalize mode:       {NORMALIZE}")
+
+        if SAMPLING_MODE == "tiling":
+            print(f"Tiling shape:         {TILE_SHAPE}")
+            print(f"Tiling stride:        {TILE_STRIDE}  (None => non-overlap)")
+            print(f"Drop incomplete:      {DROP_INCOMPLETE_TILES}")
+
+        print("=========================================\n")
 
         train_one_model(
             model_name=model_name,
@@ -502,7 +595,6 @@ def main() -> None:
             patch_shape=PATCH_SHAPE,
             learning_rate=LR,
             loss=LOSS,
-            save_every=SAVE_EVERY,
         )
 
     print("\nDone.")
