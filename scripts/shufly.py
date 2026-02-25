@@ -5,7 +5,7 @@ from pathlib import Path
 
 """Script to collect OME-Zarr directories from the datasets, rename them, and split into training/validation folders."""
 
-BASE = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\training_files")
+BASE = Path(r"D:\ra18qyqu\Pneumo_Fluor_Toolkit_PFT\results\img")
 DATASETS = [
     BASE / "2d_time",
     BASE / "2d_wga_dapi",
@@ -14,7 +14,7 @@ DATASETS = [
 TRAIN_DIRNAME = "training_data"
 VAL_DIRNAME = "validation_data"
 
-TRAIN_FRAC = 0.60 
+TRAIN_FRAC = 0.80
 RANDOM_SEED = 42   
 
 

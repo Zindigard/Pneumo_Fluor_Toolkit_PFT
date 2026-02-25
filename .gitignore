@@ -1,14 +1,7 @@
 # local outputs
 models/
 results/
-results/**
 
-# but keep these folders
-!results/img/
-!results/img/2d_time/
-!results/img/2d_time/**
-!results/img/2d_wga_dapi/
-!results/img/2d_wga_dapi/**
 # build / install 
 *.egg-info/
 build/

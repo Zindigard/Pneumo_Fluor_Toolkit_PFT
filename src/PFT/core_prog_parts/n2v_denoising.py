@@ -40,6 +40,10 @@ def get_model(dataset: str, key: str) -> N2V:
 
     # Load existing model from disk
     model = N2V(config=None, name=model_name, basedir=str(model_dir))
+    print(f"[N2V] Loading model: {model_name}")
+    print(f"[N2V] Basedir: {model_dir}")
+    print(f"[N2V] Exists: {(model_dir / model_name).exists()}")
+    print(f"[N2V] Has weights_best: {((model_dir / model_name) / 'weights_best.weights.h5').exists()}")
     _MODEL_CACHE[cache_key] = model
     return model
 
