@@ -305,9 +305,6 @@ def main() -> None:
     PATCH_SHAPE = (64, 64)
     SEED = 0
 
-    # Patch-generator control (your n2v version):
-    # - None => "as many patches as fit" (can be huge)
-    # - int  => fixed number of patches from the SYXC stack
     NUM_PATCHES_PER_IMG = 8192
     AUGMENT = False
     SHUFFLE = False
@@ -419,7 +416,7 @@ def main() -> None:
             print(f"[PATCH] (joint) created: {patches.shape} | skipped frames: {skipped_frames}")
             print(f"[SPLIT] (joint) train: {X.shape[0]} | val: {X_val.shape[0]}")
 
-            # show channel 0 (DAPI) with blue colormap
+            
             show_two_random_patches(X, title_prefix=model_name, seed=SEED, show_channel=0)
             train_one_model(model_name, models_base, X, X_val)
 

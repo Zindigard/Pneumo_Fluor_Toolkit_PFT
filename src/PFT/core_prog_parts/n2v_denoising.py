@@ -6,10 +6,6 @@ from n2v.models import N2V
 """
 N2V denoising helpers.
 
-This version supports the **JOINT** WGA+DAPI 2-channel model trained on RAW data
-(no normalization). Channel convention:
-  - channel 0 = DAPI (blue)
-  - channel 1 = WGA  (green)
 """
 
 
@@ -113,13 +109,6 @@ def denoise_wga_dapi_joint_raw(img_yxc: np.ndarray) -> np.ndarray:
     Joint WGA+DAPI denoising using model:
       n2v_2d_wga_dapi_JOINT_DAPI+WGA_raw
 
-    Input:
-      img_yxc: (Y,X,2) float32 (RAW range; no normalization)
-        - C0 = DAPI (blue)
-        - C1 = WGA  (green)
-
-    Output:
-      (Y,X,2) float32
     """
     img_yxc = np.asarray(img_yxc)
     if img_yxc.ndim != 3 or img_yxc.shape[-1] != 2:
@@ -153,7 +142,7 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
         y = predict_yxc(img.astype(np.float32, copy=False), model)
         return y  # (Y,X,1)
 
-    # Two-channel joint
+    
     if img.ndim == 3 and img.shape[-1] == 2:
         return denoise_wga_dapi_joint_raw(img)
 
