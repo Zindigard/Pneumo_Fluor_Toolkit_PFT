@@ -1,22 +1,14 @@
 from __future__ import annotations
-
 import sys
 from pathlib import Path
 from collections import Counter
-
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-
 from n2v.models import N2VConfig, N2V
 from n2v.internals.N2V_DataGenerator import N2V_DataGenerator
-
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, ome_zarr_to_n2v_2d_stack
 
-
-# -----------------------------
-# small utilities
-# -----------------------------
 def project_root_from_this_file() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -83,10 +75,6 @@ def split_patches_80_20(patches: np.ndarray, seed: int = 0) -> tuple[np.ndarray,
     n_train = max(1, n_train) if len(idx) >= 2 else len(idx)
     return patches[idx[:n_train]], patches[idx[n_train:]]
 
-
-# -----------------------------
-# interactive choices
-# -----------------------------
 def choose_dataset_interactive() -> str:
     options = ["2d_time", "2d_wga_dapi"]
     print("Choose dataset to train:")
@@ -127,9 +115,7 @@ def choose_wga_dapi_mode(detected_c: int) -> tuple[str, list[int]]:
         print("Invalid input. Please enter 0, 1, s, or j.")
 
 
-# -----------------------------
-# Loading (NO normalization)
-# -----------------------------
+
 def load_single_channel_frames_yx(samples: list[Path], *, channel: int) -> list[np.ndarray]:
     """
     Returns list of frames as 2D arrays (Y,X).
@@ -171,11 +157,6 @@ def load_joint_frames_yxc(samples: list[Path], *, channels: list[int]) -> list[n
     return frames
 
 
-# -----------------------------
-# Patch extraction (FIXED for your n2v version)
-# - We must pass data as list of SYXC (or SZYXC) arrays
-# - We also skip frames that don't match the most common (Y,X)
-# -----------------------------
 def _frames_to_syxc(frames: list[np.ndarray]) -> tuple[np.ndarray, int]:
     """
     Convert a list of frames to one SYXC array.
@@ -251,9 +232,6 @@ def generate_patches_from_frames(
     return patches, skipped
 
 
-# -----------------------------
-# Show 2 random patches (blue colormap)
-# -----------------------------
 def show_two_random_patches(X: np.ndarray, title_prefix: str, seed: int = 0, show_channel: int = 0) -> None:
     if X.shape[0] < 2:
         print("[WARN] Not enough patches to display 2 examples.")
@@ -275,9 +253,6 @@ def show_two_random_patches(X: np.ndarray, title_prefix: str, seed: int = 0, sho
         plt.show()
 
 
-# -----------------------------
-# Training (config -> model)
-# -----------------------------
 def train_one_model(model_name: str, models_base: Path, X: np.ndarray, X_val: np.ndarray) -> None:
     steps = max(1, int(X.shape[0] / 128))
 
@@ -326,9 +301,6 @@ def train_one_model(model_name: str, models_base: Path, X: np.ndarray, X_val: np
     print("=================================\n")
 
 
-# -----------------------------
-# Main
-# -----------------------------
 def main() -> None:
     PATCH_SHAPE = (64, 64)
     SEED = 0

@@ -1,36 +1,51 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import numpy as np
 from n2v.models import N2V
+"""
+N2V denoising helpers.
 
-"""Helper functions to load N2V models for 2D datasets and apply them for denoising."""
+This version supports the **JOINT** WGA+DAPI 2-channel model trained on RAW data
+(no normalization). Channel convention:
+  - channel 0 = DAPI (blue)
+  - channel 1 = WGA  (green)
+"""
 
-#  Model
+
 MODEL_NAMES = {
     ("2d_time", "blue"): "n2v_2d_time_blue_p64x64",
+
     ("2d_wga_dapi", "blue_DAPI"): "n2v_2d_wga_dapi_blue_DAPI_p64x64",
     ("2d_wga_dapi", "green_WGA"): "n2v_2d_wga_dapi_green_WGA_p64x64",
+
+    ("2d_wga_dapi", "JOINT_DAPI+WGA_raw"): "n2v_2d_wga_dapi_JOINT_DAPI+WGA_raw",
 }
 
-
-
 _MODEL_CACHE: Dict[Tuple[str, str], N2V] = {}
+_MODEL_CACHE_BY_NAME: Dict[str, N2V] = {}
 
 
-def project_root_from_this_file() -> Path:
+def _find_repo_root(start: Optional[Path] = None) -> Path:
     """
-    File location:
-     
+    Try to find the repo root robustly by walking upwards.
+    We stop at the first parent that contains 'models' and 'results'.
     """
+    p = (start or Path(__file__)).resolve()
+    for parent in [p] + list(p.parents):
+        if (parent / "models").exists() and (parent / "results").exists():
+            return parent
     return Path(__file__).resolve().parents[3]
 
 
 def models_dir() -> Path:
-    return project_root_from_this_file() / "models"
+    return _find_repo_root() / "models"
 
 
 def get_model(dataset: str, key: str) -> N2V:
+    """
+    Load by (dataset, key) mapping.
+    """
     cache_key = (dataset, key)
     if cache_key in _MODEL_CACHE:
         return _MODEL_CACHE[cache_key]
@@ -38,112 +53,109 @@ def get_model(dataset: str, key: str) -> N2V:
     model_dir = models_dir()
     model_name = MODEL_NAMES[(dataset, key)]
 
-    # Load existing model from disk
     model = N2V(config=None, name=model_name, basedir=str(model_dir))
     print(f"[N2V] Loading model: {model_name}")
     print(f"[N2V] Basedir: {model_dir}")
     print(f"[N2V] Exists: {(model_dir / model_name).exists()}")
-    print(f"[N2V] Has weights_best: {((model_dir / model_name) / 'weights_best.weights.h5').exists()}")
+    print(f"[N2V] Has weights_best: {((model_dir / model_name) / 'weights_best.h5').exists()}")
+
     _MODEL_CACHE[cache_key] = model
     return model
 
-def percentile_norm01(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
-    """Percentile normalize to [0,1] float32."""
-    x = np.asarray(x)
-    if x.size == 0:
-        return x.astype(np.float32, copy=False)
 
-    lo, hi = np.percentile(x, [p_low, p_high])
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        # Fallback: min/max
-        lo = float(np.min(x))
-        hi = float(np.max(x))
-        if hi <= lo:
-            return np.zeros_like(x, dtype=np.float32)
-
-    y = (x.astype(np.float32) - float(lo)) / (float(hi) - float(lo))
-    return np.clip(y, 0.0, 1.0)
-
-
-def normalize_yxc_for_n2v(img_yxc: np.ndarray) -> np.ndarray:
+def load_n2v_model(model_name: str) -> N2V:
     """
-    percentile per channel -> float32 in [0,1].
+    Load by explicit model name (folder under /models).
+    Used by validation/denoising scripts.
+    """
+    if model_name in _MODEL_CACHE_BY_NAME:
+        return _MODEL_CACHE_BY_NAME[model_name]
+
+    model_dir = models_dir()
+    model = N2V(config=None, name=model_name, basedir=str(model_dir))
+
+    print(f"[N2V] Loading model: {model_name}")
+    print(f"[N2V] Basedir: {model_dir}")
+    print(f"[N2V] Exists: {(model_dir / model_name).exists()}")
+    print(f"[N2V] Has weights_best: {((model_dir / model_name) / 'weights_best.h5').exists()}")
+
+    _MODEL_CACHE_BY_NAME[model_name] = model
+    return model
+
+
+def predict_yxc(img_yxc: np.ndarray, model: N2V) -> np.ndarray:
+    """
+    img_yxc: (Y, X, C) float32 (RAW range allowed)
+    returns: (Y, X, C) float32
+
+    We intentionally DO NOT add a batch dimension here because we pass a single
+    image with axes="YXC". Adding a batch while still using "YXC" can lead to
+    axis reordering and broadcasting errors in some n2v versions.
+    """
+    img_yxc = np.asarray(img_yxc, dtype=np.float32)
+    if img_yxc.ndim != 3:
+        raise ValueError(f"Expected (Y,X,C), got {img_yxc.shape}")
+
+    # Some n2v versions need 'axes'
+    try:
+        y = model.predict(img_yxc, axes="YXC")
+    except TypeError:
+        y = model.predict(img_yxc)
+
+    y = np.asarray(y, dtype=np.float32)
+    if y.shape != img_yxc.shape:
+        raise ValueError(f"Unexpected prediction shape {y.shape}, expected {img_yxc.shape}")
+    return y
+
+
+def denoise_wga_dapi_joint_raw(img_yxc: np.ndarray) -> np.ndarray:
+    """
+    Joint WGA+DAPI denoising using model:
+      n2v_2d_wga_dapi_JOINT_DAPI+WGA_raw
+
+    Input:
+      img_yxc: (Y,X,2) float32 (RAW range; no normalization)
+        - C0 = DAPI (blue)
+        - C1 = WGA  (green)
+
+    Output:
+      (Y,X,2) float32
     """
     img_yxc = np.asarray(img_yxc)
-    if img_yxc.ndim != 3:
-        raise ValueError(f"Expected YXC image, got shape {img_yxc.shape}")
+    if img_yxc.ndim != 3 or img_yxc.shape[-1] != 2:
+        raise ValueError(f"Expected (Y,X,2), got {img_yxc.shape}")
 
-    c = img_yxc.shape[-1]
-    out = np.empty(img_yxc.shape, dtype=np.float32)
-    for ch in range(c):
-        out[..., ch] = percentile_norm01(img_yxc[..., ch])
-    return out
-
-
-def predict_single_channel(img_yx: np.ndarray, model: N2V) -> np.ndarray:
-    """
-    img_yx: (Y, X) or (Y, X, 1)
-    returns: (Y, X)
-    """
-    if img_yx.ndim == 2:
-        x = img_yx[..., np.newaxis]
-    elif img_yx.ndim == 3 and img_yx.shape[-1] == 1:
-        x = img_yx
-    else:
-        raise ValueError(f"Expected single-channel (Y,X) or (Y,X,1), got {img_yx.shape}")
-
-    y = model.predict(x, axes="YXC")  # (Y,X,1)
-    return np.asarray(y[..., 0], dtype=np.float32)  # (Y,X)
+    model = get_model("2d_wga_dapi", "JOINT_DAPI+WGA_raw")
+    return predict_yxc(img_yxc.astype(np.float32, copy=False), model)
 
 
 def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
     """
-    Denoise 2D datasets and return YXC.
+    Convenience wrapper used in the toolkit.
 
     Accepted input:
-      - (Y,X)
-      - (Y,X,1)
-      - (Y,X,2)
+      - (Y,X)      -> uses 2d_time single-channel model
+      - (Y,X,1)    -> uses 2d_time single-channel model
+      - (Y,X,2)    -> uses **JOINT** WGA+DAPI model
 
     Output:
-      - (Y,X,1) for single-channel input
-      - (Y,X,2) for two-channel input
+      - (Y,X,1) or (Y,X,2), float32
     """
     img = np.asarray(img)
 
-    # (Y,X) -> 2d_time single channel
     if img.ndim == 2:
-        dataset = "2d_time"
-        model = get_model(dataset, "blue")
+        model = get_model("2d_time", "blue")
+        y = predict_yxc(img[..., None].astype(np.float32, copy=False), model)
+        return y  # (Y,X,1)
 
-        img_n = percentile_norm01(img)
-        den = predict_single_channel(img_n, model)     # (Y,X)
-        return den[..., np.newaxis]                    # (Y,X,1)
+    if img.ndim == 3 and img.shape[-1] == 1:
+        model = get_model("2d_time", "blue")
+        y = predict_yxc(img.astype(np.float32, copy=False), model)
+        return y  # (Y,X,1)
 
-    # (Y,X,C)
-    if img.ndim == 3:
-        # (Y,X,1)
-        if img.shape[-1] == 1:
-            dataset = "2d_time"
-            model = get_model(dataset, "blue")
+    # Two-channel joint
+    if img.ndim == 3 and img.shape[-1] == 2:
+        return denoise_wga_dapi_joint_raw(img)
 
-            ch0 = percentile_norm01(img[..., 0])
-            den = predict_single_channel(ch0, model)
-            return den[..., np.newaxis]                # (Y,X,1)
+    raise ValueError(f"Unsupported input shape {img.shape}. Expected (Y,X), (Y,X,1) or (Y,X,2).")
 
-        # (Y,X,2) -> 2d_wga_dapi
-        if img.shape[-1] == 2:
-            dataset = "2d_wga_dapi"
-            model_dapi = get_model(dataset, "blue_DAPI")
-            model_wga = get_model(dataset, "green_WGA")
-
-            ch0 = percentile_norm01(img[..., 0])
-            ch1 = percentile_norm01(img[..., 1])
-
-            den0 = predict_single_channel(ch0, model_dapi)  # DAPI
-            den1 = predict_single_channel(ch1, model_wga)   # WGA
-            return np.stack([den0, den1], axis=-1)           # (Y,X,2)
-
-    raise ValueError(
-        f"Unsupported input shape {img.shape}. Expected (Y,X), (Y,X,1) or (Y,X,2)."
-    )

@@ -1,10 +1,17 @@
 from __future__ import annotations
+
 from pathlib import Path
 import numpy as np
+import tifffile
+
 from PFT.core_prog_parts.io import CziMeta, read_czi_xml
 from PFT.core_prog_parts import visualize_2d
 
-"""Helper functions to save metadata, previews and OME-Zarr files for 2D and 3D datasets, with structured output directories and error handling for missing metadata or OME-Zarr saving issues."""
+"""
+Helper functions to save metadata, previews and OME-Zarr files for 2D and 3D datasets,
+with structured output directories and error handling for missing metadata or OME-Zarr saving issues.
+"""
+
 
 def results_img_dir() -> Path:
     repo_root = Path(__file__).resolve().parents[3]
@@ -41,6 +48,137 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
         (out_dir / "metadata.xml").write_text("No XML metadata available.\n", encoding="utf-8")
 
 
+def _dtype_max(arr: np.ndarray) -> float:
+    if np.issubdtype(arr.dtype, np.integer):
+        return float(np.iinfo(arr.dtype).max)
+    m = float(np.nanmax(arr)) if arr.size else 1.0
+    return m if m > 0 else 1.0
+
+
+def _linear01(img: np.ndarray, denom: float) -> np.ndarray:
+    img = img.astype(np.float32, copy=False)
+    out = img / float(denom)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _minmax01(arr: np.ndarray) -> np.ndarray:
+    a = arr.astype(np.float32, copy=False)
+    if not a.size:
+        return np.zeros_like(a, dtype=np.float32)
+    lo = float(a.min())
+    hi = float(a.max())
+    if hi <= lo:
+        return np.zeros_like(a, dtype=np.float32)
+    out = (a - lo) / (hi - lo)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
+    img2d = visualize_2d.max_project_to_2d(arr)
+    b = _linear01(img2d, _dtype_max(arr))
+    z = np.zeros_like(b)
+    return np.dstack([z, z, b])
+
+
+def _rgb01_time_norm(arr: np.ndarray) -> np.ndarray:
+    return visualize_2d.rgb_time_hada_blue(arr)
+
+
+def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
+    """
+    WGA/DAPI requested mapping:
+      Channel 0 -> BLUE
+      Channel 1 -> GREEN
+    Raw look: linear scaling by dtype max.
+    """
+    ch_ax = visualize_2d.find_channel_axis(arr)
+    blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
+    green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
+
+    b = _linear01(blue, _dtype_max(arr))
+    g = _linear01(green, _dtype_max(arr))
+    r = np.zeros_like(g)
+    return np.dstack([r, g, b])
+
+
+def _rgb01_wga_dapi_norm(arr: np.ndarray) -> np.ndarray:
+    """
+    Same mapping:
+      Channel 0 -> BLUE
+      Channel 1 -> GREEN
+    Normalized look: percentile normalization per channel.
+    """
+    ch_ax = visualize_2d.find_channel_axis(arr)
+    blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
+    green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
+
+    b = visualize_2d.normalize01(blue)
+    g = visualize_2d.normalize01(green)
+    r = np.zeros_like(g)
+    return np.dstack([r, g, b])
+
+
+def save_raw_and_normalized_tiffs_and_previews(
+    arr: np.ndarray,
+    out_dir: Path,
+    *,
+    preview_mode: str,          # "time_blue" or "wga_dapi"
+    title: str,
+    meta: CziMeta,
+    scalebar_um: float,
+    save_preview_png: bool,
+) -> None:
+    """
+    Saves:
+      - image_raw.tif          (original dtype)
+      - image_norm16.tif       (min-max normalized to uint16)
+
+    Plus:
+      - image_raw_rgb.tif      (RGB uint16, requested channel colors)
+      - image_norm16_rgb.tif   (RGB uint16, requested channel colors)
+
+    Plus (if save_preview_png):
+      - preview_raw.png        (raw-look RGB)
+      - preview_norm.png       (normalized-look RGB)
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    tifffile.imwrite(out_dir / "image_raw.tif", arr)
+
+    a01 = _minmax01(arr)  # min-max per-array
+    a16 = np.round(a01 * 65535.0).astype(np.uint16) if a01.size else np.zeros_like(arr, dtype=np.uint16)
+    tifffile.imwrite(out_dir / "image_norm16.tif", a16)
+
+    if preview_mode == "wga_dapi":
+        rgb_raw01 = _rgb01_wga_dapi_raw(arr)
+        rgb_norm01 = _rgb01_wga_dapi_norm(arr)
+    else:
+        rgb_raw01 = _rgb01_time_raw(arr)
+        rgb_norm01 = _rgb01_time_norm(arr)
+
+    rgb_raw16 = np.round(rgb_raw01 * 65535.0).astype(np.uint16)
+    rgb_norm16 = np.round(rgb_norm01 * 65535.0).astype(np.uint16)
+
+    tifffile.imwrite(out_dir / "image_raw_rgb.tif", rgb_raw16)
+    tifffile.imwrite(out_dir / "image_norm16_rgb.tif", rgb_norm16)
+
+    if save_preview_png:
+        visualize_2d.save_rgb_preview_png(
+            rgb01=rgb_raw01,
+            out_png=out_dir / "preview_raw.png",
+            title=title + " | preview RAW (linear)",
+            meta=meta,
+            scalebar_um=scalebar_um,
+        )
+        visualize_2d.save_rgb_preview_png(
+            rgb01=rgb_norm01,
+            out_png=out_dir / "preview_norm.png",
+            title=title + " | preview NORM (percentile)",
+            meta=meta,
+            scalebar_um=scalebar_um,
+        )
+
+
 def export_2d(
     arr: np.ndarray,
     meta: CziMeta,
@@ -50,8 +188,8 @@ def export_2d(
     visualize: bool = False,
     save_preview_png: bool = True,
     scalebar_um: float = 5.0,
-    wga_ch: int = 0,
-    dapi_ch: int = 1,
+    wga_ch: int = 0,   
+    dapi_ch: int = 1,  
     *,
     save_omezarr: bool = True,
     overwrite_omezarr: bool = True,
@@ -60,10 +198,17 @@ def export_2d(
     Export 2D:
         metadata.txt
         metadata.xml
-        preview.png
+
+        image_raw.tif
+        image_norm16.tif
+
+        image_raw_rgb.tif
+        image_norm16_rgb.tif
+
+        preview_raw.png
+        preview_norm.png
+
         image.ome.zarr
-    Notes
-    
     """
     if out_base is None:
         out_base = results_img_dir()
@@ -73,6 +218,18 @@ def export_2d(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     write_metadata_txt_xml(out_dir, meta)
+
+    title = f"{dataset_name} | {Path(meta.source_path).name}"
+
+    save_raw_and_normalized_tiffs_and_previews(
+        arr=arr,
+        out_dir=out_dir,
+        preview_mode=preview_mode,
+        title=title,
+        meta=meta,
+        scalebar_um=scalebar_um,
+        save_preview_png=save_preview_png,
+    )
 
     if save_omezarr:
         try:
@@ -90,26 +247,14 @@ def export_2d(
                 encoding="utf-8",
             )
 
-    # Create RGB
-    title = f"{dataset_name} | {Path(meta.source_path).name}"
-    if preview_mode == "wga_dapi":
-        rgb = visualize_2d.rgb_wga_dapi(arr, wga_ch=wga_ch, dapi_ch=dapi_ch)
-    else:
-        rgb = visualize_2d.rgb_time_hada_blue(arr)
-
-    if save_preview_png:
-        visualize_2d.save_rgb_preview_png(
-            rgb01=rgb,
-            out_png=out_dir / "preview.png",
-            title=title,
-            meta=meta,
-            scalebar_um=scalebar_um,
-        )
-
     if visualize:
+        if preview_mode == "wga_dapi":
+            rgb = _rgb01_wga_dapi_norm(arr)
+        else:
+            rgb = _rgb01_time_norm(arr)
+
         visualize_2d.preview_rgb(rgb, title=title, meta=meta, scalebar_um=scalebar_um)
         import matplotlib.pyplot as plt
-
         plt.show()
 
     return out_dir
@@ -125,6 +270,7 @@ def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | N
 
     write_metadata_txt_xml(out_dir, meta)
     return out_dir
+
 
 def fmt(v: object) -> str:
     if v is None:
@@ -146,7 +292,6 @@ def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
-    
     out_dir.mkdir(parents=True, exist_ok=True)
 
     vox = (
@@ -163,7 +308,6 @@ def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
     lines: list[str] = []
     lines += ["# PFT 3D metadata report", ""]
 
-    #Acquisition 
     lines += [f"Dataset / sample ID: {fmt(getattr(meta, 'sample_id', None))}"]
     lines += [f"Title: {fmt(getattr(meta, 'title', None))}"]
     lines += [f"Date/time: {fmt(getattr(meta, 'creation_datetime', None))}"]
@@ -171,7 +315,6 @@ def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
     lines += [f"Operator / user: {fmt(getattr(meta, 'operator', None))}"]
     lines += [""]
 
-    # Modality and reconstruction
     lines += [f"Modality: {fmt(getattr(meta, 'modality', None))}"]
     lines += [f"SIM type: {fmt(getattr(meta, 'sim_mode', None))}"]
     lines += [f"Reconstruction software: {fmt(getattr(meta, 'application_name', None))}"]
@@ -201,14 +344,13 @@ def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
         lines += ["Reconstruction settings: -", ""]
 
     # Sampling and image geometry
-    
     lines += [f"CZI axes (header): {fmt(axes)}"]
     lines += [f"CZI shape (header): {fmt(header_shape)}"]
     lines += [f"Voxel size (µm): dx={fmt(vox[0])}, dy={fmt(vox[1])}, dz={fmt(vox[2])}"]
     lines += [f"Pixel type / bit depth: {fmt(getattr(meta, 'pixel_type', None))}"]
     lines += [""]
 
-    #Optics and detection
+    # Optics and detection
     lines += [f"Objective model: {fmt(getattr(meta, 'objective_model', None))}"]
     lines += [f"Objective magnification: {fmt(getattr(meta, 'objective_magnification', None))}"]
     lines += [f"Objective NA: {fmt(getattr(meta, 'objective_na', None))}"]
