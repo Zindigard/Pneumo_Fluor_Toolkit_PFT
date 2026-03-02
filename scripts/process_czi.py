@@ -6,7 +6,11 @@ from PFT.core_prog_parts.io import list_czi_files, load_czi
 from PFT.core_prog_parts.save import export_2d, export_3d
 from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
 
-"""Script to process CZI files from the datasets, extract metadata, save OME-Zarr copies, and generate previews for training collection."""
+"""
+Process CZI files, extract metadata, save previews + OME-Zarr exports.
+2D training collection OME-Zarr is explicitly single-scale (no pyramid)
+3D exports can create multiscale pyramids 
+"""
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_COLLECTION_DIR = REPO_ROOT / "results" / "training_files"
@@ -16,7 +20,7 @@ TRAIN_COLLECTION_DIR = REPO_ROOT / "results" / "training_files"
 class Paths:
     data_2d_time: Path = Path(r"E:\2D_data_time")
     data_2d_wga_dapi: Path = Path(r"E:\2D_data_WGA_DAPI_DNA")
-    data_3d: Path = Path(r"E:\3d_data") 
+    data_3d: Path = Path(r"E:\3d_data")
 
 
 PATHS = Paths()
@@ -86,7 +90,7 @@ def choose_file_interactive(files: list[Path]) -> Path:
 
 def run_one_2d(dataset: str, f: Path, visualize: bool, scalebar_um: float) -> Path:
     """
-    Processes one file and saves a copy to the central training repository.
+    Processes one 2D file, writes previews + image.ome.zarr in results/img,
     """
     arr, meta = load_czi(f)
     print("\n=== META ===")
@@ -106,10 +110,17 @@ def run_one_2d(dataset: str, f: Path, visualize: bool, scalebar_um: float) -> Pa
         dapi_ch=0,
     )
 
-    # collect for training
     TRAIN_COLLECTION_DIR.mkdir(parents=True, exist_ok=True)
     file_target_dir = TRAIN_COLLECTION_DIR / f.stem
-    save_ome_zarr_next_to_outputs(file_target_dir, arr, meta, overwrite=True)
+    save_ome_zarr_next_to_outputs(
+        file_target_dir,
+        arr,
+        meta,
+        overwrite=True,
+        pyramid_3d=False,          #
+        pyramid_max_layer=0,
+        pyramid_downscale=2,
+    )
 
     return out_dir
 
@@ -123,7 +134,7 @@ def run_all_2d(
     stop_on_error: bool = False,
 ) -> None:
     """
-    Batch processes files and adds each to the training collection.
+    Batch processes 2D files and adds each to the training collection.
     """
     files = list_czi_files(folder)
     files = files[start:]
@@ -149,9 +160,17 @@ def run_all_2d(
                 wga_ch=1,
                 dapi_ch=0,
             )
-            # Training collection
+
             TRAIN_COLLECTION_DIR.mkdir(parents=True, exist_ok=True)
-            save_ome_zarr_next_to_outputs(TRAIN_COLLECTION_DIR / f.stem, arr, meta, overwrite=True)
+            save_ome_zarr_next_to_outputs(
+                TRAIN_COLLECTION_DIR / f.stem,
+                arr,
+                meta,
+                overwrite=True,
+                pyramid_3d=False,
+                pyramid_max_layer=0,
+                pyramid_downscale=2,
+            )
             ok += 1
         except Exception as e:
             failed += 1
@@ -161,7 +180,17 @@ def run_all_2d(
 
     print(f"\nDone. Success: {ok} | Failed: {failed}")
 
-def run_all_3d(base_folder: Path) -> None:
+
+def run_all_3d(
+    base_folder: Path,
+    *,
+    pyramid_max_layer: int = 2,
+    pyramid_downscale: int = 2,
+) -> None:
+    """
+    Batch export 3D.
+    Pyramid is controlled by ome_zarr.py and enabled automatically for 3D axes.
+    """
     expected = [
         "20220218_dynamic",
         "20220225_HADA_NADA_TADA_40min",
@@ -174,7 +203,7 @@ def run_all_3d(base_folder: Path) -> None:
         return
 
     ok, failed = 0, 0
-    out_base = REPO_ROOT / "results" / "img"  
+    out_base = REPO_ROOT / "results" / "img"
 
     for ds in expected:
         ds_folder = base_folder / ds
@@ -192,10 +221,11 @@ def run_all_3d(base_folder: Path) -> None:
             print(f"[{i}/{len(files)}] {f.name}")
             try:
                 arr, meta = load_czi(f)
+
                 export_3d(
                     arr=arr,
                     meta=meta,
-                    dataset_folder=ds,    
+                    dataset_folder=ds,
                     out_base=out_base,
                     save_omezarr=True,
                     overwrite_omezarr=True,
@@ -219,9 +249,12 @@ def main() -> None:
     ap.add_argument("--stop_on_error", action="store_true")
     ap.add_argument("--visualize", action="store_true")
     ap.add_argument("--scalebar_um", type=float, default=5.0)
+
+    ap.add_argument("--pyramid_max_layer", type=int, default=2, help="3D pyramid depth (0 disables pyramid)")
+    ap.add_argument("--pyramid_downscale", type=int, default=2, help="3D downscale factor per level (usually 2)")
+
     args = ap.parse_args()
 
-    # Interactive mode
     if args.dataset is None:
         dataset = ["2d_time", "2d_wga_dapi", "3d"][
             prompt_choice("\nSelect dataset:", ["2d_time", "2d_wga_dapi", "3d"], 0)
@@ -252,7 +285,7 @@ def main() -> None:
                     prompt_yes_no("Stop on error?", False),
                 )
         else:
-            run_all_3d(folder)
+            run_all_3d(folder, pyramid_max_layer=args.pyramid_max_layer, pyramid_downscale=args.pyramid_downscale)
         return
 
     dataset = args.dataset
@@ -276,7 +309,7 @@ def main() -> None:
             f = files[args.index] if args.index is not None else files[0]
             run_one_2d(dataset, f, args.visualize, args.scalebar_um)
     else:
-        run_all_3d(folder)
+        run_all_3d(folder, pyramid_max_layer=args.pyramid_max_layer, pyramid_downscale=args.pyramid_downscale)
 
 
 if __name__ == "__main__":

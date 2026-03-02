@@ -1,12 +1,10 @@
-"""
-Run PSF generation for 3 models (per channel).
-
-"""
 from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Tuple
-from PFT.core_prog_parts.psf_creator import generate_psfs_for_image_all_models
+import zarr
+from PFT.core_prog_parts.psf_creator import generate_psfs_for_image
+from PFT.core_prog_parts.psf_creator import _available_levels, _prompt_level
 
 
 DEFAULT_PROJECT_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
@@ -20,11 +18,6 @@ def _find_first_image_omezarr(root: Path) -> Path:
 
 
 def _parse_models_arg(s: str) -> Tuple[str, ...]:
-    """
-    Accepts:
-      "all" -> ("BW","GL","RW")
-      "BW" or "BW,GL" or "BW GL RW"
-    """
     s = (s or "").strip()
     if not s or s.lower() == "all":
         return ("BW", "GL", "RW")
@@ -34,7 +27,7 @@ def _parse_models_arg(s: str) -> Tuple[str, ...]:
     bad = [p for p in parts if p not in allowed]
     if bad:
         raise ValueError(f"Unknown model(s): {bad}. Allowed: BW, GL, RW, or 'all'")
-    # keep order but unique
+
     out = []
     for p in parts:
         if p not in out:
@@ -43,20 +36,14 @@ def _parse_models_arg(s: str) -> Tuple[str, ...]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate PSFs for BW/GL/RW (per channel).")
-    ap.add_argument(
-        "--zarr",
-        default=None,
-        help="Path to image.ome.zarr. If omitted, first found under results/img/3d_data is used.",
-    )
-    ap.add_argument(
-        "--project_root",
-        default=str(DEFAULT_PROJECT_ROOT),
-        help=r"Project root (default: D:\Thesis\Pneumo_Fluor_Toolkit_PFT)",
-    )
-    ap.add_argument("--models", default="all", help="Models to generate: all | BW | GL | RW | BW,GL | BW GL RW")
-    ap.add_argument("--accuracy", default="Best", help="PSFGenerator accuracy (e.g. Best, Good, Fast)")
-    ap.add_argument("--quiet", action="store_true", help="Reduce logging.")
+    ap = argparse.ArgumentParser(description="Generate PSFs (BW/GL/RW) for an OME-Zarr.")
+    ap.add_argument("--zarr", default=None, help="Path to image.ome.zarr")
+    ap.add_argument("--project_root", default=str(DEFAULT_PROJECT_ROOT))
+    ap.add_argument("--models", default="all", help="all | BW | GL | RW | BW,GL")
+    ap.add_argument("--accuracy", default="Best")
+    ap.add_argument("--level", type=int, default=None, help="OME-Zarr pyramid level (interactive if omitted)")
+    ap.add_argument("--quiet", action="store_true")
+
     args = ap.parse_args()
 
     project_root = Path(args.project_root)
@@ -71,25 +58,32 @@ def main() -> int:
     if not zarr_dir.exists():
         raise FileNotFoundError(zarr_dir)
 
+    if args.level is None:
+        levels = _available_levels(zarr_dir)
+        level = _prompt_level(levels, default=2)
+    else:
+        level = args.level
+
     models = _parse_models_arg(args.models)
 
-    outputs = generate_psfs_for_image_all_models(
+    print("\nPSF generation settings:")
+    print(f"  zarr   : {zarr_dir}")
+    print(f"  level  : {level}")
+    print(f"  models : {models}")
+    print(f"  accuracy: {args.accuracy}")
+
+    outputs = generate_psfs_for_image(
         zarr_dir=zarr_dir,
         start_path=Path(__file__),
+        level=level,
         models=models,
         accuracy=args.accuracy,
         quiet=args.quiet,
-        # Optional override:
-        # channel_wavelength_nm={
-        #     "TV1-T1-SR": 405.0,
-        #     "TV1-T2-SR": 488.0,
-        #     "TV1-T3-SR": 561.0,
-        # },
     )
 
-    print(f"Generated PSFs (models={models}):")
-    for (model, ch), p in outputs.items():
-        print(f"  {model} | {ch} -> {p}")
+    print("\nGenerated PSFs:")
+    for (model, ch, lvl), p in outputs.items():
+        print(f"  L{lvl} | {model} | {ch} -> {p}")
 
     return 0
 

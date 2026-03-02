@@ -2,6 +2,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import zarr
+
 from PFT.core_prog_parts.Deconvolution_omezarr import (
     deconvolve_omezarr_3ch_to_omezarr,
     DEFAULT_CHANNEL_WAVELENGTH_NM,
@@ -14,6 +16,15 @@ DEFAULT_OUT_ROOT = DEFAULT_PROJECT_ROOT / "results" / "deconv"
 
 def list_image_folders(root_3d: Path) -> list[Path]:
     return [p.parent for p in sorted(root_3d.rglob("image.ome.zarr"))]
+
+
+def available_pyramid_levels(image_omezarr: Path) -> list[int]:
+    root = zarr.open_group(str(image_omezarr), mode="r")
+    ms = root.attrs.get("multiscales")
+    if not ms or not isinstance(ms, list) or not ms[0].get("datasets"):
+        return [0]
+    ds = ms[0]["datasets"]
+    return list(range(len(ds)))
 
 
 def prompt_int(prompt: str, *, min_v: int | None = None, max_v: int | None = None, default: int | None = None) -> int:
@@ -70,6 +81,7 @@ def main() -> int:
     ap.add_argument("--out_root", default=str(DEFAULT_OUT_ROOT))
 
     ap.add_argument("--folder", default=None, help="Folder containing image.ome.zarr (skip selection)")
+    ap.add_argument("--level", type=int, default=None, help="OME-Zarr pyramid level (default: 2 if available else 0)")
     ap.add_argument("--iters", type=int, default=None)
     ap.add_argument("--model", choices=["BW", "GL", "RW"], default=None)
     ap.add_argument("--background", type=float, default=None)
@@ -86,6 +98,23 @@ def main() -> int:
     else:
         in_zarr = interactive_select_dataset(root_3d)
 
+    levels = available_pyramid_levels(in_zarr)
+    default_level = 2 if 2 in levels else 0
+    if args.level is None:
+        print(f"\nAvailable pyramid levels: {levels}")
+        level = prompt_int(
+            f"Choose level (default {default_level}): ",
+            min_v=min(levels),
+            max_v=max(levels),
+            default=default_level,
+        )
+        if level not in levels:
+            raise SystemExit(f"Invalid level {level}. Must be one of: {levels}")
+    else:
+        level = int(args.level)
+        if level not in levels:
+            raise SystemExit(f"Invalid level {level}. Must be one of: {levels}")
+
     model = args.model or prompt_choice("Choose PSF model [BW/GL/RW] (default BW): ", ["BW", "GL", "RW"], default="BW")
     iters = args.iters if args.iters is not None else prompt_int("Iterations (default 15): ", min_v=1, max_v=500, default=15)
     background = args.background if args.background is not None else float(input("Background (default 0.0): ").strip() or "0.0")
@@ -93,6 +122,7 @@ def main() -> int:
     print("\nRun configuration:")
     print(f"  input zarr : {in_zarr}")
     print(f"  out root   : {out_root}")
+    print(f"  level      : {level}")
     print(f"  PSF model  : {model}")
     print(f"  iters      : {iters}")
     print(f"  background : {background}")
@@ -103,6 +133,7 @@ def main() -> int:
         model=model,
         iters=iters,
         background=background,
+        level=level,
         channel_wavelength_nm=dict(DEFAULT_CHANNEL_WAVELENGTH_NM),
         overwrite=True,
     )

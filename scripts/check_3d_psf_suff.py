@@ -84,7 +84,6 @@ def compare_config_to_image(cfg: dict[str, str], img_meta: dict[str, Any]) -> li
     vy = _to_float(vox.get("y"))
     vz = _to_float(vox.get("z"))
 
-    # Config sampling: ResLateral/ResAxial are commonly in nm (PSFGenerator), convert to µm if numeric
     res_lat = _to_float(cfg.get("ResLateral"))
     res_ax = _to_float(cfg.get("ResAxial"))
     res_lat_um = (res_lat / 1000.0) if res_lat is not None else None
@@ -119,8 +118,6 @@ def _default_cfg_paths(cfg_dir: Path) -> list[Path]:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=(
-            "STEP2 report: extract + compare OME-Zarr 3D metadata AND check PSFGenerator configs BW/GL/RW.\n"
-            "If you run with no arguments, it uses the default Thesis project paths:\n"
             f"  - 3D root: {DEFAULT_3D_DATA_ROOT}\n"
             f"  - PSF cfg: {DEFAULT_PSF_CFG_DIR}"
         )
@@ -206,7 +203,6 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
-    lines += ["# STEP2 report: OME-Zarr metadata comparison + PSF config check", ""]
     lines += [f"Root: {root}", f"OME-Zarr files found: {len(zarr_dirs)}", f"Reference for config compare: {ref}", ""]
     lines += [f"Config dir: {cfg_dir}", f"Configs used: {[str(p) for p in cfg_paths] if cfg_paths else 'NONE FOUND'}", ""]
     lines += ["## Fields checked", ", ".join(fields), ""]

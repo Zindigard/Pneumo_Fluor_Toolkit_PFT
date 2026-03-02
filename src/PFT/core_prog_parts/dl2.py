@@ -5,11 +5,10 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 
 import numpy as np
 import tifffile as tiff
-import zarr
 
 from PFT.core_prog_parts.fuji_managment import (
     find_project_root,
@@ -17,6 +16,10 @@ from PFT.core_prog_parts.fuji_managment import (
     ensure_deconvolutionlab2_exists,
 )
 from PFT.core_prog_parts.psf_creator import _find_java_exe
+from PFT.core_prog_parts.decoder_omezar import (
+    load_ome_zarr_3d_czyx,
+    extract_ome_zarr_meta_for_compare,
+)
 
 
 def _try_import_psutil():
@@ -27,8 +30,14 @@ def _try_import_psutil():
         return None
 
 
-def mem_box(title: str, t0: float, rss0: Optional[int], rss1: Optional[int], peak_rss: Optional[int],
-            py_peak_bytes: Optional[int]) -> str:
+def mem_box(
+    title: str,
+    t0: float,
+    rss0: Optional[int],
+    rss1: Optional[int],
+    peak_rss: Optional[int],
+    py_peak_bytes: Optional[int],
+) -> str:
     def fmt_mb(x: Optional[int]) -> str:
         return "n/a" if x is None else f"{x / (1024**2):.1f} MB"
 
@@ -45,19 +54,105 @@ def mem_box(title: str, t0: float, rss0: Optional[int], rss1: Optional[int], pea
     return "\n".join(lines)
 
 
-def load_omezarr_channel_zyx(image_omezarr_dir: Path, channel_index: int = 0) -> np.ndarray:
-    root = zarr.open(str(image_omezarr_dir), mode="r")
-    if "0" not in root:
-        raise KeyError(f"Zarr array '0' not found inside: {image_omezarr_dir}")
+def _infer_lambda_nm_from_channel_name(name: Optional[str]) -> Optional[int]:
+    """
+      T1 -> 405 nm, T2 -> 488 nm, T3 -> 561 nm
+    """
+    if not name:
+        return None
+    n = name.upper()
+    if "T1" in n:
+        return 405
+    if "T2" in n:
+        return 488
+    if "T3" in n:
+        return 561
+    return None
 
-    arr = root["0"]  # expected (C,Z,Y,X)
-    if arr.ndim != 4:
-        raise ValueError(f"Expected 4D (C,Z,Y,X). Got shape={arr.shape}")
 
-    if not (0 <= channel_index < arr.shape[0]):
-        raise IndexError(f"Channel index {channel_index} out of range for shape {arr.shape}")
+PSFMode = Literal["file", "auto"]
+PSFModel = Literal["BW", "GL", "RW"]
 
-    return np.asarray(arr[channel_index, :, :, :])  # (Z,Y,X)
+
+def _select_psf_path(
+    *,
+    psf_mode: PSFMode,
+    psf_tif: Optional[Path],
+    psf_dir: Optional[Path],
+    psf_model: Optional[str],
+    channel_name: Optional[str],
+    lambda_nm: Optional[int],
+    level: Optional[int] = None,
+) -> Path:
+    
+    if psf_mode == "file":
+        if psf_tif is None:
+            raise ValueError("--psf_mode file requires --psf_tif")
+        return psf_tif
+
+    if psf_dir is None:
+        raise ValueError("--psf_mode auto requires --psf_dir")
+    if psf_model is None:
+        raise ValueError("--psf_mode auto requires --psf_model (BW/GL/RW)")
+
+    psf_dir = Path(psf_dir)
+    if not psf_dir.exists():
+        raise FileNotFoundError(f"PSF dir not found: {psf_dir}")
+
+    nm = int(lambda_nm) if lambda_nm is not None else _infer_lambda_nm_from_channel_name(channel_name)
+    if nm is None:
+        raise ValueError(
+            "Could not infer wavelength for auto PSF selection. "
+            "Provide --lambda_nm, or ensure the channel name contains T1/T2/T3."
+        )
+
+    model = psf_model.upper().strip()
+
+    patterns: list[str] = []
+    if level is not None:
+        patterns.append(f"psf_{model}_*Lambda{nm}nm__L{int(level)}.tif")
+        patterns.append(f"*{model}*Lambda{nm}nm*__L{int(level)}*.tif")
+    patterns.append(f"psf_{model}_*Lambda{nm}nm.tif")
+    patterns.append(f"*{model}*Lambda{nm}nm*.tif")
+
+    for patt in patterns:
+        matches = sorted(psf_dir.glob(patt))
+        if matches:
+            return matches[0]
+
+    raise FileNotFoundError(
+        f"No PSF found for model={model} lambda={nm}nm (level={level}) in {psf_dir}\n"
+        f"Tried patterns:\n  - " + "\n  - ".join(patterns)
+    )
+
+
+def load_omezarr_channel_zyx(
+    image_omezarr_dir: Path,
+    *,
+    channel_index: int = 0,
+    level: int = 0,
+    time: Optional[int] = 0,
+) -> tuple[np.ndarray, Optional[str]]:
+   
+    image_omezarr_dir = Path(image_omezarr_dir)
+
+    meta = extract_ome_zarr_meta_for_compare(image_omezarr_dir, level=level)
+    ch_names = meta.get("channel_names")
+    channel_name = None
+    if isinstance(ch_names, list) and 0 <= channel_index < len(ch_names):
+        channel_name = str(ch_names[channel_index])
+
+    vol_czyx, _axes = load_ome_zarr_3d_czyx(
+        image_omezarr_dir,
+        level=level,
+        time=time,
+        channels=None,
+        as_numpy=True,
+    )
+    if not (0 <= channel_index < vol_czyx.shape[0]):
+        raise IndexError(f"Channel index {channel_index} out of range for vol shape {vol_czyx.shape}")
+
+    return np.asarray(vol_czyx[channel_index]), channel_name
 
 
 def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
@@ -81,9 +176,7 @@ def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
 
 
 def write_imagej_tiff_stack(arr: np.ndarray, out_path: Path, axes: str = "ZYX") -> None:
-    """
-    ImageJ-compatible TIFF stack. Preserves dtype and values (no scaling).
-    """
+   
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arr = np.ascontiguousarray(arr)
     tiff.imwrite(
@@ -104,12 +197,21 @@ def run_dl2_cli(
     out_dir: Path,
     iterations: int = 1,
     background: float = 0.0,
-) -> None:
-    """
-    DL2 Richardson–Lucy. Uses ImageJ-style argument syntax that works on Windows:
-      -image file <path> -psf file <path>
-    """
+) -> Path:
+    
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    img = tiff.imread(str(image_tif))
+    psf = tiff.imread(str(psf_tif))
+
+    print("\n[DL2 PRE-CHECK]")
+    print(f"  Image dtype: {img.dtype}, shape={img.shape}, min={img.min()}, max={img.max()}")
+    print(f"  PSF   dtype: {psf.dtype}, shape={psf.shape}, min={psf.min()}, max={psf.max()}, sum={float(np.sum(psf))}")
+
+    if not (np.issubdtype(img.dtype, np.integer) or np.issubdtype(img.dtype, np.floating)):
+        raise ValueError(f"Unsupported image dtype: {img.dtype}")
+    if not (np.issubdtype(psf.dtype, np.integer) or np.issubdtype(psf.dtype, np.floating)):
+        raise ValueError(f"Unsupported PSF dtype: {psf.dtype}")
 
     cmd = [
         str(java),
@@ -118,33 +220,67 @@ def run_dl2_cli(
         "Run",
         "-image", "file", str(image_tif),
         "-psf", "file", str(psf_tif),
-        "-algorithm", "RL", str(background), str(iterations),
-        "-out", "mip", "MLI",
+        "-algorithm", "RL", str(iterations), str(background),
+        "-out", "stack", "DL2", "intact",
         "-path", str(out_dir),
     ]
 
-    print("Running DL2:\n ", " ".join(cmd))
+    print("\nRunning DL2:\n ", " ".join(cmd))
     res = subprocess.run(cmd, capture_output=True, text=True)
+
     print("\n--- DL2 STDOUT ---\n", res.stdout)
     if res.returncode != 0:
         raise RuntimeError(f"DL2 failed.\n--- STDERR ---\n{res.stderr}")
 
+    outs = sorted(list(out_dir.glob("*.tif")) + list(out_dir.glob("*.tiff")))
+    if not outs:
+        raise FileNotFoundError(f"No TIFF output written by DL2 in {out_dir}")
+
+    out_tif = max(outs, key=lambda p: p.stat().st_size)
+
+    out_img = tiff.imread(str(out_tif))
+
+    print("\n[DL2 POST-CHECK]")
+    print(f"  Output file : {out_tif.name}")
+    print(f"  Output dtype: {out_img.dtype}")
+    print(f"  Output shape: {out_img.shape}")
+    print(f"  Output min/max: {out_img.min()} / {out_img.max()}")
+
+    if out_img.ndim != 3:
+        raise ValueError(f"DL2 output is not 3D (Z,Y,X). Got shape={out_img.shape}")
+
+    if out_img.shape != img.shape:
+        print(f"WARNING: Output shape differs from input! in={img.shape} out={out_img.shape}")
+
+    if img.dtype != out_img.dtype:
+        print(f"NOTE: DL2 changed dtype: {img.dtype} -> {out_img.dtype}")
+
+    return out_tif
+
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Run DeconvolutionLab2 Richardson–Lucy on ONE channel of an OME-Zarr.")
     ap.add_argument(
         "--omezarr_dir",
         default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\3d_data\20220218_dynamic\DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM\image.ome.zarr",
     )
     ap.add_argument("--channel", type=int, default=0)
+
+    ap.add_argument("--level", type=int, default=0, help="OME-Zarr pyramid level")
+    ap.add_argument("--time", type=int, default=0, help="Time index if data has T axis (ignored if no T axis)")
+
+    ap.add_argument("--psf_mode", choices=["file", "auto"], default="file")
+    ap.add_argument("--psf_tif", default=None, help="Used when --psf_mode file")
+    ap.add_argument("--psf_dir", default=None, help="Directory with generated PSFs (used when --psf_mode auto)")
+    ap.add_argument("--psf_model", default="BW", help="BW/GL/RW (used when --psf_mode auto)")
     ap.add_argument(
-        "--psf_tif",
-        default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\psf\generated\psf_BW_TV1-T1-SR_Lambda405nm.tif",
+        "--lambda_nm",
+        type=int,
+        default=None,
+        help="Force wavelength (nm) for auto PSF selection. If not set, inferred from channel name (T1/T2/T3).",
     )
-    ap.add_argument(
-        "--out_dir",
-        default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\deconv",
-    )
+
+    ap.add_argument("--out_dir", default=r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\deconv")
     ap.add_argument("--iters", type=int, default=1)
     ap.add_argument("--background", type=float, default=0.0)
     args = ap.parse_args()
@@ -157,6 +293,7 @@ def main() -> int:
     py_peak = None
     try:
         import tracemalloc
+
         tracemalloc.start()
     except Exception:
         tracemalloc = None  # type: ignore
@@ -164,34 +301,50 @@ def main() -> int:
     project_root = find_project_root(Path(__file__).resolve())
     fiji_dir = ensure_fiji_in_project(project_root, quiet=True)
 
-    # ensure DL2 jar exists 
     dl2_jar = ensure_deconvolutionlab2_exists(fiji_dir, auto_download=True, quiet=True)
-
     java = _find_java_exe(fiji_dir)
 
     omezarr_dir = Path(args.omezarr_dir)
-    psf_path = Path(args.psf_tif)
     out_root = Path(args.out_dir)
 
-    image_zyx = load_omezarr_channel_zyx(omezarr_dir, channel_index=args.channel)
+    image_zyx, channel_name = load_omezarr_channel_zyx(
+        omezarr_dir,
+        channel_index=args.channel,
+        level=args.level,
+        time=args.time,
+    )
+
+    psf_path = _select_psf_path(
+        psf_mode=args.psf_mode,
+        psf_tif=Path(args.psf_tif) if args.psf_tif else None,
+        psf_dir=Path(args.psf_dir) if args.psf_dir else None,
+        psf_model=args.psf_model,
+        channel_name=channel_name,
+        lambda_nm=args.lambda_nm,
+        level=args.level,
+    )
+
     psf = tiff.imread(str(psf_path))
     basic_validity_checks(image_zyx, psf)
 
-    print("Input summary (no changes applied):")
-    print(f"  Image: shape={image_zyx.shape}, dtype={image_zyx.dtype}, min={image_zyx.min()}, max={image_zyx.max()}")
-    print(f"  PSF  : shape={psf.shape}, dtype={psf.dtype}, min={psf.min()}, max={psf.max()}, sum={float(np.sum(psf))}")
+    print("\nInput summary (no changes applied):")
+    print(f"  OME-Zarr        : {omezarr_dir}")
+    print(f"  level/time      : {args.level}/{args.time}")
+    print(f"  channel idx/name: {args.channel}/{channel_name}")
+    print(f"  Image           : shape={image_zyx.shape}, dtype={image_zyx.dtype}, min={image_zyx.min()}, max={image_zyx.max()}")
+    print(f"  PSF file        : {psf_path}")
+    print(f"  PSF             : shape={psf.shape}, dtype={psf.dtype}, min={psf.min()}, max={psf.max()}, sum={float(np.sum(psf))}")
 
     with tempfile.TemporaryDirectory(prefix="pft_dl2_") as td:
         td = Path(td)
         tmp_img = td / f"tmp_image_C{args.channel}.tif"
         tmp_psf = td / "tmp_psf.tif"
 
-        # Use ImageJ-compatible stacks (still preserves uint16 / float32)
         write_imagej_tiff_stack(image_zyx, tmp_img, axes="ZYX")
         write_imagej_tiff_stack(psf, tmp_psf, axes="ZYX")
 
         out_dir = out_root / f"{omezarr_dir.parent.name}__C{args.channel}__iter{args.iters}"
-        run_dl2_cli(
+        out_tif = run_dl2_cli(
             java=java,
             dl2_jar=dl2_jar,
             image_tif=tmp_img,
@@ -201,7 +354,9 @@ def main() -> int:
             background=args.background,
         )
 
-        print(f"\nDL2 finished. Outputs:\n  {out_dir}")
+        print(f"\nDL2 finished.")
+        print(f"  Output folder: {out_dir}")
+        print(f"  Output file  : {out_tif}")
 
     rss1 = proc.memory_info().rss if proc else None
     peak_rss = None
