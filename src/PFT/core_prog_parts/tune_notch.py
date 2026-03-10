@@ -10,18 +10,14 @@ from matplotlib.patches import Circle
 from matplotlib.colors import LinearSegmentedColormap
 
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
-from PFT.core_prog_parts.notch_filter import (
-    NotchParams,
-    list_omezarr_images,
-    results_filters_dir,
-    run_notch_on_dataset,
-)
+from PFT.core_prog_parts.notch_filter import list_omezarr_images, results_filters_dir
 from PFT.core_prog_parts.notch_filter import _to_numpy, _ensure_cyx
+from PFT.core_prog_parts.free_hand_filter import FreehandMaskParams, run_freehand_on_dataset
 
 EPS = 1e-12
 
 
-# Metrics
+# Metrics 
 def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
     a = a.astype(np.float64, copy=False).ravel()
     b = b.astype(np.float64, copy=False).ravel()
@@ -32,6 +28,9 @@ def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def neighbor_corr(x: np.ndarray) -> float:
+    x = np.asarray(x)
+    if x.ndim != 2:
+        raise ValueError(f"neighbor_corr expects 2D array, got shape={x.shape}")
     vals = []
     if x.shape[1] >= 2:
         vals.append(_pearson_corr(x[:, :-1], x[:, 1:]))
@@ -41,7 +40,9 @@ def neighbor_corr(x: np.ndarray) -> float:
 
 
 def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
-    x = x.astype(np.float32, copy=False)
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"fft_peak_score expects 2D array, got shape={x.shape}")
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
     mag = np.abs(F).astype(np.float64)
@@ -58,10 +59,38 @@ def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
 
 
 def gradient_mag_mean(x: np.ndarray) -> float:
-    x = x.astype(np.float32, copy=False)
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"gradient_mag_mean expects 2D array, got shape={x.shape}")
     gy, gx = np.gradient(x)
     g = np.sqrt(gx * gx + gy * gy)
     return float(np.mean(g))
+
+
+def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> dict:
+    out = {
+        "blue": {
+            "neighbor_corr": neighbor_corr(blue),
+            "fft_peak_score": fft_peak_score(blue),
+            "grad_mag_mean": gradient_mag_mean(blue),
+        }
+    }
+    if green is not None:
+        out["green"] = {
+            "neighbor_corr": neighbor_corr(green),
+            "fft_peak_score": fft_peak_score(green),
+            "grad_mag_mean": gradient_mag_mean(green),
+        }
+    return out
+
+
+def write_metrics_block(f, title: str, metrics: dict) -> None:
+    f.write(f"\n=== {title} ===\n")
+    for ch_name, m in metrics.items():
+        f.write(f"\n[{ch_name}]\n")
+        for k, v in m.items():
+            f.write(f"{k}: {v}\n")
+
 
 
 # Display 
@@ -76,7 +105,6 @@ def _norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> 
 
 
 def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
-    # normalization 
     B = _norm01_percentile(blue)
     G = _norm01_percentile(green) if green is not None else np.zeros_like(B)
     R = np.zeros_like(B)
@@ -90,7 +118,6 @@ def _make_crimson_cmap():
 
 
 def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, out_png: Path):
-    #  [0,1]
     diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
     diff_map = np.mean(diff, axis=-1)
     diff_norm = diff_map / (float(np.percentile(diff_map, 99.5)) + 1e-12)
@@ -109,6 +136,7 @@ def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str,
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
 
 
 # FFT 
@@ -161,7 +189,6 @@ def mean_fft_magnitude(
 
         img = _center_crop(img, fft_size)
         m = _fft_logmag(img)
-
         acc = m.astype(np.float64) if acc is None else (acc + m.astype(np.float64))
         used += 1
 
@@ -169,45 +196,6 @@ def mean_fft_magnitude(
         raise ValueError("Could not compute mean FFT (no valid images).")
     return (acc / float(used)).astype(np.float32)
 
-
-def angle_energy_profile(
-    mean_logmag: np.ndarray,
-    *,
-    r_min: int,
-    r_max: int | None = None,
-    n_bins: int = 360,
-) -> tuple[np.ndarray, np.ndarray]:
-    h, w = mean_logmag.shape
-    cy = (h - 1) / 2.0
-    cx = (w - 1) / 2.0
-    yy, xx = np.indices((h, w), dtype=np.float32)
-    rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-    ang = np.degrees(np.arctan2(yy - cy, xx - cx))
-    ang = (ang + 360.0) % 360.0
-
-    if r_max is None:
-        r_max = int(rr.max())
-    valid = (rr >= float(r_min)) & (rr <= float(r_max))
-
-    flat = mean_logmag.astype(np.float32) - float(np.median(mean_logmag))
-    flat = np.clip(flat, 0.0, None)
-
-    bins = np.linspace(0.0, 360.0, n_bins + 1)
-    prof = np.zeros(n_bins, dtype=np.float64)
-
-    a = ang[valid].ravel()
-    v = flat[valid].ravel().astype(np.float64)
-
-    idx = np.searchsorted(bins, a, side="right") - 1
-    idx = np.clip(idx, 0, n_bins - 1)
-    np.add.at(prof, idx, v)
-
-    centers = (bins[:-1] + bins[1:]) / 2.0
-    return centers.astype(np.float32), prof.astype(np.float64)
-
-
-
-# FFT display
 
 def _channel_cmap(name: str) -> str:
     return {"blue": "Blues", "green": "Greens"}.get(name, "gray")
@@ -222,17 +210,12 @@ def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
 
 
 def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
-    """
-    One-click selection from FFT center:
-      - circle center fixed at FFT center
-      - click once to set radius
-    """
     h, w = mean_fft.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
 
     fig, ax = plt.subplots()
     _imshow_fft(ax, mean_fft, cmap=cmap)
-    ax.set_title(title + "\nMove mouse (red preview), click once to set DC radius")
+    ax.set_title(title + "\nMove mouse (red preview), click once to set radius")
     ax.axis("off")
 
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -272,11 +255,11 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
     fig.canvas.mpl_disconnect(cid_click)
 
     if selected["r"] is None:
-        raise RuntimeError("DC radius selection cancelled.")
+        raise RuntimeError("Radius selection cancelled.")
     return int(selected["r"])
 
 
-def _save_fft_with_dc_overlay(fft_img: np.ndarray, r_dc: int, out_png: Path, title: str, cmap: str, linewidth: int = 3):
+def _save_fft_with_overlay(fft_img: np.ndarray, radius: int, out_png: Path, title: str, cmap: str, linewidth: int = 3):
     h, w = fft_img.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
 
@@ -292,37 +275,13 @@ def _save_fft_with_dc_overlay(fft_img: np.ndarray, r_dc: int, out_png: Path, tit
     overlay[..., 0] = 1.0
     overlay[..., 1] = 0.55
     overlay[..., 2] = 0.0
-    ax.imshow(overlay, alpha=(rr <= float(r_dc)).astype(np.float32) * 0.25)
+    ax.imshow(overlay, alpha=(rr <= float(radius)).astype(np.float32) * 0.25)
 
-    ax.add_patch(Circle((cx, cy), r_dc, fill=False, edgecolor="orange", linewidth=linewidth))
+    ax.add_patch(Circle((cx, cy), radius, fill=False, edgecolor="orange", linewidth=linewidth))
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
-
-
-
-# CLI
-
-def _prompt_floats(prompt: str, default: list[float]) -> list[float]:
-    s = input(prompt).strip()
-    if not s:
-        return default
-    s = s.replace(",", " ")
-    return [float(tok) for tok in s.split()]
-
-
-def _prompt_float(prompt: str, default: float) -> float:
-    s = input(prompt).strip()
-    return default if not s else float(s)
-
-
-def _prompt_bool(prompt: str, default: bool = False) -> bool:
-    s = input(prompt).strip().lower()
-    if not s:
-        return default
-    return s in ("y", "yes", "1", "true", "t")
-
 
 def _choose_dataset_interactive() -> str:
     print("Choose dataset:")
@@ -330,6 +289,13 @@ def _choose_dataset_interactive() -> str:
     print("  2) 2d_wga_dapi (blue + green)")
     ans = input("Choose number [1/2]: ").strip() or "1"
     return "2d_wga_dapi" if ans == "2" else "2d_time"
+
+
+def _prompt_bool(prompt: str, default: bool = False) -> bool:
+    s = input(prompt).strip().lower()
+    if not s:
+        return default
+    return s in ("y", "yes", "1", "true", "t")
 
 
 def main():
@@ -354,6 +320,7 @@ def main():
     if len(zarrs) > 20:
         print("  ... (showing first 20)")
 
+    # detect channels
     arr0, axes0 = load_ome_zarr(zarrs[0], level=0, as_numpy=False)
     x0 = _to_numpy(arr0)
     x0, axes0 = _ensure_cyx(x0, axes0)
@@ -366,10 +333,12 @@ def main():
         channels = [0] if n_c == 1 else [0, 1]
         channel_names = ["blue"] if n_c == 1 else ["blue", "green"]
 
-    # Mean FFT first
+    # mean FFTs first (colored)
     mean_ffts: Dict[str, np.ndarray] = {}
     for ch, name in zip(channels, channel_names):
-        mean_ffts[name] = mean_fft_magnitude(zarrs, channel_index=ch, max_images=args.max_images, fft_size=args.fft_size)
+        mean_ffts[name] = mean_fft_magnitude(
+            zarrs, channel_index=ch, max_images=args.max_images, fft_size=args.fft_size
+        )
         fig, ax = plt.subplots()
         _imshow_fft(ax, mean_ffts[name], cmap=_channel_cmap(name))
         ax.set_title(f"Mean FFT log-magnitude ({dataset}) - {name}")
@@ -377,27 +346,35 @@ def main():
     plt.show()
 
     if len(channel_names) > 1:
-        choice = input("Select channel for DC selection [blue/green] (default blue): ").strip().lower() or "blue"
+        choice = input("Select channel for circle selection [blue/green] (default blue): ").strip().lower() or "blue"
         if choice not in mean_ffts:
             choice = "blue"
     else:
         choice = channel_names[0]
 
-    r_dc = _pick_radius_centered(mean_ffts[choice], f"DC radius on mean FFT ({choice})", cmap=_channel_cmap(choice))
-    print(f"Selected DC radius: r_dc={r_dc}px")
+    radius = _pick_radius_centered(mean_ffts[choice], f"Free-hand circle on mean FFT ({choice})", cmap=_channel_cmap(choice))
+    print(f"Selected radius: r={radius}px")
 
-    # Angle-energy profile (both channels, uses r_dc)
-    for name, m in mean_ffts.items():
-        th, prof = angle_energy_profile(m, r_min=r_dc)
-        plt.figure()
-        plt.plot(th, prof)
-        plt.title(f"Angle-energy profile ({dataset}) - {name} (r_dc={r_dc})")
-        plt.xlabel("Angle (deg)")
-        plt.ylabel("Energy (arb.)")
-        plt.xlim(0, 360)
-    plt.show()
+    # keep-mask 
+    h, w = mean_ffts[choice].shape
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    yy, xx = np.indices((h, w), dtype=np.float32)
+    rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    mask_keep = (rr <= float(radius)).astype(np.float32)
 
-    # Choose image
+    out_dir_base = results_filters_dir() / "Free_hand" / dataset
+    out_dir_base.mkdir(parents=True, exist_ok=True)
+
+    # save mask + overlay 
+    np.save(out_dir_base / f"mask_keep_centered_{choice}.npy", mask_keep.astype(np.float32))
+    if "blue" in mean_ffts:
+        _save_fft_with_overlay(mean_ffts["blue"], radius, out_dir_base / "mask_preview_mean_fft_blue.png",
+                               f"Mask on MEAN FFT (blue) r={radius}", cmap=_channel_cmap("blue"), linewidth=3)
+    if "green" in mean_ffts:
+        _save_fft_with_overlay(mean_ffts["green"], radius, out_dir_base / "mask_preview_mean_fft_green.png",
+                               f"Mask on MEAN FFT (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
+
+    # choose image
     if args.image_index is None:
         idx = int(input(f"Choose image index [0..{len(zarrs)-1}]: ").strip() or "0")
     else:
@@ -407,6 +384,7 @@ def main():
     stem = test_path.parent.name
     print(f"Selected: {stem}")
 
+    # load chosen image
     arr, axes = load_ome_zarr(test_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -423,75 +401,41 @@ def main():
     blue = get_plane(0)
     green = get_plane(1) if ("c" in axes and x.shape[axes.index("c")] > 1) and dataset != "2d_time" else None
 
-    out_dir = results_filters_dir() / "Notch" / dataset / stem
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_img_dir = out_dir_base / stem
+    out_img_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save mean FFT 
-    for name, m in mean_ffts.items():
-        _save_fft_with_dc_overlay(
-            m, r_dc,
-            out_dir / f"mean_fft_dc_overlay_{name}.png",
-            f"Mean FFT ({name}) with DC radius r={r_dc}",
-            cmap=_channel_cmap(name),
-            linewidth=3
-        )
-
-    # Save chosen-image FFT 
     fft_blue = _fft_logmag(_center_crop(blue, args.fft_size))
-    _save_fft_with_dc_overlay(
-        fft_blue, r_dc,
-        out_dir / "chosen_image_fft_dc_overlay_blue.png",
-        f"Chosen image FFT (blue) with DC radius r={r_dc}",
-        cmap=_channel_cmap("blue"),
-        linewidth=3
-    )
+    _save_fft_with_overlay(fft_blue, radius, out_img_dir / "circle_on_fft_original_blue.png",
+                           f"Circle on FFT of ORIGINAL (blue) r={radius}", cmap=_channel_cmap("blue"), linewidth=3)
     if green is not None:
         fft_green = _fft_logmag(_center_crop(green, args.fft_size))
-        _save_fft_with_dc_overlay(
-            fft_green, r_dc,
-            out_dir / "chosen_image_fft_dc_overlay_green.png",
-            f"Chosen image FFT (green) with DC radius r={r_dc}",
-            cmap=_channel_cmap("green"),
-            linewidth=3
-        )
+        _save_fft_with_overlay(fft_green, radius, out_img_dir / "circle_on_fft_original_green.png",
+                               f"Circle on FFT of ORIGINAL (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
 
-    rep = out_dir / "metrics.txt"
+    # write metric
+    rep = out_img_dir / "metrics.txt"
+    orig_metrics = compute_metrics_per_channel(blue, green)
     with rep.open("w", encoding="utf-8") as f:
         f.write("=== SETTINGS ===\n")
         f.write(f"dataset: {dataset}\n")
         f.write(f"image: {stem}\n")
-        f.write(f"dc_radius_pixels: {r_dc}\n")
-        f.write("\n=== ORIGINAL METRICS (blue) ===\n")
-        f.write(f"neighbor_corr: {neighbor_corr(blue)}\n")
-        f.write(f"fft_peak_score: {fft_peak_score(blue)}\n")
-        f.write(f"grad_mag_mean: {gradient_mag_mean(blue)}\n")
-
-    print("\nEnter NOTCH parameters (press Enter for defaults):")
-    angles = _prompt_floats("  angles_deg (e.g. '90 270') [default 90 270]: ", default=[90.0, 270.0])
-    half_width = _prompt_float("  half_width_deg [default 5.0]: ", default=5.0)
-    depth = _prompt_float("  depth (0..1) [default 1.0]: ", default=1.0)
-    smooth = _prompt_bool("  smooth edges? [y/N]: ", default=False)
-    do_apply = _prompt_bool("\nApply notch filter now? [y/N]: ", default=False)
+        f.write(f"radius_pixels: {radius}\n")
+        f.write(f"mask_saved: {out_dir_base / f'mask_keep_centered_{choice}.npy'}\n")
+        write_metrics_block(f, "ORIGINAL METRICS (chosen image)", orig_metrics)
 
     orig_rgb = _to_rgb_from_blue_green(blue, green)
 
+    do_apply = _prompt_bool("Apply free-hand filter now? [y/N]: ", default=False)
     if not do_apply:
-        out_png = out_dir / "compare_original_filtered_diff.png"
-        _plot_rgb_comparison(orig_rgb, orig_rgb.copy(), f"{dataset} / {stem} (DRY-RUN)", out_png)
-        print("Dry-run (no OME-Zarr saved). Saved:", out_dir)
+        _plot_rgb_comparison(orig_rgb, orig_rgb.copy(), f"{dataset} / {stem} (DRY-RUN)", out_img_dir / "compare_original_filtered_diff.png")
+        print("Dry-run (no OME-Zarr saved). Saved:", out_img_dir)
         return
 
-    p = NotchParams(
-        angles_deg=angles,
-        half_width_deg=half_width,
-        r_min=r_dc,
-        r_max=None,
-        depth=depth,
-        smooth=smooth,
-    )
-    out_applied_dir = run_notch_on_dataset(dataset, p, apply=True, channel_mode="auto", image_index=idx)
+    params = FreehandMaskParams(mask_keep=mask_keep.astype(np.float32))
+    out_applied_dir = run_freehand_on_dataset(dataset, params, apply=True, channel_mode="auto", image_index=idx)
     print("Saved filtered OME-Zarr:", out_applied_dir / "image.ome.zarr")
 
+    # reload filtered 
     arrf, axesf = load_ome_zarr(out_applied_dir / "image.ome.zarr", level=0, as_numpy=False)
     yf = _to_numpy(arrf)
     yf, axesf = _ensure_cyx(yf, axesf)
@@ -507,22 +451,15 @@ def main():
 
     blue_f = get_plane_f(0)
     green_f = get_plane_f(1) if ("c" in axesf and yf.shape[axesf.index("c")] > 1) and dataset != "2d_time" else None
-    filt_rgb = _to_rgb_from_blue_green(blue_f, green_f)
 
+    filt_metrics = compute_metrics_per_channel(blue_f, green_f)
     with rep.open("a", encoding="utf-8") as f:
-        f.write("\n=== FILTERED METRICS (blue) ===\n")
-        f.write(f"neighbor_corr: {neighbor_corr(blue_f)}\n")
-        f.write(f"fft_peak_score: {fft_peak_score(blue_f)}\n")
-        f.write(f"grad_mag_mean: {gradient_mag_mean(blue_f)}\n")
-        f.write("\n=== NOTCH PARAMETERS USED ===\n")
-        f.write(f"angles_deg: {angles}\n")
-        f.write(f"half_width_deg: {half_width}\n")
-        f.write(f"depth: {depth}\n")
-        f.write(f"smooth: {smooth}\n")
+        write_metrics_block(f, "FILTERED METRICS (chosen image)", filt_metrics)
 
-    out_png = out_dir / "compare_original_filtered_diff.png"
-    _plot_rgb_comparison(orig_rgb, filt_rgb, f"{dataset} / {stem}", out_png)
-    print("Saved outputs:", out_dir)
+    filt_rgb = _to_rgb_from_blue_green(blue_f, green_f)
+    _plot_rgb_comparison(orig_rgb, filt_rgb, f"{dataset} / {stem}", out_img_dir / "compare_original_filtered_diff.png")
+
+    print("Saved outputs:", out_img_dir)
 
 
 if __name__ == "__main__":

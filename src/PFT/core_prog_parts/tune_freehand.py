@@ -18,8 +18,7 @@ EPS = 1e-12
 
 
 
-# Metrics 
-
+# Metrics
 def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
     a = a.astype(np.float64, copy=False).ravel()
     b = b.astype(np.float64, copy=False).ravel()
@@ -30,6 +29,9 @@ def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def neighbor_corr(x: np.ndarray) -> float:
+    x = np.asarray(x)
+    if x.ndim != 2:
+        raise ValueError(f"neighbor_corr expects 2D array, got shape={x.shape}")
     vals = []
     if x.shape[1] >= 2:
         vals.append(_pearson_corr(x[:, :-1], x[:, 1:]))
@@ -39,7 +41,9 @@ def neighbor_corr(x: np.ndarray) -> float:
 
 
 def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
-    x = x.astype(np.float32, copy=False)
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"fft_peak_score expects 2D array, got shape={x.shape}")
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
     mag = np.abs(F).astype(np.float64)
@@ -56,15 +60,43 @@ def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
 
 
 def gradient_mag_mean(x: np.ndarray) -> float:
-    x = x.astype(np.float32, copy=False)
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"gradient_mag_mean expects 2D array, got shape={x.shape}")
     gy, gx = np.gradient(x)
     g = np.sqrt(gx * gx + gy * gy)
     return float(np.mean(g))
 
 
+def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> dict:
+    """
+    Compute metrics for 1-channel (blue) or 2-channel (blue+green) chosen image.
+    """
+    out = {
+        "blue": {
+            "neighbor_corr": neighbor_corr(blue),
+            "fft_peak_score": fft_peak_score(blue),
+            "grad_mag_mean": gradient_mag_mean(blue),
+        }
+    }
+    if green is not None:
+        out["green"] = {
+            "neighbor_corr": neighbor_corr(green),
+            "fft_peak_score": fft_peak_score(green),
+            "grad_mag_mean": gradient_mag_mean(green),
+        }
+    return out
 
-# Display
 
+def write_metrics_block(f, title: str, metrics: dict) -> None:
+    f.write(f"\n=== {title} ===\n")
+    for ch_name, m in metrics.items():
+        f.write(f"\n[{ch_name}]\n")
+        for k, v in m.items():
+            f.write(f"{k}: {v}\n")
+
+
+# Display 
 def _norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> np.ndarray:
     x = x.astype(np.float32, copy=False)
     lo = float(np.percentile(x, p_lo))
@@ -109,8 +141,7 @@ def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str,
     plt.close(fig)
 
 
-
-# FFT
+# FFT compute 
 def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
@@ -168,8 +199,6 @@ def mean_fft_magnitude(
     return (acc / float(used)).astype(np.float32)
 
 
-
-# FFT display
 def _channel_cmap(name: str) -> str:
     return {"blue": "Blues", "green": "Greens"}.get(name, "gray")
 
@@ -183,6 +212,11 @@ def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
 
 
 def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
+    """
+    One-click selection from FFT center:
+      - circle center fixed at FFT center
+      - click once to set radius
+    """
     h, w = mean_fft.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
 
@@ -257,7 +291,6 @@ def _save_fft_with_overlay(fft_img: np.ndarray, radius: int, out_png: Path, titl
     plt.close(fig)
 
 
-# CLI 
 def _choose_dataset_interactive() -> str:
     print("Choose dataset:")
     print("  1) 2d_time (blue only)")
@@ -271,7 +304,6 @@ def _prompt_bool(prompt: str, default: bool = False) -> bool:
     if not s:
         return default
     return s in ("y", "yes", "1", "true", "t")
-
 
 
 def main():
@@ -308,16 +340,19 @@ def main():
         channels = [0] if n_c == 1 else [0, 1]
         channel_names = ["blue"] if n_c == 1 else ["blue", "green"]
 
-    # Mean FFTs (colored + display-normalized)
+    # mean FFTs first 
     mean_ffts: Dict[str, np.ndarray] = {}
     for ch, name in zip(channels, channel_names):
-        mean_ffts[name] = mean_fft_magnitude(zarrs, channel_index=ch, max_images=args.max_images, fft_size=args.fft_size)
+        mean_ffts[name] = mean_fft_magnitude(
+            zarrs, channel_index=ch, max_images=args.max_images, fft_size=args.fft_size
+        )
         fig, ax = plt.subplots()
         _imshow_fft(ax, mean_ffts[name], cmap=_channel_cmap(name))
         ax.set_title(f"Mean FFT log-magnitude ({dataset}) - {name}")
         ax.axis("off")
     plt.show()
 
+    # choose which channel's mean FFT 
     if len(channel_names) > 1:
         choice = input("Select channel for circle selection [blue/green] (default blue): ").strip().lower() or "blue"
         if choice not in mean_ffts:
@@ -346,6 +381,7 @@ def main():
         _save_fft_with_overlay(mean_ffts["green"], radius, out_dir_base / "mask_preview_mean_fft_green.png",
                                f"Mask on MEAN FFT (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
 
+    # choose image
     if args.image_index is None:
         idx = int(input(f"Choose image index [0..{len(zarrs)-1}]: ").strip() or "0")
     else:
@@ -355,6 +391,7 @@ def main():
     stem = test_path.parent.name
     print(f"Selected: {stem}")
 
+    # load chosen image
     arr, axes = load_ome_zarr(test_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -374,27 +411,25 @@ def main():
     out_img_dir = out_dir_base / stem
     out_img_dir.mkdir(parents=True, exist_ok=True)
 
+  
     fft_blue = _fft_logmag(_center_crop(blue, args.fft_size))
     _save_fft_with_overlay(fft_blue, radius, out_img_dir / "circle_on_fft_original_blue.png",
                            f"Circle on FFT of ORIGINAL (blue) r={radius}", cmap=_channel_cmap("blue"), linewidth=3)
-
     if green is not None:
         fft_green = _fft_logmag(_center_crop(green, args.fft_size))
         _save_fft_with_overlay(fft_green, radius, out_img_dir / "circle_on_fft_original_green.png",
                                f"Circle on FFT of ORIGINAL (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
 
-    # Metrics report 
+    # metrics 
     rep = out_img_dir / "metrics.txt"
+    orig_metrics = compute_metrics_per_channel(blue, green)
     with rep.open("w", encoding="utf-8") as f:
         f.write("=== SETTINGS ===\n")
         f.write(f"dataset: {dataset}\n")
         f.write(f"image: {stem}\n")
         f.write(f"radius_pixels: {radius}\n")
         f.write(f"mask_saved: {out_dir_base / f'mask_keep_centered_{choice}.npy'}\n")
-        f.write("\n=== ORIGINAL METRICS (blue) ===\n")
-        f.write(f"neighbor_corr: {neighbor_corr(blue)}\n")
-        f.write(f"fft_peak_score: {fft_peak_score(blue)}\n")
-        f.write(f"grad_mag_mean: {gradient_mag_mean(blue)}\n")
+        write_metrics_block(f, "ORIGINAL METRICS (chosen image)", orig_metrics)
 
     orig_rgb = _to_rgb_from_blue_green(blue, green)
 
@@ -423,15 +458,14 @@ def main():
 
     blue_f = get_plane_f(0)
     green_f = get_plane_f(1) if ("c" in axesf and yf.shape[axesf.index("c")] > 1) and dataset != "2d_time" else None
-    filt_rgb = _to_rgb_from_blue_green(blue_f, green_f)
 
+    filt_metrics = compute_metrics_per_channel(blue_f, green_f)
     with rep.open("a", encoding="utf-8") as f:
-        f.write("\n=== FILTERED METRICS (blue) ===\n")
-        f.write(f"neighbor_corr: {neighbor_corr(blue_f)}\n")
-        f.write(f"fft_peak_score: {fft_peak_score(blue_f)}\n")
-        f.write(f"grad_mag_mean: {gradient_mag_mean(blue_f)}\n")
+        write_metrics_block(f, "FILTERED METRICS (chosen image)", filt_metrics)
 
+    filt_rgb = _to_rgb_from_blue_green(blue_f, green_f)
     _plot_rgb_comparison(orig_rgb, filt_rgb, f"{dataset} / {stem}", out_img_dir / "compare_original_filtered_diff.png")
+
     print("Saved outputs:", out_img_dir)
 
 

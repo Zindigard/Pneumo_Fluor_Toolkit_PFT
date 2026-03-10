@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "PFT"
 version = "0.1.0"
-description = "Pneumo-Fluor Toolkit (PFT): fluorescence microscopy utilities (OME-Zarr IO, deconvolution, denoising, visualization)."
+description = "Pneumo-Fluor Toolkit (PFT)"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -22,14 +22,31 @@ dependencies = [
 Homepage = "https://github.com/"
 
 [project.scripts]
-# CLI entrypoints (useful for running the pipeline modules directly)
 pft-psf = "PFT.core_prog_parts.psf_creator:main"
 pft-dl2 = "PFT.core_prog_parts.dl2:main"
-pft-deconv-omezarr = "PFT.core_prog_parts.Deconvolution_omezarr:main"
-pft-decode-omezarr = "PFT.core_prog_parts.decoder_omezar:main"
-pft-n2v-train = "PFT.core_prog_parts.n2v_train:main"
-pft-n2v-denoise = "PFT.core_prog_parts.n2v_denoising:main"
-pft-visualize-2d = "PFT.core_prog_parts.visualize_2d:main"
+pft-fiji = "PFT.core_prog_parts.fuji_managment:main"
+pft-n2v-train = "PFT.core_prog_parts.n2v_train_models:main"
+pft-tune-notch = "PFT.core_prog_parts.tune_notch:main"
+pft-tune-freehand = "PFT.core_prog_parts.tune_freehand:main"
+pft-sanity-2d = "PFT.core_prog_parts.sanity_2d:main"
+pft-sanity-3d = "PFT.core_prog_parts.sanity_3d:main"
+pft-check-2d = "PFT.core_prog_parts.check_2d:main"
+pft-check-3d = "PFT.core_prog_parts.check_3d:main"
+pft-check-3d-psf-suff = "PFT.core_prog_parts.check_3d_psf_suff:main"
+pft-collage = "PFT.core_prog_parts.collage:main"
+pft-collect-training-omezarr = "PFT.core_prog_parts.collect_training_omezarr:main"
+pft-compare-deconvolve = "PFT.core_prog_parts.compare_deconvolve:main"
+pft-create-psf = "PFT.core_prog_parts.create_psf:main"
+pft-damp-meta = "PFT.core_prog_parts.damp_meta:main"
+pft-deconvolve-3d = "PFT.core_prog_parts.deconvolve_3d:main"
+pft-fft = "PFT.core_prog_parts.FFT:main"
+pft-fft-3d = "PFT.core_prog_parts.FFT_3d:main"
+pft-n2v-validation = "PFT.core_prog_parts.n2v_validation:main"
+pft-noise-checks = "PFT.core_prog_parts.noise_checks:main"
+pft-normalization-psf = "PFT.core_prog_parts.normalizarion_PSF:main"
+pft-patches = "PFT.core_prog_parts.patches:main"
+pft-process-czi = "PFT.core_prog_parts.process_czi:main"
+pft-psf-checks = "PFT.core_prog_parts.PSF_checks:main"
 
 [project.entry-points."napari.manifest"]
 PFT = "PFT.napari:napari.yaml"
@@ -52,13 +69,15 @@ addopts = "-q"
 [project.optional-dependencies]
 io = [
   "czifile",
-  "matplotlib",
   "imageio>=2.31",
-  "scikit-image>=0.22",
+  "matplotlib",
   "ome-zarr>=0.11,<0.12",
+  "pillow",
+  "scikit-image>=0.22",
   "zarr>=2.16,<3",
   "numcodecs",
   "dask",
+  "pandas",
 ]
 
 ml = [
