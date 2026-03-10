@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib  
 from n2v.models import N2V
 from PFT.core_prog_parts.decoder_omezar import ome_zarr_to_n2v_2d_stack
-from PFT.core_prog_parts.ome_zarr import save_ome_zarr
+from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
 _PLT = None
 _RectangleSelector = None

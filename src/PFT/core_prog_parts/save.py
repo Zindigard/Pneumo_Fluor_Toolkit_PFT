@@ -233,7 +233,7 @@ def export_2d(
 
     if save_omezarr:
         try:
-            from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
+            from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
             save_ome_zarr_next_to_outputs(
                 out_dir=out_dir,
@@ -402,7 +402,7 @@ def export_3d(
 
     if save_omezarr:
         try:
-            from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
+            from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
             save_ome_zarr_next_to_outputs(
                 out_dir=out_dir,

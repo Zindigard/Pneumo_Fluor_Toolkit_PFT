@@ -3,7 +3,7 @@ import zarr
 from pathlib import Path
 import shutil
 from PFT.core_prog_parts.io import load_czi
-from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs
+from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 
 """Script to perform rigorous validation of the OME-Zarr saving/loading process by comparing original CZI data with the OME-Zarr copy at multiple levels (shape, dtype, statistics, bit-level, metadata)."""
