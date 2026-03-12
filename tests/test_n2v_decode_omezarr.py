@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 pytest.importorskip("ome_zarr")
 pytest.importorskip("zarr")
-from PFT.core_prog_parts.ome_zarr import save_ome_zarr
+from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 from PFT.core_prog_parts.decoder_omezar import ome_zarr_to_n2v_2d_stack
 
 def test_decode_returns_n2v_shape(tmp_path, arr_cyx, meta_2ch):

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Callable, Any
 import numpy as np
 from PFT.core_prog_parts.io import load_czi
-from PFT.core_prog_parts.ome_zarr import save_ome_zarr_next_to_outputs 
+from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs 
 
 """Napari reader plugin to support drag/drop of CZI files, auto-convert them to OME-Zarr in a structured results folder, and display them with proper scaling and metadata in napari layers."""
 

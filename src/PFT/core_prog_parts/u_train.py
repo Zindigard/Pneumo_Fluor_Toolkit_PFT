@@ -1,4 +1,5 @@
-import os
+from __future__ import annotations
+
 import json
 import random
 from pathlib import Path
@@ -7,16 +8,37 @@ from dataclasses import dataclass
 import numpy as np
 import tifffile as tiff
 import tensorflow as tf
+import matplotlib.pyplot as plt
+
+def find_repo_root(start: Path | None = None) -> Path:
+    """
+    Find repository root by walking upwards until one of these markers exists:
+      - pyproject.toml
+      - .git
+      - src/PFT
+    """
+    start = (start or Path(__file__)).resolve()
+    for p in [start] + list(start.parents):
+        if (p / "pyproject.toml").exists():
+            return p
+        if (p / ".git").exists():
+            return p
+        if (p / "src" / "PFT").exists():
+            return p
+    
+    return Path(__file__).resolve().parents[3]
 
 
+# configution dataclass for model
 @dataclass
 class TrainConfig:
-    repo_root: Path = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
-    dataset: str = "2d_time"  # or 2d_wga_dapi
+    repo_root: Path = find_repo_root(Path(__file__).resolve())
 
-    data_root: Path = None
+    dataset: str = "2d_time"   # chosen in terminal if not passed by argparse
+    data_root: Path | None = None
 
-    out_root: Path = None
+    models_root: Path | None = None
+    run_root: Path | None = None
 
     patch: int = 256
     batch: int = 8
@@ -26,22 +48,65 @@ class TrainConfig:
     steps_per_epoch: int = 300
     val_steps: int = 60
 
-    # patch sampling balance
-    fg_fraction: float = 0.8  # 80% foreground-containing crops, 20% background crops
-    min_fg_ratio: float = 0.005  # >=0.5% of pixels are foreground to accept fg crop
-    max_tries: int = 40
+    fg_fraction: float = 0.8
+    fg_min_ratio: float = 0.60   # foreground patch must contain >= 60% foreground
+    bg_max_ratio: float = 0.10   # background patch must contain <= 10% foreground
+    max_tries: int = 100
 
     val_split: float = 0.2
     seed: int = 1337
 
-    normalize: str = "scale_uint16"
+    normalize: str = "scale_uint16"  # or "percentile"
 
-    base_filters: int = 32
+    base_filters: int = 8
     dropout: float = 0.0
 
+    preview_only: bool = False
+    preview_n: int = 3
+
+# promt
+
+def yes_no_prompt(text, default=True):
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        s = input(f"{text} {suffix} ").strip().lower()
+        if s == "":
+            return default
+        if s in {"y", "yes"}:
+            return True
+        if s in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
+def choose_dataset_terminal(default="2d_time"):
+    datasets = ["2d_time", "2d_wga_dapi"]
+    print("\nChoose dataset to train:")
+    for i, ds in enumerate(datasets, 1):
+        tag = " (default)" if ds == default else ""
+        print(f"  {i}) {ds}{tag}")
+
+    s = input(f"Choose number or press Enter for [{default}]: ").strip()
+    if s == "":
+        return default
+    try:
+        k = int(s)
+        if 1 <= k <= len(datasets):
+            return datasets[k - 1]
+    except ValueError:
+        pass
+
+    print(f"Invalid choice, using default: {default}")
+    return default
+
+
+# data usage
 
 def list_pairs(data_root: Path):
     pairs = []
+    if not data_root.exists():
+        raise RuntimeError(f"Training data folder does not exist: {data_root}")
+
     for sample_dir in sorted(data_root.iterdir()):
         if not sample_dir.is_dir():
             continue
@@ -58,22 +123,42 @@ def read_image_mask_numpy(img_path: str, mask_path: str):
 
     msk = (msk > 0).astype(np.uint8)
 
+    # Support:
+    #   (H, W)          -> grayscale
+    #   (H, W, C)       -> HWC
+    #   (C, H, W)       -> CHW for C in 1..4
     if img.ndim == 2:
-        img = img[..., None]  # (H,W,1)
-    elif img.ndim == 3 and img.shape[-1] in (3, 4):
-        img = img[..., :3]  # keep RGB
+        img = img[..., None]
+
+    elif img.ndim == 3:
+        # CHW -> HWC
+        if img.shape[0] in (1, 2, 3, 4) and img.shape[-1] not in (1, 2, 3, 4):
+            img = np.moveaxis(img, 0, -1)
+
+        # HWC
+        elif img.shape[-1] in (1, 2, 3, 4):
+            pass
+        else:
+            raise ValueError(f"Unsupported 3D image shape {img.shape} in {img_path}")
+
     else:
         raise ValueError(f"Unsupported image shape {img.shape} in {img_path}")
+
+    if img.shape[:2] != msk.shape[:2]:
+        raise ValueError(
+            f"Image/mask size mismatch for {img_path} and {mask_path}: "
+            f"{img.shape[:2]} vs {msk.shape[:2]}"
+        )
 
     return img, msk
 
 
+# normalization and visualization
+
 def normalize_crop_numpy(x: np.ndarray, mode: str):
-    # x: (H,W,C)
     x = x.astype(np.float32)
 
     if mode == "scale_uint16":
-        
         x = x / 65535.0
         x = np.clip(x, 0.0, 1.0)
         return x
@@ -91,6 +176,33 @@ def normalize_crop_numpy(x: np.ndarray, mode: str):
     raise ValueError(f"Unknown normalize mode: {mode}")
 
 
+def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
+    """
+    Display convention:
+     
+    """
+    if img.ndim == 2:
+        img = img[..., None]
+
+    x = normalize_crop_numpy(img, normalize_mode)
+
+    if x.shape[-1] == 1:
+        b = (np.clip(x[..., 0], 0, 1) * 255).astype(np.uint8)
+        z = np.zeros_like(b, dtype=np.uint8)
+        return np.stack([z, z, b], axis=-1)
+
+    if x.shape[-1] == 2:
+        b = (np.clip(x[..., 0], 0, 1) * 255).astype(np.uint8)
+        g = (np.clip(x[..., 1], 0, 1) * 255).astype(np.uint8)
+        r = np.zeros_like(g, dtype=np.uint8)
+        return np.dstack([r, g, b])
+
+    rgb = (np.clip(x[..., :3], 0, 1) * 255).astype(np.uint8)
+    return rgb
+
+
+# patch strategy
+
 def random_crop_xy(H, W, patch):
     y0 = random.randint(0, H - patch)
     x0 = random.randint(0, W - patch)
@@ -106,22 +218,33 @@ def clamp_crop_center(cy, cx, H, W, patch):
 
 def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
     """
-    Foreground-aware sampling:
-      - with prob cfg.fg_fraction -> try to sample a crop with enough foreground pixels
-      - else -> sample a mostly-background crop
+    Foreground patch:
+        foreground ratio >= cfg.fg_min_ratio  (aka >= 0.60)
+
+    Background patch:
+        foreground ratio <= cfg.bg_max_ratio  (aka <= 0.10)
+
+    Fallback:
+        return best candidate found after cfg.max_tries.
     """
     H, W = msk.shape
     P = cfg.patch
 
-    want_fg = (random.random() < cfg.fg_fraction)
-    fg_coords = None
+    if H < P or W < P:
+        raise ValueError(
+            f"Patch size {P} is larger than image size {(H, W)}. "
+            f"Reduce --patch or use larger images."
+        )
 
-    if want_fg:
-        fg_coords = np.argwhere(msk > 0)
+    want_fg = (random.random() < cfg.fg_fraction)
+    fg_coords = np.argwhere(msk > 0)
+
+    best_img = None
+    best_msk = None
+    best_score = None
 
     for _ in range(cfg.max_tries):
-        if want_fg and fg_coords is not None and len(fg_coords) > 0:
-            # pick a random foreground pixel and jitter a bit
+        if want_fg and len(fg_coords) > 0:
             cy, cx = fg_coords[random.randint(0, len(fg_coords) - 1)]
             cy = int(np.clip(cy + random.randint(-P // 4, P // 4), 0, H - 1))
             cx = int(np.clip(cx + random.randint(-P // 4, P // 4), 0, W - 1))
@@ -135,36 +258,47 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
         fg_ratio = float(msk_c.mean())
 
         if want_fg:
-            if fg_ratio >= cfg.min_fg_ratio:
+            if fg_ratio >= cfg.fg_min_ratio:
                 return img_c, msk_c
+
+            score = fg_ratio
+            if best_score is None or score > best_score:
+                best_score = score
+                best_img = img_c
+                best_msk = msk_c
         else:
-            if fg_ratio < max(cfg.min_fg_ratio * 0.2, 0.001):
+            if fg_ratio <= cfg.bg_max_ratio:
                 return img_c, msk_c
+
+            score = fg_ratio
+            if best_score is None or score < best_score:
+                best_score = score
+                best_img = img_c
+                best_msk = msk_c
+
+    if best_img is not None:
+        return best_img, best_msk
 
     y0, x0 = random_crop_xy(H, W, P)
     return img[y0:y0 + P, x0:x0 + P, :], msk[y0:y0 + P, x0:x0 + P]
 
 
+# pipeline for masks
 
 def make_dataset(pairs, cfg: TrainConfig, training: bool):
     rng = random.Random(cfg.seed + (0 if training else 999))
 
     def gen():
-        
         while True:
             img_path, mask_path = pairs[rng.randint(0, len(pairs) - 1)]
             img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
-
-            
             img_c, msk_c = sample_patch_numpy(img, msk, cfg)
 
             img_c = normalize_crop_numpy(img_c, cfg.normalize)
-
             msk_c = msk_c.astype(np.float32)[..., None]
 
             yield img_c, msk_c
 
-    
     first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]))
     C = first_img.shape[-1]
     P = cfg.patch
@@ -184,6 +318,8 @@ def make_dataset(pairs, cfg: TrainConfig, training: bool):
     return ds, C
 
 
+# model archotecture
+
 def conv_block(x, filters, dropout=0.0):
     x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
     x = tf.keras.layers.BatchNormalization()(x)
@@ -198,10 +334,9 @@ def conv_block(x, filters, dropout=0.0):
     return x
 
 
-def build_unet(input_shape, base_filters=32, dropout=0.0):
+def build_unet(input_shape, base_filters=8, dropout=0.0):
     inputs = tf.keras.Input(shape=input_shape)
 
-    # Encoder
     c1 = conv_block(inputs, base_filters, dropout=dropout)
     p1 = tf.keras.layers.MaxPool2D()(c1)
 
@@ -214,10 +349,8 @@ def build_unet(input_shape, base_filters=32, dropout=0.0):
     c4 = conv_block(p3, base_filters * 8, dropout=dropout)
     p4 = tf.keras.layers.MaxPool2D()(c4)
 
-    # Bottleneck
     bn = conv_block(p4, base_filters * 16, dropout=dropout)
 
-    # Decoder
     u4 = tf.keras.layers.Conv2DTranspose(base_filters * 8, 2, strides=2, padding="same")(bn)
     u4 = tf.keras.layers.Concatenate()([u4, c4])
     c5 = conv_block(u4, base_filters * 8, dropout=dropout)
@@ -235,9 +368,10 @@ def build_unet(input_shape, base_filters=32, dropout=0.0):
     c8 = conv_block(u1, base_filters, dropout=dropout)
 
     outputs = tf.keras.layers.Conv2D(1, 1, activation="sigmoid")(c8)
-
     return tf.keras.Model(inputs, outputs, name="UNet")
 
+
+# metrics IOU and Dice
 
 def dice_coef(y_true, y_pred, eps=1e-6):
     y_true = tf.cast(y_true, tf.float32)
@@ -270,6 +404,182 @@ def iou_coef(y_true, y_pred, eps=1e-6):
     return tf.reduce_mean(iou)
 
 
+
+# reporinting and visualization
+
+def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
+    print(f"\n=== {title} ===")
+    print(f"Dataset: {cfg.dataset}")
+    print(f"Root: {cfg.data_root}")
+    print(f"Number of annotated image/mask pairs: {len(pairs)}")
+    print("Samples:")
+
+    for i, (img_path, mask_path) in enumerate(pairs, 1):
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        print(
+            f"  [{i:02d}] {img_path.parent.name} | "
+            f"image shape: {img.shape} | mask shape: {msk.shape}"
+        )
+
+    first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]))
+    C = first_img.shape[-1]
+
+    train_patches_per_epoch = cfg.steps_per_epoch * cfg.batch
+    val_patches_per_epoch = cfg.val_steps * cfg.batch
+    total_train_patches = train_patches_per_epoch * cfg.epochs
+    total_val_patches = val_patches_per_epoch * cfg.epochs
+
+    print("\nPatch / batch summary:")
+    print(f"  Patch image shape: ({cfg.patch}, {cfg.patch}, {C})")
+    print(f"  Patch mask shape: ({cfg.patch}, {cfg.patch}, 1)")
+    print(f"  Batch size: {cfg.batch}")
+    print(f"  Train patches per epoch: {train_patches_per_epoch}")
+    print(f"  Val patches per epoch:   {val_patches_per_epoch}")
+    print(f"  Total train patches over {cfg.epochs} epochs: {total_train_patches}")
+    print(f"  Total val patches over {cfg.epochs} epochs:   {total_val_patches}")
+
+    print("\nPatch sampling strategy:")
+    print(
+        f"  {cfg.fg_fraction * 100:.0f}% foreground patches "
+        f"(fg >= {cfg.fg_min_ratio:.2f})"
+    )
+    print(
+        f"  {(1 - cfg.fg_fraction) * 100:.0f}% background patches "
+        f"(fg <= {cfg.bg_max_ratio:.2f})"
+    )
+
+
+def print_split_summary(train_pairs, val_pairs):
+    print("\n=== TRAIN / VAL SPLIT ===")
+    print(f"Train images: {len(train_pairs)}")
+    print(f"Val images:   {len(val_pairs)}")
+
+    print("\nTrain samples:")
+    for i, (img_path, mask_path) in enumerate(train_pairs, 1):
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        print(
+            f"  [T{i:02d}] {img_path.parent.name} | "
+            f"image shape: {img.shape} | mask shape: {msk.shape}"
+        )
+
+    print("\nValidation samples:")
+    for i, (img_path, mask_path) in enumerate(val_pairs, 1):
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        print(
+            f"  [V{i:02d}] {img_path.parent.name} | "
+            f"image shape: {img.shape} | mask shape: {msk.shape}"
+        )
+
+
+def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
+    print("\n=== RANDOM PATCH CHECK ===")
+    for i in range(n):
+        img_path, mask_path = random.choice(pairs)
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img_c, msk_c = sample_patch_numpy(img, msk, cfg)
+
+        fg_ratio = float(msk_c.mean())
+        bg_ratio = 1.0 - fg_ratio
+
+        print(
+            f"  Patch {i+1:02d} from {img_path.parent.name} | "
+            f"image shape: {img.shape} | mask shape: {msk.shape} | "
+            f"patch image shape: {img_c.shape} | patch mask shape: {msk_c.shape} | "
+            f"fg ratio: {fg_ratio:.3f} | bg ratio: {bg_ratio:.3f}"
+        )
+
+
+def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_path: Path):
+    train_patches_per_epoch = cfg.steps_per_epoch * cfg.batch
+    val_patches_per_epoch = cfg.val_steps * cfg.batch
+
+    lines = []
+    lines.append(f"Dataset: {cfg.dataset}")
+    lines.append(f"Data root: {cfg.data_root}")
+    lines.append(f"Total annotated pairs: {len(pairs)}")
+    lines.append(f"Train images: {len(train_pairs)}")
+    lines.append(f"Val images: {len(val_pairs)}")
+    lines.append(f"Patch image shape: ({cfg.patch}, {cfg.patch}, {C})")
+    lines.append(f"Patch mask shape: ({cfg.patch}, {cfg.patch}, 1)")
+    lines.append(f"Batch size: {cfg.batch}")
+    lines.append(f"Epochs: {cfg.epochs}")
+    lines.append(f"Steps per epoch: {cfg.steps_per_epoch}")
+    lines.append(f"Val steps: {cfg.val_steps}")
+    lines.append(f"Train patches per epoch: {train_patches_per_epoch}")
+    lines.append(f"Val patches per epoch: {val_patches_per_epoch}")
+    lines.append(f"Total training patches: {train_patches_per_epoch * cfg.epochs}")
+    lines.append(f"Total validation patches: {val_patches_per_epoch * cfg.epochs}")
+    lines.append(f"Normalization: {cfg.normalize}")
+    lines.append(f"Foreground fraction: {cfg.fg_fraction}")
+    lines.append(f"Foreground min ratio: {cfg.fg_min_ratio}")
+    lines.append(f"Background max ratio: {cfg.bg_max_ratio}")
+    lines.append(f"Base filters: {cfg.base_filters}")
+    lines.append("")
+    lines.append("All samples:")
+    for i, (img_path, mask_path) in enumerate(pairs, 1):
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        lines.append(
+            f"  [{i:02d}] {img_path.parent.name} | image shape: {img.shape} | mask shape: {msk.shape}"
+        )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def save_training_curves(history, out_png: Path, dataset_name: str):
+    hist = history.history
+    epochs = np.arange(1, len(hist.get("loss", [])) + 1)
+
+    plt.rcParams.update({
+        "font.size": 11,
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "legend.fontsize": 10,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+    })
+
+    fig = plt.figure(figsize=(15, 4.8), dpi=220)
+
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax1.plot(epochs, hist.get("loss", []), linewidth=2, label="Training loss")
+    ax1.plot(epochs, hist.get("val_loss", []), linewidth=2, label="Validation loss")
+    ax1.set_title(f"{dataset_name}: Loss")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(frameon=True)
+
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax2.plot(epochs, hist.get("dice_coef", []), linewidth=2, label="Training Dice")
+    ax2.plot(epochs, hist.get("val_dice_coef", []), linewidth=2, label="Validation Dice")
+    ax2.set_title(f"{dataset_name}: Dice coefficient")
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Dice")
+    ax2.set_ylim(0, 1.0)
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(frameon=True)
+
+    ax3 = fig.add_subplot(1, 3, 3)
+    ax3.plot(epochs, hist.get("iou_coef", []), linewidth=2, label="Training IoU")
+    ax3.plot(epochs, hist.get("val_iou_coef", []), linewidth=2, label="Validation IoU")
+    ax3.set_title(f"{dataset_name}: Intersection over Union")
+    ax3.set_xlabel("Epoch")
+    ax3.set_ylabel("IoU")
+    ax3.set_ylim(0, 1.0)
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(frameon=True)
+
+    fig.suptitle(f"U-Net training history ({dataset_name})", fontsize=13)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(out_png), dpi=300, bbox_inches="tight")
+    fig.savefig(str(out_png.with_suffix(".pdf")), bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6):
     out_dir.mkdir(parents=True, exist_ok=True)
     chosen = random.sample(pairs, k=min(n, len(pairs)))
@@ -277,40 +587,95 @@ def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6)
     for i, (img_path, mask_path) in enumerate(chosen, 1):
         img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
         img_c, msk_c = sample_patch_numpy(img, msk, cfg)
-        img_c = normalize_crop_numpy(img_c, cfg.normalize)
+        img_c_norm = normalize_crop_numpy(img_c, cfg.normalize)
         msk_c01 = (msk_c > 0).astype(np.uint8)
 
-        pred = model.predict(img_c[None, ...], verbose=0)[0, ..., 0]
+        pred = model.predict(img_c_norm[None, ...], verbose=0)[0, ..., 0]
         pred01 = (pred > 0.5).astype(np.uint8)
 
-        
-        x = img_c
-        if x.shape[-1] == 1:
-            g = (np.clip(x[..., 0], 0, 1) * 255).astype(np.uint8)
-            rgb = np.stack([g, g, g], axis=-1)
-        else:
-            rgb = (np.clip(x[..., :3], 0, 1) * 255).astype(np.uint8)
+        rgb = image_to_rgb_uint8(img_c, normalize_mode=cfg.normalize)
 
-        out = rgb.copy()
-        gt = msk_c01.astype(bool)
-        pr = pred01.astype(bool)
+        gt_overlay = rgb.copy()
+        gt_overlay[msk_c01.astype(bool), 0] = 255
+        gt_overlay[msk_c01.astype(bool), 1] = 255
+        gt_overlay[msk_c01.astype(bool), 2] = 0
 
-        out[gt, 0] = 255
-        out[gt, 1] = 255
-        out[gt, 2] = 0
+        pred_overlay = rgb.copy()
+        pred_overlay[pred01.astype(bool), 0] = 255
+        pred_overlay[pred01.astype(bool), 1] = 0
+        pred_overlay[pred01.astype(bool), 2] = 255
 
-        out[pr, 0] = 0
-        out[pr, 1] = 255
-        out[pr, 2] = 255
+        fig = plt.figure(figsize=(12, 4), dpi=180)
 
-        tiff.imwrite(str(out_dir / f"preview_{i:02d}.png"), out)
+        ax1 = fig.add_subplot(1, 3, 1)
+        ax1.imshow(rgb)
+        ax1.set_title("Patch")
+        ax1.axis("off")
+
+        ax2 = fig.add_subplot(1, 3, 2)
+        ax2.imshow(gt_overlay)
+        ax2.set_title("Ground truth overlay")
+        ax2.axis("off")
+
+        ax3 = fig.add_subplot(1, 3, 3)
+        ax3.imshow(pred_overlay)
+        ax3.set_title("Prediction overlay")
+        ax3.axis("off")
+
+        plt.tight_layout()
+        fig.savefig(str(out_dir / f"preview_{i:02d}.png"), bbox_inches="tight")
+        plt.close(fig)
+
+
+def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None = None):
+    img_path, mask_path = random.choice(pairs)
+    img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+    img_c, msk_c = sample_patch_numpy(img, msk, cfg)
+
+    full_rgb = image_to_rgb_uint8(img, normalize_mode=cfg.normalize)
+    full_overlay = full_rgb.copy()
+    full_overlay[msk.astype(bool), 0] = 255
+    full_overlay[msk.astype(bool), 1] = 255
+    full_overlay[msk.astype(bool), 2] = 0
+
+    patch_rgb = image_to_rgb_uint8(img_c, normalize_mode=cfg.normalize)
+    patch_overlay = patch_rgb.copy()
+    patch_overlay[msk_c.astype(bool), 0] = 255
+    patch_overlay[msk_c.astype(bool), 1] = 255
+    patch_overlay[msk_c.astype(bool), 2] = 0
+
+    fig = plt.figure(figsize=(16, 5), dpi=180)
+
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax1.imshow(full_rgb)
+    ax1.set_title(f"Random image\n{Path(img_path).parent.name}")
+    ax1.axis("off")
+
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax2.imshow(full_overlay)
+    ax2.set_title("Image + mask")
+    ax2.axis("off")
+
+    ax3 = fig.add_subplot(1, 3, 3)
+    ax3.imshow(patch_overlay)
+    ax3.set_title(f"Random patch\nfg ratio = {msk_c.mean():.2%}")
+    ax3.axis("off")
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(save_path), bbox_inches="tight")
+
+    plt.show()
+    plt.close(fig)
 
 
 def parse_args(cfg: TrainConfig):
     import argparse
 
-    p = argparse.ArgumentParser(description="Train U-Net (TF/Keras) on your annotated TIFFs.")
-    p.add_argument("--dataset", default=cfg.dataset, choices=["2d_time", "2d_wga_dapi"])
+    p = argparse.ArgumentParser(description="Train U-Net (TF/Keras) on annotated TIFF masks.")
+    p.add_argument("--dataset", default=None, choices=["2d_time", "2d_wga_dapi"])
     p.add_argument("--patch", type=int, default=cfg.patch)
     p.add_argument("--batch", type=int, default=cfg.batch)
     p.add_argument("--epochs", type=int, default=cfg.epochs)
@@ -320,23 +685,35 @@ def parse_args(cfg: TrainConfig):
     p.add_argument("--val_steps", type=int, default=cfg.val_steps)
 
     p.add_argument("--fg_fraction", type=float, default=cfg.fg_fraction)
-    p.add_argument("--min_fg_ratio", type=float, default=cfg.min_fg_ratio)
+    p.add_argument("--fg_min_ratio", type=float, default=cfg.fg_min_ratio)
+    p.add_argument("--bg_max_ratio", type=float, default=cfg.bg_max_ratio)
 
     p.add_argument("--val_split", type=float, default=cfg.val_split)
     p.add_argument("--seed", type=int, default=cfg.seed)
 
     p.add_argument("--normalize", default=cfg.normalize, choices=["scale_uint16", "percentile"])
-
     p.add_argument("--base_filters", type=int, default=cfg.base_filters)
     p.add_argument("--dropout", type=float, default=cfg.dropout)
 
+    p.add_argument("--preview_only", action="store_true")
+    p.add_argument("--preview_n", type=int, default=cfg.preview_n)
+
     args = p.parse_args()
+
     for k, v in vars(args).items():
-        setattr(cfg, k, v)
+        if v is not None:
+            setattr(cfg, k, v)
+
+    if args.dataset is None:
+        cfg.dataset = choose_dataset_terminal(default=cfg.dataset)
 
     cfg.data_root = cfg.repo_root / "results" / "training_files" / "U-net" / cfg.dataset
-    cfg.out_root = cfg.repo_root / "results" / "training_files" / "U-net" / "_trained_models" / cfg.dataset
-    cfg.out_root.mkdir(parents=True, exist_ok=True)
+    cfg.models_root = cfg.repo_root / "models"
+    cfg.models_root.mkdir(parents=True, exist_ok=True)
+
+    cfg.run_root = cfg.models_root / f"u_net_{cfg.dataset}"
+    cfg.run_root.mkdir(parents=True, exist_ok=True)
+
     return cfg
 
 
@@ -354,10 +731,38 @@ def main():
             f"Found {len(pairs)}."
         )
 
+    preview_dir = cfg.run_root / "preview_checks"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    print_dataset_summary(pairs, cfg, title="FULL DATASET")
+    print_random_patch_examples(pairs, cfg, n=5)
+
+    if cfg.preview_only:
+        for i in range(cfg.preview_n):
+            save_path = preview_dir / f"preview_check_{i+1:02d}.png"
+            show_random_image_mask_patch(pairs, cfg, save_path=save_path)
+        print("\nPreview-only mode finished.")
+        print(f"Saved preview checks to: {preview_dir}")
+        return
+
+    do_preview = yes_no_prompt(
+        "Do you want to inspect random image + mask + random patch before training?",
+        default=True
+    )
+    if do_preview:
+        save_path = preview_dir / "preview_check_before_training.png"
+        show_random_image_mask_patch(pairs, cfg, save_path=save_path)
+        print(f"Saved preview check to: {save_path}")
+
     random.shuffle(pairs)
     n_val = max(1, int(len(pairs) * cfg.val_split))
     val_pairs = pairs[:n_val]
     train_pairs = pairs[n_val:]
+
+    if len(train_pairs) < 1:
+        raise RuntimeError("Training split is empty. Add more annotated samples or reduce val_split.")
+
+    print_split_summary(train_pairs, val_pairs)
 
     train_ds, C = make_dataset(train_pairs, cfg, training=True)
     val_ds, _ = make_dataset(val_pairs, cfg, training=False)
@@ -374,10 +779,19 @@ def main():
         metrics=[dice_coef, iou_coef],
     )
 
-    ckpt_path = cfg.out_root / "unet_best.keras"
+    best_model_path = cfg.run_root / f"u_net_{cfg.dataset}_best.keras"
+    final_model_path = cfg.run_root / f"u_net_{cfg.dataset}_final.keras"
+    history_path = cfg.run_root / f"u_net_{cfg.dataset}_history.json"
+    curves_path = cfg.run_root / f"u_net_{cfg.dataset}_training_curves.png"
+    summary_txt = cfg.run_root / f"u_net_{cfg.dataset}_run_summary.txt"
+    previews_out = cfg.run_root / "prediction_previews"
+
+    save_run_summary(cfg, pairs, train_pairs, val_pairs, C, summary_txt)
+    print(f"\nRun summary saved to: {summary_txt}")
+
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(
-            filepath=str(ckpt_path),
+            filepath=str(best_model_path),
             monitor="val_dice_coef",
             mode="max",
             save_best_only=True,
@@ -400,13 +814,26 @@ def main():
         ),
     ]
 
-    print("\n=== DATA ===")
-    print(f"Dataset: {cfg.dataset}")
-    print(f"Annotated samples: {len(pairs)} (train {len(train_pairs)} / val {len(val_pairs)})")
-    print(f"Patch: {cfg.patch}  Batch: {cfg.batch}")
-    print(f"Foreground sampling: {cfg.fg_fraction*100:.0f}% fg, min_fg_ratio={cfg.min_fg_ratio}")
-    print(f"Normalize: {cfg.normalize}")
-    print(f"Output: {cfg.out_root}")
+    print("\n=== TRAINING SETTINGS ===")
+    print(f"Dataset:              {cfg.dataset}")
+    print(f"Patch size:           {cfg.patch}")
+    print(f"Patch image shape:    ({cfg.patch}, {cfg.patch}, {C})")
+    print(f"Patch mask shape:     ({cfg.patch}, {cfg.patch}, 1)")
+    print(f"Batch size:           {cfg.batch}")
+    print(f"Epochs:               {cfg.epochs}")
+    print(f"Steps per epoch:      {cfg.steps_per_epoch}")
+    print(f"Validation steps:     {cfg.val_steps}")
+    print(f"Learning rate:        {cfg.lr}")
+    print(f"Normalization:        {cfg.normalize}")
+    print(f"Foreground fraction:  {cfg.fg_fraction:.2f}")
+    print(f"Foreground min ratio: {cfg.fg_min_ratio:.2f}")
+    print(f"Background max ratio: {cfg.bg_max_ratio:.2f}")
+    print(f"Base filters:         {cfg.base_filters}")
+    print(f"Train images:         {len(train_pairs)}")
+    print(f"Validation images:    {len(val_pairs)}")
+    print(f"Best model path:      {best_model_path}")
+    print(f"Final model path:     {final_model_path}")
+    print(f"Curves path:          {curves_path}")
 
     history = model.fit(
         train_ds,
@@ -418,23 +845,22 @@ def main():
         verbose=1,
     )
 
-    
-    final_path = cfg.out_root / "unet_final.keras"
-    model.save(str(final_path))
+    model.save(str(final_model_path))
 
- 
-    hist_path = cfg.out_root / "history.json"
-    with open(hist_path, "w", encoding="utf-8") as f:
+    with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history.history, f, indent=2)
 
-    preview_dir = cfg.out_root / "previews"
-    save_prediction_previews(model, val_pairs, cfg, preview_dir, n=6)
+    save_training_curves(history, curves_path, cfg.dataset)
+    save_prediction_previews(model, val_pairs, cfg, previews_out, n=6)
 
     print("\nSaved:")
-    print(f"  Best model:  {ckpt_path}")
-    print(f"  Final model: {final_path}")
-    print(f"  History:     {hist_path}")
-    print(f"  Previews:    {preview_dir}")
+    print(f"  Best model:       {best_model_path}")
+    print(f"  Final model:      {final_model_path}")
+    print(f"  History JSON:     {history_path}")
+    print(f"  Training curves:  {curves_path}")
+    print(f"  Training curves:  {curves_path.with_suffix('.pdf')}")
+    print(f"  Run summary:      {summary_txt}")
+    print(f"  Prediction views: {previews_out}")
 
 
 if __name__ == "__main__":
