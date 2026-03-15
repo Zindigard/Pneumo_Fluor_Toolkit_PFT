@@ -4,21 +4,55 @@ import argparse
 from pathlib import Path
 from typing import Dict
 
-import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Circle
 
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
-from PFT.core_prog_parts.notch_filter import list_omezarr_images, results_filters_dir
-from PFT.core_prog_parts.notch_filter import _to_numpy, _ensure_cyx
-from PFT.core_prog_parts.free_hand_filter import FreehandMaskParams, run_freehand_on_dataset
+from PFT.core_prog_parts.notch_filter import list_omezarr_images, _ensure_cyx, _to_numpy
+from PFT.core_prog_parts.free_hand_filter import (
+    FreehandMaskParams,
+    _apply_mask_one_plane,
+    results_filters_dir,
+    run_freehand_on_dataset,
+)
 
 EPS = 1e-12
 
+CURATED_TEST_STEMS: dict[str, list[str]] = {
+    "2d_time": [
+        "WT_HADA_NHS_5min_ROI1_SIM²",
+        "WT_HADA_NHS_5min_ROI4_SIM",
+        "WT_HADA_NHS_20min_ROI1_SIM",
+        "WT_HADA_NHS_20min_ROI2_SIM",
+        "WT_HADA_NHS_20min_ROI3_SIM",
+        "WT_HADA_NHS_120min_ROI1_SIM",
+        "WT_HADA_NHS_40min_ROI1_SIM²",
+        "WT_HADA_NHS_120min_ROI3_SIM²",
+        "WT_HADA_THY_20min_ROI2_SIM²",
+        "WT_HADA_THY_40min_ROI2_SIM²",
+        "WT_HADA_THY_40min_ROI4_SIM²",
+        "WT_HADA_THY_120min_ROI1_SIM²",
+    ]
+}
 
 
+def list_curated_test_images(dataset: str) -> list[Path]:
+    all_imgs = list_omezarr_images(dataset)
+    want = CURATED_TEST_STEMS.get(dataset, [])
+    by_stem = {p.parent.name: p for p in all_imgs}
+    return [by_stem[s] for s in want if s in by_stem]
+
+
+def missing_curated_test_stems(dataset: str) -> list[str]:
+    all_stems = {p.parent.name for p in list_omezarr_images(dataset)}
+    return [s for s in CURATED_TEST_STEMS.get(dataset, []) if s not in all_stems]
+
+
+# -------------------------
 # Metrics
+# -------------------------
 def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
     a = a.astype(np.float64, copy=False).ravel()
     b = b.astype(np.float64, copy=False).ravel()
@@ -28,10 +62,9 @@ def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.sum(a * b) / denom)
 
 
+
 def neighbor_corr(x: np.ndarray) -> float:
-    x = np.asarray(x)
-    if x.ndim != 2:
-        raise ValueError(f"neighbor_corr expects 2D array, got shape={x.shape}")
+    x = np.asarray(x, dtype=np.float32)
     vals = []
     if x.shape[1] >= 2:
         vals.append(_pearson_corr(x[:, :-1], x[:, 1:]))
@@ -40,38 +73,31 @@ def neighbor_corr(x: np.ndarray) -> float:
     return float(np.mean(vals)) if vals else 0.0
 
 
+
 def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
     x = np.asarray(x, dtype=np.float32)
-    if x.ndim != 2:
-        raise ValueError(f"fft_peak_score expects 2D array, got shape={x.shape}")
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
     mag = np.abs(F).astype(np.float64)
-
     h, w = mag.shape
     cy, cx = h // 2, w // 2
     y0, y1 = max(0, cy - dc_halfwidth), min(h, cy + dc_halfwidth + 1)
     x0, x1 = max(0, cx - dc_halfwidth), min(w, cx + dc_halfwidth + 1)
     mag[y0:y1, x0:x1] = 0.0
-
     mean = float(mag.mean()) + EPS
     p999 = float(np.percentile(mag, 99.9))
     return p999 / mean
 
 
+
 def gradient_mag_mean(x: np.ndarray) -> float:
     x = np.asarray(x, dtype=np.float32)
-    if x.ndim != 2:
-        raise ValueError(f"gradient_mag_mean expects 2D array, got shape={x.shape}")
     gy, gx = np.gradient(x)
-    g = np.sqrt(gx * gx + gy * gy)
-    return float(np.mean(g))
+    return float(np.mean(np.sqrt(gx * gx + gy * gy)))
+
 
 
 def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> dict:
-    """
-    Compute metrics for 1-channel (blue) or 2-channel (blue+green) chosen image.
-    """
     out = {
         "blue": {
             "neighbor_corr": neighbor_corr(blue),
@@ -88,6 +114,7 @@ def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> d
     return out
 
 
+
 def write_metrics_block(f, title: str, metrics: dict) -> None:
     f.write(f"\n=== {title} ===\n")
     for ch_name, m in metrics.items():
@@ -96,15 +123,17 @@ def write_metrics_block(f, title: str, metrics: dict) -> None:
             f.write(f"{k}: {v}\n")
 
 
-# Display 
+# -------------------------
+# Display helpers
+# -------------------------
 def _norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> np.ndarray:
     x = x.astype(np.float32, copy=False)
     lo = float(np.percentile(x, p_lo))
     hi = float(np.percentile(x, p_hi))
     if hi <= lo:
         return np.zeros_like(x, dtype=np.float32)
-    y = (x - lo) / (hi - lo)
-    return np.clip(y, 0.0, 1.0).astype(np.float32)
+    return np.clip((x - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
+
 
 
 def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
@@ -114,26 +143,43 @@ def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.nd
     return np.stack([R, G, B], axis=-1)
 
 
+
 def _make_crimson_cmap():
     return LinearSegmentedColormap.from_list(
-        "white_to_crimson", [(1, 1, 1), (0.86, 0.08, 0.24)]
+        "black_to_crimson",
+        [
+            (0.0, (0.0, 0.0, 0.0)),
+            (0.10, (0.08, 0.0, 0.0)),
+            (0.35, (0.30, 0.0, 0.04)),
+            (0.65, (0.62, 0.02, 0.10)),
+            (1.0, (0.86, 0.08, 0.24)),
+        ],
     )
+
 
 
 def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, out_png: Path):
     diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
     diff_map = np.mean(diff, axis=-1)
-    diff_norm = diff_map / (float(np.percentile(diff_map, 99.5)) + 1e-12)
+    scale = float(np.percentile(diff_map, 99.7)) + 1e-12
+    diff_norm = np.clip(diff_map / scale, 0.0, 1.0)
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 3, 1)
     ax2 = fig.add_subplot(1, 3, 2)
     ax3 = fig.add_subplot(1, 3, 3)
 
-    ax1.imshow(orig_rgb); ax1.set_title("Original (RGB, display-norm)"); ax1.axis("off")
-    ax2.imshow(filt_rgb); ax2.set_title("Filtered (RGB, display-norm)"); ax2.axis("off")
-    ax3.imshow(np.clip(diff_norm, 0, 1), cmap=_make_crimson_cmap(), vmin=0, vmax=1)
-    ax3.set_title("|Δ| (crimson=more)"); ax3.axis("off")
+    ax1.imshow(orig_rgb)
+    ax1.set_title("Original (RGB, display-norm)")
+    ax1.axis("off")
+
+    ax2.imshow(filt_rgb)
+    ax2.set_title("Filtered (RGB, display-norm)")
+    ax2.axis("off")
+
+    ax3.imshow(diff_norm, cmap=_make_crimson_cmap(), vmin=0, vmax=1)
+    ax3.set_title("|Δ| (black=min, crimson=max)")
+    ax3.axis("off")
 
     fig.suptitle(title)
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -141,12 +187,15 @@ def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str,
     plt.close(fig)
 
 
-# FFT compute 
+# -------------------------
+# FFT helpers
+# -------------------------
 def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
     return np.log1p(np.abs(F)).astype(np.float32)
+
 
 
 def _center_crop(img2d: np.ndarray, target: int = 512) -> np.ndarray:
@@ -158,24 +207,21 @@ def _center_crop(img2d: np.ndarray, target: int = 512) -> np.ndarray:
     return img2d[y0:y0 + target, x0:x0 + target]
 
 
+
 def mean_fft_magnitude(
     zarr_paths: list[Path],
     *,
     channel_index: int,
-    max_images: int = 30,
     fft_size: int = 512,
 ) -> np.ndarray:
-    n = min(len(zarr_paths), max_images)
-    if n == 0:
+    if not zarr_paths:
         raise ValueError("No images to compute mean FFT.")
-
     acc = None
     used = 0
-    for p in zarr_paths[:n]:
+    for p in zarr_paths:
         arr, axes = load_ome_zarr(p, level=0, as_numpy=False)
         x = _to_numpy(arr)
         x, axes = _ensure_cyx(x, axes)
-
         if "c" in axes:
             c_i = axes.index("c")
             if channel_index >= x.shape[c_i]:
@@ -183,24 +229,23 @@ def mean_fft_magnitude(
             img = np.take(x, indices=channel_index, axis=c_i)
         else:
             img = x
-
         if "t" in axes and img.ndim == 3:
             img = img[0]
         if img.ndim != 2:
             continue
-
         img = _center_crop(img, fft_size)
         m = _fft_logmag(img)
         acc = m.astype(np.float64) if acc is None else (acc + m.astype(np.float64))
         used += 1
-
     if acc is None or used == 0:
         raise ValueError("Could not compute mean FFT (no valid images).")
     return (acc / float(used)).astype(np.float32)
 
 
+
 def _channel_cmap(name: str) -> str:
     return {"blue": "Blues", "green": "Greens"}.get(name, "gray")
+
 
 
 def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
@@ -211,29 +256,21 @@ def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
     ax.imshow(fft_img, cmap=cmap, vmin=vmin, vmax=vmax)
 
 
+
 def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
-    """
-    One-click selection from FFT center:
-      - circle center fixed at FFT center
-      - click once to set radius
-    """
     h, w = mean_fft.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-
     fig, ax = plt.subplots()
     _imshow_fft(ax, mean_fft, cmap=cmap)
     ax.set_title(title + "\nMove mouse (red preview), click once to set radius")
     ax.axis("off")
-
     yy, xx = np.indices((h, w), dtype=np.float32)
     rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-
     overlay = np.zeros((h, w, 4), dtype=np.float32)
     overlay[..., 0] = 1.0
     overlay[..., 1] = 0.55
     overlay[..., 2] = 0.0
     overlay_img = ax.imshow(overlay, alpha=0.0)
-
     circ = Circle((cx, cy), 1.0, fill=False, edgecolor="red", linewidth=1)
     ax.add_patch(circ)
 
@@ -266,10 +303,10 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
     return int(selected["r"])
 
 
+
 def _save_fft_with_overlay(fft_img: np.ndarray, radius: int, out_png: Path, title: str, cmap: str, linewidth: int = 3):
     h, w = fft_img.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-
     yy, xx = np.indices((h, w), dtype=np.float32)
     rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
 
@@ -291,12 +328,26 @@ def _save_fft_with_overlay(fft_img: np.ndarray, radius: int, out_png: Path, titl
     plt.close(fig)
 
 
+# -------------------------
+# CLI helpers
+# -------------------------
 def _choose_dataset_interactive() -> str:
     print("Choose dataset:")
     print("  1) 2d_time (blue only)")
     print("  2) 2d_wga_dapi (blue + green)")
     ans = input("Choose number [1/2]: ").strip() or "1"
     return "2d_wga_dapi" if ans == "2" else "2d_time"
+
+
+
+def _choose_mode_interactive() -> str:
+    print("Choose mode:")
+    print("  1) Process ONE image directly (enter radius first, skip tuning figures)")
+    print("  2) Tune on curated subset first, then process curated subset")
+    print("  3) Process curated subset directly (enter radius first, skip tuning figures)")
+    ans = input("Choose number [1/2/3]: ").strip() or "2"
+    return ans if ans in {"1", "2", "3"} else "2"
+
 
 
 def _prompt_bool(prompt: str, default: bool = False) -> bool:
@@ -306,10 +357,231 @@ def _prompt_bool(prompt: str, default: bool = False) -> bool:
     return s in ("y", "yes", "1", "true", "t")
 
 
+
+def _prompt_int(prompt: str, default: int) -> int:
+    s = input(prompt).strip()
+    return default if not s else int(s)
+
+
+
+def _path_to_index(all_paths: list[Path], target: Path) -> int:
+    target_resolved = target.resolve()
+    for i, p in enumerate(all_paths):
+        if p.resolve() == target_resolved:
+            return i
+    raise ValueError(f"Path not found in dataset list: {target}")
+
+
+
+def _extract_display_plane(x: np.ndarray, axes: str, c: int) -> np.ndarray:
+    arr = x
+    if "c" in axes:
+        arr = np.take(arr, indices=c, axis=axes.index("c"))
+    if "t" in axes and arr.ndim == 3:
+        arr = arr[0]
+    if arr.ndim != 2:
+        raise ValueError(f"Expected 2D display plane, got shape={arr.shape}, axes={axes}")
+    return np.asarray(arr, dtype=np.float32)
+
+
+
+def _collect_dataset_channel_info(dataset: str, zarrs: list[Path]) -> tuple[list[int], list[str]]:
+    arr0, axes0 = load_ome_zarr(zarrs[0], level=0, as_numpy=False)
+    x0 = _to_numpy(arr0)
+    x0, axes0 = _ensure_cyx(x0, axes0)
+    n_c = x0.shape[axes0.index("c")] if "c" in axes0 else 1
+    if dataset == "2d_time":
+        return [0], ["blue"]
+    if n_c == 1:
+        return [0], ["blue"]
+    return [0, 1], ["blue", "green"]
+
+
+
+def _load_planes(path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | None]:
+    arr, axes = load_ome_zarr(path, level=0, as_numpy=False)
+    x = _to_numpy(arr)
+    x, axes = _ensure_cyx(x, axes)
+    blue = _extract_display_plane(x, axes, 0)
+    green = None
+    if dataset != "2d_time" and ("c" in axes) and x.shape[axes.index("c")] > 1:
+        green = _extract_display_plane(x, axes, 1)
+    return blue, green
+
+
+
+def _build_center_keep_mask(shape: tuple[int, int], radius: int) -> np.ndarray:
+    h, w = shape
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    yy, xx = np.indices((h, w), dtype=np.float32)
+    rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    return (rr <= float(radius)).astype(np.float32)
+
+
+
+def _write_single_metrics_report(rep: Path, dataset: str, stem: str, radius: int, metrics_before: dict, metrics_after: dict) -> None:
+    with rep.open("w", encoding="utf-8") as f:
+        f.write("=== SETTINGS ===\n")
+        f.write(f"dataset: {dataset}\n")
+        f.write(f"image: {stem}\n")
+        f.write(f"radius_pixels: {radius}\n")
+        write_metrics_block(f, "ORIGINAL METRICS", metrics_before)
+        write_metrics_block(f, "FILTERED METRICS", metrics_after)
+
+
+
+def _rows_for_batch(stem: str, metrics_before: dict, metrics_after: dict) -> list[dict]:
+    rows: list[dict] = []
+    for ch_name in metrics_after.keys():
+        b = metrics_before[ch_name]
+        a = metrics_after[ch_name]
+        rows.append({
+            "image": stem,
+            "channel": ch_name,
+            "neighbor_corr_before": b["neighbor_corr"],
+            "neighbor_corr_after": a["neighbor_corr"],
+            "delta_neighbor_corr": a["neighbor_corr"] - b["neighbor_corr"],
+            "fft_peak_score_before": b["fft_peak_score"],
+            "fft_peak_score_after": a["fft_peak_score"],
+            "delta_fft_peak_score": a["fft_peak_score"] - b["fft_peak_score"],
+            "grad_mag_mean_before": b["grad_mag_mean"],
+            "grad_mag_mean_after": a["grad_mag_mean"],
+            "delta_grad_mag_mean": a["grad_mag_mean"] - b["grad_mag_mean"],
+        })
+    return rows
+
+
+
+def _write_batch_summary_txt(out_txt: Path, rows: list[dict], dataset: str, radius: int) -> None:
+    out_txt.parent.mkdir(parents=True, exist_ok=True)
+    with out_txt.open("w", encoding="utf-8") as f:
+        f.write("=== CURATED SUBSET BATCH SUMMARY ===\n")
+        f.write(f"dataset: {dataset}\n")
+        f.write(f"radius_pixels: {radius}\n")
+        f.write(f"n_rows: {len(rows)}\n")
+        if rows:
+            d_nc = np.mean([r["delta_neighbor_corr"] for r in rows])
+            d_fp = np.mean([r["delta_fft_peak_score"] for r in rows])
+            d_gm = np.mean([r["delta_grad_mag_mean"] for r in rows])
+            f.write("\n=== MEAN DELTAS ===\n")
+            f.write(f"neighbor_corr: {d_nc}\n")
+            f.write(f"fft_peak_score: {d_fp}\n")
+            f.write(f"grad_mag_mean: {d_gm}\n")
+            f.write("\n=== PER IMAGE / CHANNEL ===\n")
+            for r in rows:
+                f.write(
+                    f"{r['image']} [{r['channel']}]: "
+                    f"delta_neighbor_corr={r['delta_neighbor_corr']}, "
+                    f"delta_fft_peak_score={r['delta_fft_peak_score']}, "
+                    f"delta_grad_mag_mean={r['delta_grad_mag_mean']}\n"
+                )
+
+
+
+def _save_mean_and_example_fft_overlays(
+    tuning_dir: Path,
+    mean_ffts: dict[str, np.ndarray],
+    radius: int,
+    example_path: Path,
+    dataset: str,
+    fft_size: int,
+) -> None:
+    for name, m in mean_ffts.items():
+        _save_fft_with_overlay(
+            m,
+            radius,
+            tuning_dir / f"mean_fft_dc_overlay_{name}.png",
+            f"Mean FFT ({name}) with radius r={radius}",
+            cmap=_channel_cmap(name),
+            linewidth=3,
+        )
+    blue, green = _load_planes(example_path, dataset)
+    _save_fft_with_overlay(
+        _fft_logmag(_center_crop(blue, fft_size)),
+        radius,
+        tuning_dir / "chosen_image_fft_dc_overlay_blue.png",
+        f"Chosen image FFT (blue) with radius r={radius}",
+        cmap=_channel_cmap("blue"),
+        linewidth=3,
+    )
+    if green is not None:
+        _save_fft_with_overlay(
+            _fft_logmag(_center_crop(green, fft_size)),
+            radius,
+            tuning_dir / "chosen_image_fft_dc_overlay_green.png",
+            f"Chosen image FFT (green) with radius r={radius}",
+            cmap=_channel_cmap("green"),
+            linewidth=3,
+        )
+
+
+
+def _process_one_image(dataset: str, idx: int, zarrs: list[Path], radius: int, fft_size: int) -> tuple[Path, dict, dict]:
+    orig_path = zarrs[idx]
+    stem = orig_path.parent.name
+    blue_before, _green_before = _load_planes(orig_path, dataset)
+    mask_keep = _build_center_keep_mask(blue_before.shape, radius)
+    out_dir = run_freehand_on_dataset(
+        dataset,
+        FreehandMaskParams(mask_keep=mask_keep),
+        apply=True,
+        channel_mode="auto",
+        image_index=idx,
+    )
+    out_zarr = out_dir / "image.ome.zarr"
+
+    blue_before, green_before = _load_planes(orig_path, dataset)
+    blue_after, green_after = _load_planes(out_zarr, dataset)
+
+    metrics_before = compute_metrics_per_channel(blue_before, green_before)
+    metrics_after = compute_metrics_per_channel(blue_after, green_after)
+    _write_single_metrics_report(out_dir / "metrics.txt", dataset, stem, radius, metrics_before, metrics_after)
+
+    _plot_rgb_comparison(
+        _to_rgb_from_blue_green(blue_before, green_before),
+        _to_rgb_from_blue_green(blue_after, green_after),
+        f"{dataset} / {stem}",
+        out_dir / "compare_original_filtered_diff.png",
+    )
+
+    _save_fft_with_overlay(
+        _fft_logmag(_center_crop(blue_before, fft_size)),
+        radius,
+        out_dir / "chosen_image_fft_dc_overlay_blue.png",
+        f"Chosen image FFT (blue) with radius r={radius}",
+        cmap=_channel_cmap("blue"),
+        linewidth=3,
+    )
+    if green_before is not None:
+        _save_fft_with_overlay(
+            _fft_logmag(_center_crop(green_before, fft_size)),
+            radius,
+            out_dir / "chosen_image_fft_dc_overlay_green.png",
+            f"Chosen image FFT (green) with radius r={radius}",
+            cmap=_channel_cmap("green"),
+            linewidth=3,
+        )
+
+    return out_dir, metrics_before, metrics_after
+
+
+
+def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list[Path], radius: int, fft_size: int) -> Path:
+    batch_rows: list[dict] = []
+    for p in curated_paths:
+        idx = _path_to_index(zarrs, p)
+        out_dir, before, after = _process_one_image(dataset, idx, zarrs, radius, fft_size)
+        batch_rows.extend(_rows_for_batch(p.parent.name, before, after))
+
+    dataset_out = results_filters_dir() / "Free_hand" / dataset
+    _write_batch_summary_txt(dataset_out / "batch_metrics_curated_subset.txt", batch_rows, dataset, radius)
+    return dataset_out
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=False, choices=["2d_time", "2d_wga_dapi", "2d_dpa_wagi"])
-    ap.add_argument("--max_images", type=int, default=30)
     ap.add_argument("--fft_size", type=int, default=512)
     ap.add_argument("--image_index", type=int, default=None)
     args = ap.parse_args()
@@ -328,145 +600,77 @@ def main():
     if len(zarrs) > 20:
         print("  ... (showing first 20)")
 
-    arr0, axes0 = load_ome_zarr(zarrs[0], level=0, as_numpy=False)
-    x0 = _to_numpy(arr0)
-    x0, axes0 = _ensure_cyx(x0, axes0)
-    n_c = x0.shape[axes0.index("c")] if "c" in axes0 else 1
+    mode = _choose_mode_interactive()
 
-    if dataset == "2d_time":
-        channels = [0]
-        channel_names = ["blue"]
-    else:
-        channels = [0] if n_c == 1 else [0, 1]
-        channel_names = ["blue"] if n_c == 1 else ["blue", "green"]
+    if mode in {"2", "3"}:
+        curated_paths = list_curated_test_images(dataset)
+        missing = missing_curated_test_stems(dataset)
+        if not curated_paths:
+            raise SystemExit(f"No curated subset configured/found for dataset={dataset}")
+        if missing:
+            print("Warning: some curated stems were not found:")
+            for stem in missing:
+                print(f"  - {stem}")
+        print(f"Curated subset size: {len(curated_paths)}")
+        for p in curated_paths:
+            print(f"  - {p.parent.name}")
 
-    # mean FFTs first 
-    mean_ffts: Dict[str, np.ndarray] = {}
-    for ch, name in zip(channels, channel_names):
-        mean_ffts[name] = mean_fft_magnitude(
-            zarrs, channel_index=ch, max_images=args.max_images, fft_size=args.fft_size
-        )
-        fig, ax = plt.subplots()
-        _imshow_fft(ax, mean_ffts[name], cmap=_channel_cmap(name))
-        ax.set_title(f"Mean FFT log-magnitude ({dataset}) - {name}")
-        ax.axis("off")
-    plt.show()
+    channels, channel_names = _collect_dataset_channel_info(dataset, zarrs)
 
-    # choose which channel's mean FFT 
-    if len(channel_names) > 1:
-        choice = input("Select channel for circle selection [blue/green] (default blue): ").strip().lower() or "blue"
-        if choice not in mean_ffts:
-            choice = "blue"
-    else:
-        choice = channel_names[0]
-
-    radius = _pick_radius_centered(mean_ffts[choice], f"Free-hand circle on mean FFT ({choice})", cmap=_channel_cmap(choice))
-    print(f"Selected radius: r={radius}px")
-
-    # keep-mask
-    h, w = mean_ffts[choice].shape
-    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-    yy, xx = np.indices((h, w), dtype=np.float32)
-    rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-    mask_keep = (rr <= float(radius)).astype(np.float32)
-
-    out_dir_base = results_filters_dir() / "Free_hand" / dataset
-    out_dir_base.mkdir(parents=True, exist_ok=True)
-
-    np.save(out_dir_base / f"mask_keep_centered_{choice}.npy", mask_keep.astype(np.float32))
-    if "blue" in mean_ffts:
-        _save_fft_with_overlay(mean_ffts["blue"], radius, out_dir_base / "mask_preview_mean_fft_blue.png",
-                               f"Mask on MEAN FFT (blue) r={radius}", cmap=_channel_cmap("blue"), linewidth=3)
-    if "green" in mean_ffts:
-        _save_fft_with_overlay(mean_ffts["green"], radius, out_dir_base / "mask_preview_mean_fft_green.png",
-                               f"Mask on MEAN FFT (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
-
-    # choose image
-    if args.image_index is None:
-        idx = int(input(f"Choose image index [0..{len(zarrs)-1}]: ").strip() or "0")
-    else:
-        idx = int(args.image_index)
-    idx = int(np.clip(idx, 0, len(zarrs) - 1))
-    test_path = zarrs[idx]
-    stem = test_path.parent.name
-    print(f"Selected: {stem}")
-
-    # load chosen image
-    arr, axes = load_ome_zarr(test_path, level=0, as_numpy=False)
-    x = _to_numpy(arr)
-    x, axes = _ensure_cyx(x, axes)
-
-    def get_plane(ci: int) -> np.ndarray:
-        if "c" in axes:
-            plane = np.take(x, indices=ci, axis=axes.index("c"))
-        else:
-            plane = x
-        if "t" in axes and plane.ndim == 3:
-            plane = plane[0]
-        return plane.astype(np.float32)
-
-    blue = get_plane(0)
-    green = get_plane(1) if ("c" in axes and x.shape[axes.index("c")] > 1) and dataset != "2d_time" else None
-
-    out_img_dir = out_dir_base / stem
-    out_img_dir.mkdir(parents=True, exist_ok=True)
-
-  
-    fft_blue = _fft_logmag(_center_crop(blue, args.fft_size))
-    _save_fft_with_overlay(fft_blue, radius, out_img_dir / "circle_on_fft_original_blue.png",
-                           f"Circle on FFT of ORIGINAL (blue) r={radius}", cmap=_channel_cmap("blue"), linewidth=3)
-    if green is not None:
-        fft_green = _fft_logmag(_center_crop(green, args.fft_size))
-        _save_fft_with_overlay(fft_green, radius, out_img_dir / "circle_on_fft_original_green.png",
-                               f"Circle on FFT of ORIGINAL (green) r={radius}", cmap=_channel_cmap("green"), linewidth=3)
-
-    # metrics 
-    rep = out_img_dir / "metrics.txt"
-    orig_metrics = compute_metrics_per_channel(blue, green)
-    with rep.open("w", encoding="utf-8") as f:
-        f.write("=== SETTINGS ===\n")
-        f.write(f"dataset: {dataset}\n")
-        f.write(f"image: {stem}\n")
-        f.write(f"radius_pixels: {radius}\n")
-        f.write(f"mask_saved: {out_dir_base / f'mask_keep_centered_{choice}.npy'}\n")
-        write_metrics_block(f, "ORIGINAL METRICS (chosen image)", orig_metrics)
-
-    orig_rgb = _to_rgb_from_blue_green(blue, green)
-
-    do_apply = _prompt_bool("Apply free-hand filter now? [y/N]: ", default=False)
-    if not do_apply:
-        _plot_rgb_comparison(orig_rgb, orig_rgb.copy(), f"{dataset} / {stem} (DRY-RUN)", out_img_dir / "compare_original_filtered_diff.png")
-        print("Dry-run (no OME-Zarr saved). Saved:", out_img_dir)
+    if mode == "1":
+        idx = args.image_index
+        if idx is None:
+            idx = int(np.clip(_prompt_int(f"Choose image index [0..{len(zarrs)-1}] [default 0]: ", 0), 0, len(zarrs) - 1))
+        radius = _prompt_int("Enter center-keep radius in pixels [default 72]: ", 72)
+        do_apply = _prompt_bool("\nApply this mask now? [y/N]: ", default=False)
+        if not do_apply:
+            print("Cancelled.")
+            return
+        out_dir, _, _ = _process_one_image(dataset, idx, zarrs, radius, args.fft_size)
+        print("Saved outputs:", out_dir)
         return
 
-    params = FreehandMaskParams(mask_keep=mask_keep.astype(np.float32))
-    out_applied_dir = run_freehand_on_dataset(dataset, params, apply=True, channel_mode="auto", image_index=idx)
-    print("Saved filtered OME-Zarr:", out_applied_dir / "image.ome.zarr")
+    tuning_dir = results_filters_dir() / "Free_hand" / dataset / "tuning_curated_subset"
+    tuning_dir.mkdir(parents=True, exist_ok=True)
 
-    arrf, axesf = load_ome_zarr(out_applied_dir / "image.ome.zarr", level=0, as_numpy=False)
-    yf = _to_numpy(arrf)
-    yf, axesf = _ensure_cyx(yf, axesf)
+    if mode == "2":
+        mean_ffts: Dict[str, np.ndarray] = {}
+        for ch, name in zip(channels, channel_names):
+            mean_ffts[name] = mean_fft_magnitude(curated_paths, channel_index=ch, fft_size=args.fft_size)
+            fig, ax = plt.subplots()
+            _imshow_fft(ax, mean_ffts[name], cmap=_channel_cmap(name))
+            ax.set_title(f"Mean FFT log-magnitude (curated subset, {dataset}) - {name}")
+            ax.axis("off")
+        plt.show()
 
-    def get_plane_f(ci: int) -> np.ndarray:
-        if "c" in axesf:
-            plane = np.take(yf, indices=ci, axis=axesf.index("c"))
+        if len(channel_names) > 1:
+            choice = input("Select channel for circle selection [blue/green] (default blue): ").strip().lower() or "blue"
+            if choice not in mean_ffts:
+                choice = "blue"
         else:
-            plane = yf
-        if "t" in axesf and plane.ndim == 3:
-            plane = plane[0]
-        return plane.astype(np.float32)
+            choice = channel_names[0]
 
-    blue_f = get_plane_f(0)
-    green_f = get_plane_f(1) if ("c" in axesf and yf.shape[axesf.index("c")] > 1) and dataset != "2d_time" else None
+        radius = _pick_radius_centered(mean_ffts[choice], f"Free-hand circle on mean FFT ({choice})", cmap=_channel_cmap(choice))
+        print(f"Selected radius: r={radius}px")
 
-    filt_metrics = compute_metrics_per_channel(blue_f, green_f)
-    with rep.open("a", encoding="utf-8") as f:
-        write_metrics_block(f, "FILTERED METRICS (chosen image)", filt_metrics)
+        _save_mean_and_example_fft_overlays(tuning_dir, mean_ffts, radius, curated_paths[0], dataset, args.fft_size)
+        do_apply = _prompt_bool("\nApply this tuned mask and run processing now? [y/N]: ", default=False)
+        if not do_apply:
+            print("Tuning finished without processing. Saved tuning overlays:", tuning_dir)
+            return
 
-    filt_rgb = _to_rgb_from_blue_green(blue_f, green_f)
-    _plot_rgb_comparison(orig_rgb, filt_rgb, f"{dataset} / {stem}", out_img_dir / "compare_original_filtered_diff.png")
+        dataset_out = _process_curated_subset(dataset, zarrs, curated_paths, radius, args.fft_size)
+        print("Saved curated subset outputs:", dataset_out)
+        return
 
-    print("Saved outputs:", out_img_dir)
+    # mode == 3
+    radius = _prompt_int("Enter center-keep radius in pixels [default 72]: ", 72)
+    do_apply = _prompt_bool("\nRun processing on curated subset now? [y/N]: ", default=False)
+    if not do_apply:
+        print("Cancelled.")
+        return
+    dataset_out = _process_curated_subset(dataset, zarrs, curated_paths, radius, args.fft_size)
+    print("Saved curated subset outputs:", dataset_out)
 
 
 if __name__ == "__main__":
