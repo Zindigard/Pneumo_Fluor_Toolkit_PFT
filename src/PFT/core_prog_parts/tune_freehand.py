@@ -20,6 +20,11 @@ try:
 except Exception:
     maximum_filter = None
 
+try:
+    from skimage.restoration import rolling_ball
+except Exception:
+    rolling_ball = None
+
 EPS = 1e-12
 
 CURATED_TEST_STEMS: dict[str, list[str]] = {
@@ -1086,6 +1091,127 @@ def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list
     return dataset_out
 
 
+def _rolling_ball_subtract_one_plane(img2d: np.ndarray, radius: int) -> tuple[np.ndarray, np.ndarray]:
+    if rolling_ball is None:
+        raise RuntimeError("scikit-image is required for rolling-ball background subtraction")
+    x = np.asarray(img2d, dtype=np.float32)
+    background = np.asarray(rolling_ball(x, radius=radius), dtype=np.float32)
+    corrected = x - background
+    corrected = np.clip(corrected, 0.0, None).astype(np.float32)
+    return corrected, background
+
+
+def _save_rolling_ball_preview(before: np.ndarray, background: np.ndarray, after: np.ndarray, title: str, out_png: Path) -> None:
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 3, 1)
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax3 = fig.add_subplot(1, 3, 3)
+    for ax, img, ttl, cmap in [
+        (ax1, before, "Original", "gray"),
+        (ax2, background, "Estimated background", "gray"),
+        (ax3, after, "Background-subtracted", "gray"),
+    ]:
+        vmin = float(np.percentile(img, 1.0))
+        vmax = float(np.percentile(img, 99.5))
+        if vmax <= vmin:
+            vmax = vmin + 1e-6
+        ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_title(ttl)
+        ax.axis("off")
+    fig.suptitle(title)
+    fig.patch.set_facecolor("black")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=200, bbox_inches="tight", facecolor="black")
+    plt.close(fig)
+
+
+def _process_one_image_rolling_ball(dataset: str, idx: int, zarrs: list[Path], radius: int) -> tuple[Path, dict, dict]:
+    in_path = zarrs[idx]
+    stem = in_path.parent.name
+    arr, axes = load_ome_zarr(in_path, level=0, as_numpy=False)
+    x = _to_numpy(arr)
+    x, axes = _ensure_cyx(x, axes)
+    y = x.astype(np.float32, copy=True)
+    chs = _pick_filter_channels(dataset, axes, x)
+
+    out_root = results_filters_dir() / "Rolling_ball" / dataset / "thresholded_input" / f"radius_{radius}"
+    out_dir = out_root / stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    channel_names = {0: "blue", 1: "green"}
+    backgrounds: dict[str, np.ndarray] = {}
+    for c in chs:
+        sl = [slice(None)] * y.ndim
+        if "c" in axes:
+            sl[axes.index("c")] = c
+        plane = y[tuple(sl)]
+        ch_name = channel_names.get(c, f"ch{c}")
+        if plane.ndim == 2:
+            corrected, background = _rolling_ball_subtract_one_plane(plane, radius=radius)
+            y[tuple(sl)] = corrected
+            backgrounds[ch_name] = background
+            _save_rolling_ball_preview(plane, background, corrected, f"{stem} / {ch_name} / rolling-ball r={radius}", out_dir / f"rolling_ball_{ch_name}.png")
+        elif plane.ndim == 3 and "t" in axes:
+            out_plane = plane.astype(np.float32, copy=True)
+            corrected0 = background0 = None
+            for t in range(plane.shape[0]):
+                corrected, background = _rolling_ball_subtract_one_plane(plane[t], radius=radius)
+                out_plane[t] = corrected
+                if t == 0:
+                    corrected0 = corrected
+                    background0 = background
+            y[tuple(sl)] = out_plane
+            if corrected0 is not None and background0 is not None:
+                backgrounds[ch_name] = background0
+                _save_rolling_ball_preview(plane[0], background0, corrected0, f"{stem} / {ch_name} / rolling-ball r={radius} (t0)", out_dir / f"rolling_ball_{ch_name}.png")
+        else:
+            raise ValueError(f"Unexpected plane ndim={plane.ndim} for axes={axes}")
+
+    n_c = x.shape[axes.index("c")] if "c" in axes else 1
+    meta = SimpleNamespace(pixel_size_um_x=1.0, pixel_size_um_y=1.0, pixel_size_um_z=1.0, channel_names=[f"ch{i}" for i in range(n_c)], source_path=str(in_path), axes=axes)
+    save_ome_zarr_next_to_outputs(out_dir, y, meta, overwrite=True, pyramid_3d=False, pyramid_max_layer=0)
+    out_zarr = out_dir / "image.ome.zarr"
+    blue_before, green_before = _load_planes(in_path, dataset)
+    blue_after, green_after = _load_planes(out_zarr, dataset)
+    metrics_before = compute_metrics_per_channel(blue_before, green_before)
+    metrics_after = compute_metrics_per_channel(blue_after, green_after)
+    spec_label = f"rolling-ball radius={radius}"
+    with open(out_dir / "metrics.txt", "w", encoding="utf-8") as f:
+        f.write(f"dataset: {dataset}\nimage: {stem}\nfilter: {spec_label}\n")
+        write_metrics_block(f, "before", metrics_before)
+        write_metrics_block(f, "after", metrics_after)
+    _save_both_comparisons(blue_before, green_before, blue_after, green_after, f"{dataset} / {stem} / {spec_label}", out_dir)
+    return out_dir, metrics_before, metrics_after
+
+
+def _process_curated_subset_rolling_ball(dataset: str, zarrs: list[Path], curated_paths: list[Path], radius: int) -> Path:
+    batch_rows: list[dict] = []
+    for p in curated_paths:
+        idx = _path_to_index(zarrs, p)
+        out_dir, before, after = _process_one_image_rolling_ball(dataset, idx, zarrs, radius)
+        for ch_name in before:
+            row = {"image": p.parent.name, "channel": ch_name, "filter": f"rolling_ball_r{radius}"}
+            for k, v in before[ch_name].items():
+                row[f"before_{k}"] = v
+            for k, v in after[ch_name].items():
+                row[f"after_{k}"] = v
+            batch_rows.append(row)
+    dataset_out = results_filters_dir() / "Rolling_ball" / dataset / "thresholded_input" / f"radius_{radius}"
+    _write_batch_summary_txt(dataset_out / "batch_metrics_curated_subset.txt", batch_rows, dataset, MaskSpec(kind="circle", radius=radius))
+    return dataset_out
+
+
+def _choose_processing_family_interactive() -> str:
+    print("Choose processing family:")
+    print("  1) FFT mask filtering")
+    print("  2) Rolling-ball background subtraction")
+    while True:
+        c = input("Choose number [1/2]: " ).strip() or "1"
+        if c in {"1", "2"}:
+            return c
+        print("Please choose 1 or 2.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=False, choices=["2d_time", "2d_wga_dapi", "2d_dpa_wagi"])
@@ -1122,6 +1248,7 @@ def main():
     if len(zarrs) > 20:
         print("  ... (showing first 20)")
 
+    family = _choose_processing_family_interactive()
     mode = _choose_mode_interactive()
 
     if mode in {"2", "3"}:
@@ -1138,6 +1265,27 @@ def main():
             print(f"  - {p.parent.name}")
 
     channels, channel_names = _collect_dataset_channel_info(dataset, zarrs)
+
+    if family == "2":
+        default_radius = 80
+        if mode == "1":
+            idx = args.image_index
+            if idx is None:
+                idx = int(np.clip(_prompt_int(f"Choose image index [0..{len(zarrs)-1}] [default 0]: ", 0), 0, len(zarrs) - 1))
+            radius = _prompt_int(f"Rolling-ball radius [{default_radius}]: ", default_radius)
+            if not _prompt_bool("Apply rolling-ball now?", default=False):
+                print("Cancelled.")
+                return
+            out_dir, _, _ = _process_one_image_rolling_ball(dataset, idx, zarrs, radius)
+            print("Saved outputs:", out_dir)
+            return
+        radius = _prompt_int(f"Rolling-ball radius [{default_radius}]: ", default_radius)
+        if not _prompt_bool("Run rolling-ball processing on curated subset now?", default=False):
+            print("Cancelled.")
+            return
+        dataset_out = _process_curated_subset_rolling_ball(dataset, zarrs, curated_paths, radius)
+        print("Saved curated subset outputs:", dataset_out)
+        return
 
     if mode == "1":
         idx = args.image_index

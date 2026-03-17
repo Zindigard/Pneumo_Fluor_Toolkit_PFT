@@ -13,7 +13,6 @@ from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
 
 def _repo_root() -> Path:
-    # .../src/PFT/core_prog_parts/
     return Path(__file__).resolve().parents[3]
 
 
@@ -56,10 +55,6 @@ def list_omezarr_images(dataset: str) -> list[Path]:
 class NotchParams:
     """
     Notch filtering for line artifacts is usually implemented as angular wedges (band-stop).
-
-    angles_deg: list of line angles (degrees) where artifact energy is concentrated.
-                Convention: angle in FFT plane relative to +x axis, with center at DC.
-                IMPORTANT: we always apply symmetric suppression at theta and theta+180.
     half_width_deg: wedge half width (Δθ). Start small (e.g., 2–6 degrees).
     r_min: exclude low frequencies (DC disk). In pixels in FFT plane.
     r_max: optional max radius (None -> full to edge).
@@ -147,7 +142,6 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
     H = np.ones((h, w), dtype=np.float32)
 
     # for each angle, suppress both theta and theta+180 automatically by using dist modulo 180 via symmetry
-    # easier: apply each explicitly
     angles = []
     for a in p.angles_deg:
         a = float(a)
@@ -242,7 +236,7 @@ def run_notch_on_dataset(
 
     chs = _pick_channels()
 
-    # apply per channel (2D datasets only)
+    # apply per channel
     y = x.astype(np.float32, copy=True)
 
     if apply:
@@ -274,7 +268,7 @@ def run_notch_on_dataset(
     out_dir = out_root / stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Minimal meta for saving; preserve pixel size if present in attrs is not accessible here.
+    # Minimal meta for saving
     meta = SimpleNamespace(
         pixel_size_um_x=1.0,
         pixel_size_um_y=1.0,

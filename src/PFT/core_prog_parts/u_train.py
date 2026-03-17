@@ -10,13 +10,11 @@ import tifffile as tiff
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
+from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
+from PFT.core_prog_parts.notch_filter import _ensure_cyx, _to_numpy
+
+
 def find_repo_root(start: Path | None = None) -> Path:
-    """
-    Find repository root by walking upwards until one of these markers exists:
-      - pyproject.toml
-      - .git
-      - src/PFT
-    """
     start = (start or Path(__file__)).resolve()
     for p in [start] + list(start.parents):
         if (p / "pyproject.toml").exists():
@@ -25,18 +23,16 @@ def find_repo_root(start: Path | None = None) -> Path:
             return p
         if (p / "src" / "PFT").exists():
             return p
-    
     return Path(__file__).resolve().parents[3]
 
 
-# configution dataclass for model
 @dataclass
 class TrainConfig:
     repo_root: Path = find_repo_root(Path(__file__).resolve())
 
-    dataset: str = "2d_time"   # chosen in terminal if not passed by argparse
-    data_root: Path | None = None
-
+    dataset: str = "2d_time"
+    mask_root: Path | None = None
+    filtered_root: Path | None = None
     models_root: Path | None = None
     run_root: Path | None = None
 
@@ -49,14 +45,14 @@ class TrainConfig:
     val_steps: int = 60
 
     fg_fraction: float = 0.8
-    fg_min_ratio: float = 0.60   # foreground patch must contain >= 60% foreground
-    bg_max_ratio: float = 0.10   # background patch must contain <= 10% foreground
+    fg_min_ratio: float = 0.60
+    bg_max_ratio: float = 0.10
     max_tries: int = 100
 
     val_split: float = 0.2
     seed: int = 1337
 
-    normalize: str = "scale_uint16"  # or "percentile"
+    normalize: str = "percentile"
 
     base_filters: int = 8
     dropout: float = 0.0
@@ -64,7 +60,6 @@ class TrainConfig:
     preview_only: bool = False
     preview_n: int = 3
 
-# promt
 
 def yes_no_prompt(text, default=True):
     suffix = "[Y/n]" if default else "[y/N]"
@@ -100,68 +95,84 @@ def choose_dataset_terminal(default="2d_time"):
     return default
 
 
-# data usage
+def resolve_filtered_zarr(filtered_root: Path, dataset: str, sample: str) -> Path:
+    cand = filtered_root / dataset / sample / "image.ome.zarr"
+    if cand.exists():
+        return cand
+    raise FileNotFoundError(
+        f"Filtered OME-Zarr not found for sample '{sample}': {cand}. "
+        f"Prepare thresholded/filtered inputs first."
+    )
 
-def list_pairs(data_root: Path):
-    pairs = []
-    if not data_root.exists():
-        raise RuntimeError(f"Training data folder does not exist: {data_root}")
 
-    for sample_dir in sorted(data_root.iterdir()):
+def list_pairs(mask_root: Path, filtered_root: Path, dataset: str):
+    pairs: list[tuple[Path, Path]] = []
+    ds_mask_root = mask_root / dataset
+    if not ds_mask_root.exists():
+        raise RuntimeError(f"Mask folder does not exist: {ds_mask_root}")
+
+    for sample_dir in sorted(ds_mask_root.iterdir()):
         if not sample_dir.is_dir():
             continue
-        img = sample_dir / "image.tif"
-        msk = sample_dir / "mask.tif"
-        if img.exists() and msk.exists():
-            pairs.append((img, msk))
+
+        mask_path = sample_dir / "mask.tif"
+        if not mask_path.exists():
+            continue
+
+        try:
+            img_path = resolve_filtered_zarr(filtered_root, dataset, sample_dir.name)
+        except FileNotFoundError:
+            continue
+
+        pairs.append((img_path, mask_path))
     return pairs
 
 
-def read_image_mask_numpy(img_path: str, mask_path: str):
-    img = tiff.imread(img_path)
-    msk = tiff.imread(mask_path)
+def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.ndarray:
+    if "c" in axes:
+        plane = np.take(x, indices=channel_index, axis=axes.index("c"))
+    else:
+        plane = x
+    if "t" in axes and plane.ndim == 3:
+        plane = plane[0]
+    return np.asarray(plane, dtype=np.float32)
 
+
+def read_image_mask_numpy(img_path: str, mask_path: str):
+    arr, axes = load_ome_zarr(Path(img_path), level=0, as_numpy=False)
+    img = _to_numpy(arr)
+    img, axes = _ensure_cyx(img, axes)
+
+    blue = _extract_display_plane(img, axes, 0)
+    planes = [blue]
+
+    if "c" in axes and img.shape[axes.index("c")] > 1:
+        try:
+            green = _extract_display_plane(img, axes, 1)
+            planes.append(green)
+        except Exception:
+            pass
+
+    img_hwc = np.stack(planes, axis=-1) if len(planes) > 1 else blue[..., None]
+
+    msk = tiff.imread(mask_path)
     msk = (msk > 0).astype(np.uint8)
 
-    # Support:
-    #   (H, W)          -> grayscale
-    #   (H, W, C)       -> HWC
-    #   (C, H, W)       -> CHW for C in 1..4
-    if img.ndim == 2:
-        img = img[..., None]
-
-    elif img.ndim == 3:
-        # CHW -> HWC
-        if img.shape[0] in (1, 2, 3, 4) and img.shape[-1] not in (1, 2, 3, 4):
-            img = np.moveaxis(img, 0, -1)
-
-        # HWC
-        elif img.shape[-1] in (1, 2, 3, 4):
-            pass
-        else:
-            raise ValueError(f"Unsupported 3D image shape {img.shape} in {img_path}")
-
-    else:
-        raise ValueError(f"Unsupported image shape {img.shape} in {img_path}")
-
-    if img.shape[:2] != msk.shape[:2]:
+    if img_hwc.shape[:2] != msk.shape[:2]:
         raise ValueError(
             f"Image/mask size mismatch for {img_path} and {mask_path}: "
-            f"{img.shape[:2]} vs {msk.shape[:2]}"
+            f"{img_hwc.shape[:2]} vs {msk.shape[:2]}"
         )
 
-    return img, msk
+    return img_hwc, msk
 
-
-# normalization and visualization
 
 def normalize_crop_numpy(x: np.ndarray, mode: str):
     x = x.astype(np.float32)
 
     if mode == "scale_uint16":
         x = x / 65535.0
-        x = np.clip(x, 0.0, 1.0)
-        return x
+        return np.clip(x, 0.0, 1.0)
 
     if mode == "percentile":
         out = np.empty_like(x, dtype=np.float32)
@@ -170,17 +181,12 @@ def normalize_crop_numpy(x: np.ndarray, mode: str):
             p1 = np.percentile(xc, 1)
             p2 = np.percentile(xc, 99.8)
             out[..., c] = (xc - p1) / (p2 - p1 + 1e-8)
-        out = np.clip(out, 0.0, 1.0)
-        return out
+        return np.clip(out, 0.0, 1.0)
 
     raise ValueError(f"Unknown normalize mode: {mode}")
 
 
 def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
-    """
-    Display convention:
-     
-    """
     if img.ndim == 2:
         img = img[..., None]
 
@@ -201,8 +207,6 @@ def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
     return rgb
 
 
-# patch strategy
-
 def random_crop_xy(H, W, patch):
     y0 = random.randint(0, H - patch)
     x0 = random.randint(0, W - patch)
@@ -217,16 +221,6 @@ def clamp_crop_center(cy, cx, H, W, patch):
 
 
 def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
-    """
-    Foreground patch:
-        foreground ratio >= cfg.fg_min_ratio  (aka >= 0.60)
-
-    Background patch:
-        foreground ratio <= cfg.bg_max_ratio  (aka <= 0.10)
-
-    Fallback:
-        return best candidate found after cfg.max_tries.
-    """
     H, W = msk.shape
     P = cfg.patch
 
@@ -260,7 +254,6 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
         if want_fg:
             if fg_ratio >= cfg.fg_min_ratio:
                 return img_c, msk_c
-
             score = fg_ratio
             if best_score is None or score > best_score:
                 best_score = score
@@ -269,7 +262,6 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
         else:
             if fg_ratio <= cfg.bg_max_ratio:
                 return img_c, msk_c
-
             score = fg_ratio
             if best_score is None or score < best_score:
                 best_score = score
@@ -282,8 +274,6 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
     y0, x0 = random_crop_xy(H, W, P)
     return img[y0:y0 + P, x0:x0 + P, :], msk[y0:y0 + P, x0:x0 + P]
 
-
-# pipeline for masks
 
 def make_dataset(pairs, cfg: TrainConfig, training: bool):
     rng = random.Random(cfg.seed + (0 if training else 999))
@@ -317,8 +307,6 @@ def make_dataset(pairs, cfg: TrainConfig, training: bool):
     ds = ds.batch(cfg.batch).prefetch(tf.data.AUTOTUNE)
     return ds, C
 
-
-# model archotecture
 
 def conv_block(x, filters, dropout=0.0):
     x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
@@ -371,12 +359,9 @@ def build_unet(input_shape, base_filters=8, dropout=0.0):
     return tf.keras.Model(inputs, outputs, name="UNet")
 
 
-# metrics IOU and Dice
-
 def dice_coef(y_true, y_pred, eps=1e-6):
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
-
     y_pred = tf.clip_by_value(y_pred, 0.0, 1.0)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
     denom = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3])
@@ -397,27 +382,23 @@ def bce_dice_loss(y_true, y_pred):
 def iou_coef(y_true, y_pred, eps=1e-6):
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred > 0.5, tf.float32)
-
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
     union = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3]) - intersection
     iou = (intersection + eps) / (union + eps)
     return tf.reduce_mean(iou)
 
 
-
-# reporinting and visualization
-
 def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
     print(f"\n=== {title} ===")
     print(f"Dataset: {cfg.dataset}")
-    print(f"Root: {cfg.data_root}")
-    print(f"Number of annotated image/mask pairs: {len(pairs)}")
+    print(f"Mask root: {cfg.mask_root}")
+    print(f"Filtered root: {cfg.filtered_root}")
+    print(f"Number of annotated mask / filtered-image pairs: {len(pairs)}")
     print("Samples:")
-
     for i, (img_path, mask_path) in enumerate(pairs, 1):
         img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
         print(
-            f"  [{i:02d}] {img_path.parent.name} | "
+            f"  [{i:02d}] {mask_path.parent.name} | zarr: {img_path} | "
             f"image shape: {img.shape} | mask shape: {msk.shape}"
         )
 
@@ -439,14 +420,8 @@ def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
     print(f"  Total val patches over {cfg.epochs} epochs:   {total_val_patches}")
 
     print("\nPatch sampling strategy:")
-    print(
-        f"  {cfg.fg_fraction * 100:.0f}% foreground patches "
-        f"(fg >= {cfg.fg_min_ratio:.2f})"
-    )
-    print(
-        f"  {(1 - cfg.fg_fraction) * 100:.0f}% background patches "
-        f"(fg <= {cfg.bg_max_ratio:.2f})"
-    )
+    print(f"  {cfg.fg_fraction * 100:.0f}% foreground patches (fg >= {cfg.fg_min_ratio:.2f})")
+    print(f"  {(1 - cfg.fg_fraction) * 100:.0f}% background patches (fg <= {cfg.bg_max_ratio:.2f})")
 
 
 def print_split_summary(train_pairs, val_pairs):
@@ -457,18 +432,12 @@ def print_split_summary(train_pairs, val_pairs):
     print("\nTrain samples:")
     for i, (img_path, mask_path) in enumerate(train_pairs, 1):
         img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
-        print(
-            f"  [T{i:02d}] {img_path.parent.name} | "
-            f"image shape: {img.shape} | mask shape: {msk.shape}"
-        )
+        print(f"  [T{i:02d}] {mask_path.parent.name} | zarr: {img_path.name} | image shape: {img.shape} | mask shape: {msk.shape}")
 
     print("\nValidation samples:")
     for i, (img_path, mask_path) in enumerate(val_pairs, 1):
         img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
-        print(
-            f"  [V{i:02d}] {img_path.parent.name} | "
-            f"image shape: {img.shape} | mask shape: {msk.shape}"
-        )
+        print(f"  [V{i:02d}] {mask_path.parent.name} | zarr: {img_path.name} | image shape: {img.shape} | mask shape: {msk.shape}")
 
 
 def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
@@ -482,7 +451,7 @@ def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
         bg_ratio = 1.0 - fg_ratio
 
         print(
-            f"  Patch {i+1:02d} from {img_path.parent.name} | "
+            f"  Patch {i+1:02d} from {mask_path.parent.name} | zarr: {img_path.name} | "
             f"image shape: {img.shape} | mask shape: {msk.shape} | "
             f"patch image shape: {img_c.shape} | patch mask shape: {msk_c.shape} | "
             f"fg ratio: {fg_ratio:.3f} | bg ratio: {bg_ratio:.3f}"
@@ -495,7 +464,8 @@ def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_pat
 
     lines = []
     lines.append(f"Dataset: {cfg.dataset}")
-    lines.append(f"Data root: {cfg.data_root}")
+    lines.append(f"Mask root: {cfg.mask_root}")
+    lines.append(f"Filtered root: {cfg.filtered_root}")
     lines.append(f"Total annotated pairs: {len(pairs)}")
     lines.append(f"Train images: {len(train_pairs)}")
     lines.append(f"Val images: {len(val_pairs)}")
@@ -516,15 +486,16 @@ def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_pat
     lines.append(f"Base filters: {cfg.base_filters}")
     lines.append("")
     lines.append("All samples:")
+
     for i, (img_path, mask_path) in enumerate(pairs, 1):
         img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
         lines.append(
-            f"  [{i:02d}] {img_path.parent.name} | image shape: {img.shape} | mask shape: {msk.shape}"
+            f"  [{i:02d}] {mask_path.parent.name} | zarr: {img_path} | "
+            f"image shape: {img.shape} | mask shape: {msk.shape}"
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def save_training_curves(history, out_png: Path, dataset_name: str):
@@ -648,12 +619,12 @@ def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None
 
     ax1 = fig.add_subplot(1, 3, 1)
     ax1.imshow(full_rgb)
-    ax1.set_title(f"Random image\n{Path(img_path).parent.name}")
+    ax1.set_title(f"Random image\n{mask_path.parent.name}")
     ax1.axis("off")
 
     ax2 = fig.add_subplot(1, 3, 2)
     ax2.imshow(full_overlay)
-    ax2.set_title("Image + mask")
+    ax2.set_title("Filtered image + mask")
     ax2.axis("off")
 
     ax3 = fig.add_subplot(1, 3, 3)
@@ -674,27 +645,24 @@ def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None
 def parse_args(cfg: TrainConfig):
     import argparse
 
-    p = argparse.ArgumentParser(description="Train U-Net (TF/Keras) on annotated TIFF masks.")
+    p = argparse.ArgumentParser(
+        description="Train U-Net on filtered thresholded OME-Zarr images with masks from labeling."
+    )
     p.add_argument("--dataset", default=None, choices=["2d_time", "2d_wga_dapi"])
     p.add_argument("--patch", type=int, default=cfg.patch)
     p.add_argument("--batch", type=int, default=cfg.batch)
     p.add_argument("--epochs", type=int, default=cfg.epochs)
     p.add_argument("--lr", type=float, default=cfg.lr)
-
     p.add_argument("--steps_per_epoch", type=int, default=cfg.steps_per_epoch)
     p.add_argument("--val_steps", type=int, default=cfg.val_steps)
-
     p.add_argument("--fg_fraction", type=float, default=cfg.fg_fraction)
     p.add_argument("--fg_min_ratio", type=float, default=cfg.fg_min_ratio)
     p.add_argument("--bg_max_ratio", type=float, default=cfg.bg_max_ratio)
-
     p.add_argument("--val_split", type=float, default=cfg.val_split)
     p.add_argument("--seed", type=int, default=cfg.seed)
-
     p.add_argument("--normalize", default=cfg.normalize, choices=["scale_uint16", "percentile"])
     p.add_argument("--base_filters", type=int, default=cfg.base_filters)
     p.add_argument("--dropout", type=float, default=cfg.dropout)
-
     p.add_argument("--preview_only", action="store_true")
     p.add_argument("--preview_n", type=int, default=cfg.preview_n)
 
@@ -707,7 +675,8 @@ def parse_args(cfg: TrainConfig):
     if args.dataset is None:
         cfg.dataset = choose_dataset_terminal(default=cfg.dataset)
 
-    cfg.data_root = cfg.repo_root / "results" / "training_files" / "U-net" / cfg.dataset
+    cfg.mask_root = cfg.repo_root / "results" / "training_files" / "U-net"
+    cfg.filtered_root = cfg.repo_root / "results" / "img" / "filtered"
     cfg.models_root = cfg.repo_root / "models"
     cfg.models_root.mkdir(parents=True, exist_ok=True)
 
@@ -724,11 +693,11 @@ def main():
     np.random.seed(cfg.seed)
     tf.random.set_seed(cfg.seed)
 
-    pairs = list_pairs(cfg.data_root)
+    pairs = list_pairs(cfg.mask_root, cfg.filtered_root, cfg.dataset)
     if len(pairs) < 2:
         raise RuntimeError(
-            f"Need at least 2 annotated samples in {cfg.data_root}. "
-            f"Found {len(pairs)}."
+            f"Need at least 2 annotated samples with masks in {cfg.mask_root / cfg.dataset} "
+            f"and filtered OME-Zarr images in {cfg.filtered_root / cfg.dataset}. Found {len(pairs)}."
         )
 
     preview_dir = cfg.run_root / "preview_checks"
@@ -746,8 +715,8 @@ def main():
         return
 
     do_preview = yes_no_prompt(
-        "Do you want to inspect random image + mask + random patch before training?",
-        default=True
+        "Do you want to inspect random filtered image + mask + random patch before training?",
+        default=True,
     )
     if do_preview:
         save_path = preview_dir / "preview_check_before_training.png"
@@ -816,6 +785,8 @@ def main():
 
     print("\n=== TRAINING SETTINGS ===")
     print(f"Dataset:              {cfg.dataset}")
+    print(f"Mask root:            {cfg.mask_root / cfg.dataset}")
+    print(f"Filtered root:        {cfg.filtered_root / cfg.dataset}")
     print(f"Patch size:           {cfg.patch}")
     print(f"Patch image shape:    ({cfg.patch}, {cfg.patch}, {C})")
     print(f"Patch mask shape:     ({cfg.patch}, {cfg.patch}, 1)")
@@ -847,8 +818,7 @@ def main():
 
     model.save(str(final_model_path))
 
-    with open(history_path, "w", encoding="utf-8") as f:
-        json.dump(history.history, f, indent=2)
+    history_path.write_text(json.dumps(history.history, indent=2), encoding="utf-8")
 
     save_training_curves(history, curves_path, cfg.dataset)
     save_prediction_previews(model, val_pairs, cfg, previews_out, n=6)
