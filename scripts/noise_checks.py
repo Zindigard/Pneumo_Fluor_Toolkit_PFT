@@ -1,17 +1,23 @@
 from __future__ import annotations
-
 from pathlib import Path
 import sys
 
-_THIS_FILE = Path(__file__).resolve()
-for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
-    if (_p / "src" / "PFT").exists():
-        _SRC_DIR = _p / "src"
-        if str(_SRC_DIR) not in sys.path:
-            sys.path.insert(0, str(_SRC_DIR))
-        break
+def find_repo_root(start: Path | None = None) -> Path:
+    start = (start or Path(__file__)).resolve()
+    for p in [start] + list(start.parents):
+        if (p / "pyproject.toml").exists():
+            return p
+        if (p / ".git").exists():
+            return p
+        if (p / "src" / "PFT").exists():
+            return p
+    return Path(__file__).resolve().parents[1]
 
-from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
+
+REPO_ROOT = find_repo_root(Path(__file__).resolve())
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Tuple, List
@@ -25,12 +31,12 @@ try:
 except ImportError as e:
     raise ImportError("Please install matplotlib: pip install matplotlib") from e
 from PFT.core_prog_parts import visualization as viz
-from PFT.core_prog_parts.common_paths import ensure_dir
 try:
     import pandas as pd
 except ImportError:
     pd = None
 
+"Measures and summarizes noise-related properties in images"
 
 PATCH_ROOT = Path(
     r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\training_files\2d_wga_dapi\training_data\normvsnormalized_image"
@@ -135,7 +141,7 @@ def save_image_and_fft_png(
     log_scale: bool = True,
     save_image_png: bool = True,
 ) -> None:
-    ensure_dir(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     img = _as_float(img2d)
     x = img - float(img.mean())
@@ -180,7 +186,7 @@ def should_process(p: Path) -> bool:
 
 
 def write_summary_csv(path: Path, rows: List[FileSummary]) -> None:
-    ensure_dir(path.parent)
+    path.parent.mkdir(parents=True, exist_ok=True)
     records = [asdict(r) for r in rows]
     if pd is not None:
         pd.DataFrame.from_records(records).to_csv(path, index=False)
@@ -199,7 +205,7 @@ def main() -> None:
     out_base = PATCH_ROOT / "_noise_diagnostics"
     out_fft_dir = out_base / "fft_single"
     out_csv = out_base / "fft_single_summary.csv"
-    ensure_dir(out_base)
+    out_base.mkdir(parents=True, exist_ok=True)
 
     files = [p for p in list_tiff_files(PATCH_ROOT) if should_process(p)]
     if not files:
