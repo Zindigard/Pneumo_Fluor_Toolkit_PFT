@@ -22,14 +22,13 @@ from PFT.core_prog_parts.notch_filter import (
 class FreehandMaskParams:
     """
     Free-hand filter = user-defined frequency mask applied to FFT.
-
-    mask_keep: 2D array same size as FFT plane (Y,X), with values in [0..1]
-              where 1 means "keep frequency", 0 means "remove".
+    
     """
     mask_keep: np.ndarray
 
 
 def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
+    """Internal helper used by this module."""
     x = img2d.astype(np.float32, copy=False)
     mu = float(np.mean(x))
     x0 = x - mu
@@ -43,6 +42,7 @@ def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarra
 
 
 def results_filters_dir() -> Path:
+    """Helper function used by this module."""
     return _repo_root() / "results" / "Filters"
 
 
@@ -85,6 +85,7 @@ def run_freehand_on_dataset(
         n_c = 1
 
     def _pick_channels() -> list[int]:
+        """Internal helper used by this module."""
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":

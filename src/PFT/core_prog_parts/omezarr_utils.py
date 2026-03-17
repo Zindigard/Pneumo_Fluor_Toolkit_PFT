@@ -10,7 +10,7 @@ except Exception:
         pass
 
 _CANONICAL_TYPES = {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}
-
+"Utilities for working with OME-Zarr images, including saving processed results back to OME-Zarr format with appropriate metadata and pyramids."
 
 def _axes_dicts(axes: str) -> list[dict]:
     """OME-NGFF axes as list-of-dicts."""
@@ -106,6 +106,7 @@ def _scale_vector_for_level_um(
     downscale: int,
 ) -> list[float]:
    
+    """Internal helper used by this module."""
     s = []
     factor = (downscale ** level)
     for a, v in zip(axes, base_scale_um):
@@ -128,6 +129,7 @@ def save_ome_zarr(
     pyramid_max_layer: int = 2,
     pyramid_downscale: int = 2,
 ) -> Path:
+    """Save generated outputs to disk."""
     out_zarr_dir = Path(out_zarr_dir)
 
     if len(axes) != arr.ndim:

@@ -12,9 +12,10 @@ import matplotlib.pyplot as plt
 
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 from PFT.core_prog_parts.notch_filter import _ensure_cyx, _to_numpy
-
+"Implements a training pipeline for a UNet-based segmentation model, including data loading, patch sampling, model architecture, loss functions, and training loop, with configuration and dataset management."
 
 def find_repo_root(start: Path | None = None) -> Path:
+    """Find and return the requested resource."""
     start = (start or Path(__file__)).resolve()
     for p in [start] + list(start.parents):
         if (p / "pyproject.toml").exists():
@@ -62,6 +63,7 @@ class TrainConfig:
 
 
 def yes_no_prompt(text, default=True):
+    """Helper function used by this module."""
     suffix = "[Y/n]" if default else "[y/N]"
     while True:
         s = input(f"{text} {suffix} ").strip().lower()
@@ -75,6 +77,7 @@ def yes_no_prompt(text, default=True):
 
 
 def choose_dataset_terminal(default="2d_time"):
+    """Ask the user to choose a workflow option."""
     datasets = ["2d_time", "2d_wga_dapi"]
     print("\nChoose dataset to train:")
     for i, ds in enumerate(datasets, 1):
@@ -96,6 +99,7 @@ def choose_dataset_terminal(default="2d_time"):
 
 
 def resolve_filtered_zarr(filtered_root: Path, dataset: str, sample: str) -> Path:
+    """Resolve and return the requested path or identifier."""
     cand = filtered_root / dataset / sample / "image.ome.zarr"
     if cand.exists():
         return cand
@@ -106,6 +110,7 @@ def resolve_filtered_zarr(filtered_root: Path, dataset: str, sample: str) -> Pat
 
 
 def list_pairs(mask_root: Path, filtered_root: Path, dataset: str):
+    """List available inputs for this workflow."""
     pairs: list[tuple[Path, Path]] = []
     ds_mask_root = mask_root / dataset
     if not ds_mask_root.exists():
@@ -129,6 +134,7 @@ def list_pairs(mask_root: Path, filtered_root: Path, dataset: str):
 
 
 def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.ndarray:
+    """Internal helper used by this module."""
     if "c" in axes:
         plane = np.take(x, indices=channel_index, axis=axes.index("c"))
     else:
@@ -138,22 +144,28 @@ def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.n
     return np.asarray(plane, dtype=np.float32)
 
 
-def read_image_mask_numpy(img_path: str, mask_path: str):
+def read_image_mask_numpy(img_path: str, mask_path: str, dataset: str = "2d_time"):
+    """Read data from disk and return parsed content."""
     arr, axes = load_ome_zarr(Path(img_path), level=0, as_numpy=False)
     img = _to_numpy(arr)
     img, axes = _ensure_cyx(img, axes)
 
     blue = _extract_display_plane(img, axes, 0)
-    planes = [blue]
 
-    if "c" in axes and img.shape[axes.index("c")] > 1:
-        try:
-            green = _extract_display_plane(img, axes, 1)
-            planes.append(green)
-        except Exception:
-            pass
-
-    img_hwc = np.stack(planes, axis=-1) if len(planes) > 1 else blue[..., None]
+    # 2d_time must always be single-channel for training.
+    # Some source OME-Zarr files unexpectedly contain 2 channels,
+    # but for this dataset we intentionally ignore every channel except channel 0.
+    if dataset == "2d_time":
+        img_hwc = blue[..., None]
+    else:
+        planes = [blue]
+        if "c" in axes and img.shape[axes.index("c")] > 1:
+            try:
+                green = _extract_display_plane(img, axes, 1)
+                planes.append(green)
+            except Exception:
+                pass
+        img_hwc = np.stack(planes, axis=-1) if len(planes) > 1 else blue[..., None]
 
     msk = tiff.imread(mask_path)
     msk = (msk > 0).astype(np.uint8)
@@ -168,6 +180,7 @@ def read_image_mask_numpy(img_path: str, mask_path: str):
 
 
 def normalize_crop_numpy(x: np.ndarray, mode: str):
+    """Normalize data into the expected range."""
     x = x.astype(np.float32)
 
     if mode == "scale_uint16":
@@ -187,6 +200,7 @@ def normalize_crop_numpy(x: np.ndarray, mode: str):
 
 
 def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
+    """Helper function used by this module."""
     if img.ndim == 2:
         img = img[..., None]
 
@@ -208,12 +222,14 @@ def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
 
 
 def random_crop_xy(H, W, patch):
+    """Helper function used by this module."""
     y0 = random.randint(0, H - patch)
     x0 = random.randint(0, W - patch)
     return y0, x0
 
 
 def clamp_crop_center(cy, cx, H, W, patch):
+    """Helper function used by this module."""
     half = patch // 2
     y0 = int(np.clip(cy - half, 0, H - patch))
     x0 = int(np.clip(cx - half, 0, W - patch))
@@ -221,6 +237,7 @@ def clamp_crop_center(cy, cx, H, W, patch):
 
 
 def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
+    """Helper function used by this module."""
     H, W = msk.shape
     P = cfg.patch
 
@@ -276,12 +293,14 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
 
 
 def make_dataset(pairs, cfg: TrainConfig, training: bool):
+    """Create and return the requested display or object."""
     rng = random.Random(cfg.seed + (0 if training else 999))
 
     def gen():
+        """Helper function used by this module."""
         while True:
             img_path, mask_path = pairs[rng.randint(0, len(pairs) - 1)]
-            img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+            img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
             img_c, msk_c = sample_patch_numpy(img, msk, cfg)
 
             img_c = normalize_crop_numpy(img_c, cfg.normalize)
@@ -289,7 +308,7 @@ def make_dataset(pairs, cfg: TrainConfig, training: bool):
 
             yield img_c, msk_c
 
-    first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]))
+    first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]), dataset=cfg.dataset)
     C = first_img.shape[-1]
     P = cfg.patch
 
@@ -309,6 +328,7 @@ def make_dataset(pairs, cfg: TrainConfig, training: bool):
 
 
 def conv_block(x, filters, dropout=0.0):
+    """Helper function used by this module."""
     x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Activation("relu")(x)
@@ -323,6 +343,7 @@ def conv_block(x, filters, dropout=0.0):
 
 
 def build_unet(input_shape, base_filters=8, dropout=0.0):
+    """Build and return the requested object."""
     inputs = tf.keras.Input(shape=input_shape)
 
     c1 = conv_block(inputs, base_filters, dropout=dropout)
@@ -360,6 +381,7 @@ def build_unet(input_shape, base_filters=8, dropout=0.0):
 
 
 def dice_coef(y_true, y_pred, eps=1e-6):
+    """Helper function used by this module."""
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
     y_pred = tf.clip_by_value(y_pred, 0.0, 1.0)
@@ -370,16 +392,19 @@ def dice_coef(y_true, y_pred, eps=1e-6):
 
 
 def dice_loss(y_true, y_pred):
+    """Helper function used by this module."""
     return 1.0 - dice_coef(y_true, y_pred)
 
 
 def bce_dice_loss(y_true, y_pred):
+    """Helper function used by this module."""
     bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
     bce = tf.reduce_mean(bce)
     return 0.5 * bce + 0.5 * dice_loss(y_true, y_pred)
 
 
 def iou_coef(y_true, y_pred, eps=1e-6):
+    """Helper function used by this module."""
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred > 0.5, tf.float32)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
@@ -389,6 +414,7 @@ def iou_coef(y_true, y_pred, eps=1e-6):
 
 
 def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
+    """Print a formatted summary for the current workflow."""
     print(f"\n=== {title} ===")
     print(f"Dataset: {cfg.dataset}")
     print(f"Mask root: {cfg.mask_root}")
@@ -396,13 +422,13 @@ def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
     print(f"Number of annotated mask / filtered-image pairs: {len(pairs)}")
     print("Samples:")
     for i, (img_path, mask_path) in enumerate(pairs, 1):
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         print(
             f"  [{i:02d}] {mask_path.parent.name} | zarr: {img_path} | "
             f"image shape: {img.shape} | mask shape: {msk.shape}"
         )
 
-    first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]))
+    first_img, _ = read_image_mask_numpy(str(pairs[0][0]), str(pairs[0][1]), dataset=cfg.dataset)
     C = first_img.shape[-1]
 
     train_patches_per_epoch = cfg.steps_per_epoch * cfg.batch
@@ -424,27 +450,29 @@ def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
     print(f"  {(1 - cfg.fg_fraction) * 100:.0f}% background patches (fg <= {cfg.bg_max_ratio:.2f})")
 
 
-def print_split_summary(train_pairs, val_pairs):
+def print_split_summary(train_pairs, val_pairs, cfg: TrainConfig):
+    """Print a formatted summary for the current workflow."""
     print("\n=== TRAIN / VAL SPLIT ===")
     print(f"Train images: {len(train_pairs)}")
     print(f"Val images:   {len(val_pairs)}")
 
     print("\nTrain samples:")
     for i, (img_path, mask_path) in enumerate(train_pairs, 1):
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         print(f"  [T{i:02d}] {mask_path.parent.name} | zarr: {img_path.name} | image shape: {img.shape} | mask shape: {msk.shape}")
 
     print("\nValidation samples:")
     for i, (img_path, mask_path) in enumerate(val_pairs, 1):
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         print(f"  [V{i:02d}] {mask_path.parent.name} | zarr: {img_path.name} | image shape: {img.shape} | mask shape: {msk.shape}")
 
 
 def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
+    """Print a formatted summary for the current workflow."""
     print("\n=== RANDOM PATCH CHECK ===")
     for i in range(n):
         img_path, mask_path = random.choice(pairs)
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         img_c, msk_c = sample_patch_numpy(img, msk, cfg)
 
         fg_ratio = float(msk_c.mean())
@@ -459,6 +487,7 @@ def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
 
 
 def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_path: Path):
+    """Save generated outputs to disk."""
     train_patches_per_epoch = cfg.steps_per_epoch * cfg.batch
     val_patches_per_epoch = cfg.val_steps * cfg.batch
 
@@ -488,7 +517,7 @@ def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_pat
     lines.append("All samples:")
 
     for i, (img_path, mask_path) in enumerate(pairs, 1):
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         lines.append(
             f"  [{i:02d}] {mask_path.parent.name} | zarr: {img_path} | "
             f"image shape: {img.shape} | mask shape: {msk.shape}"
@@ -499,6 +528,7 @@ def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_pat
 
 
 def save_training_curves(history, out_png: Path, dataset_name: str):
+    """Save generated outputs to disk."""
     hist = history.history
     epochs = np.arange(1, len(hist.get("loss", [])) + 1)
 
@@ -552,11 +582,12 @@ def save_training_curves(history, out_png: Path, dataset_name: str):
 
 
 def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6):
+    """Save generated outputs to disk."""
     out_dir.mkdir(parents=True, exist_ok=True)
     chosen = random.sample(pairs, k=min(n, len(pairs)))
 
     for i, (img_path, mask_path) in enumerate(chosen, 1):
-        img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+        img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
         img_c, msk_c = sample_patch_numpy(img, msk, cfg)
         img_c_norm = normalize_crop_numpy(img_c, cfg.normalize)
         msk_c01 = (msk_c > 0).astype(np.uint8)
@@ -599,8 +630,9 @@ def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6)
 
 
 def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None = None):
+    """Display a quick visual preview for inspection."""
     img_path, mask_path = random.choice(pairs)
-    img, msk = read_image_mask_numpy(str(img_path), str(mask_path))
+    img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
     img_c, msk_c = sample_patch_numpy(img, msk, cfg)
 
     full_rgb = image_to_rgb_uint8(img, normalize_mode=cfg.normalize)
@@ -643,6 +675,7 @@ def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None
 
 
 def parse_args(cfg: TrainConfig):
+    """Parse input text or metadata into a structured form."""
     import argparse
 
     p = argparse.ArgumentParser(
@@ -687,6 +720,7 @@ def parse_args(cfg: TrainConfig):
 
 
 def main():
+    """Helper function used by this module."""
     cfg = parse_args(TrainConfig())
 
     random.seed(cfg.seed)
@@ -731,7 +765,7 @@ def main():
     if len(train_pairs) < 1:
         raise RuntimeError("Training split is empty. Add more annotated samples or reduce val_split.")
 
-    print_split_summary(train_pairs, val_pairs)
+    print_split_summary(train_pairs, val_pairs, cfg)
 
     train_ds, C = make_dataset(train_pairs, cfg, training=True)
     val_ds, _ = make_dataset(val_pairs, cfg, training=False)

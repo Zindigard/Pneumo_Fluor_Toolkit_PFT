@@ -68,6 +68,7 @@ class BM3DParams:
 
 
 def _require_bm3d():
+    """Internal helper used by this module."""
     try:
         import bm3d  # type: ignore
         return bm3d
@@ -202,6 +203,7 @@ def apply_bm3d_to_image(
         n_c = 1
 
     def pick_channels() -> list[int]:
+        """Helper function used by this module."""
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":

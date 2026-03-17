@@ -1,12 +1,27 @@
+"Runs a trained U-Net model on input images and saves the predicted masks and overlays"
+
+
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import matplotlib.pyplot as plt
+from PFT.core_prog_parts import visualization as viz
 import tensorflow as tf
 
 
@@ -394,26 +409,12 @@ def save_overlay_pngs(
         if "t" in idx_info:
             suffix += f"_t{idx_info['t']:03d}"
 
-        fig = plt.figure(figsize=(14, 4.5), dpi=180)
-
-        ax1 = fig.add_subplot(1, 3, 1)
-        ax1.imshow(rgb)
-        ax1.set_title("Input image")
-        ax1.axis("off")
-
-        ax2 = fig.add_subplot(1, 3, 2)
-        ax2.imshow(mask_yx, cmap="gray")
-        ax2.set_title("Predicted mask")
-        ax2.axis("off")
-
-        ax3 = fig.add_subplot(1, 3, 3)
-        ax3.imshow(overlay)
-        ax3.set_title("Overlay with outlines")
-        ax3.axis("off")
-
-        plt.tight_layout()
-        fig.savefig(str(out_dir / f"u_net_overlay{suffix}.png"), bbox_inches="tight")
-        plt.close(fig)
+        viz.save_unet_overlay_panel(
+            rgb,
+            mask_yx,
+            overlay,
+            out_dir / f"u_net_overlay{suffix}.png",
+        )
 
 
 def try_load_model(model_path: Path):

@@ -35,6 +35,7 @@ def _find_repo_root(start: Optional[Path] = None) -> Path:
 
 
 def models_dir() -> Path:
+    """Helper function used by this module."""
     return _find_repo_root() / "models"
 
 

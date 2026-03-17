@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Dict
 
 import matplotlib.pyplot as plt
+from PFT.core_prog_parts import visualization as viz
+from PFT.core_prog_parts.image_utils import extract_display_plane as _extract_display_plane
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
 
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
@@ -19,6 +20,9 @@ from PFT.core_prog_parts.notch_filter import (
 from PFT.core_prog_parts.notch_filter import _ensure_cyx, _to_numpy
 
 EPS = 1e-12
+
+"Interactive tool to apply notch filters in the frequency domain to OME-Zarr images, with visualization and saving of results."
+
 
 CURATED_TEST_STEMS: dict[str, list[str]] = {
     "2d_time": [
@@ -39,6 +43,7 @@ CURATED_TEST_STEMS: dict[str, list[str]] = {
 
 
 def list_curated_test_images(dataset: str) -> list[Path]:
+    """List available inputs for this workflow."""
     all_imgs = list_omezarr_images(dataset)
     want = CURATED_TEST_STEMS.get(dataset, [])
     by_stem = {p.parent.name: p for p in all_imgs}
@@ -46,6 +51,7 @@ def list_curated_test_images(dataset: str) -> list[Path]:
 
 
 def missing_curated_test_stems(dataset: str) -> list[str]:
+    """Helper function used by this module."""
     all_stems = {p.parent.name for p in list_omezarr_images(dataset)}
     return [s for s in CURATED_TEST_STEMS.get(dataset, []) if s not in all_stems]
 
@@ -54,6 +60,7 @@ def missing_curated_test_stems(dataset: str) -> list[str]:
 # Metrics
 # -------------------------
 def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
+    """Internal helper used by this module."""
     a = a.astype(np.float64, copy=False).ravel()
     b = b.astype(np.float64, copy=False).ravel()
     a = a - a.mean()
@@ -64,6 +71,7 @@ def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def neighbor_corr(x: np.ndarray) -> float:
+    """Helper function used by this module."""
     x = np.asarray(x, dtype=np.float32)
     vals = []
     if x.shape[1] >= 2:
@@ -75,6 +83,7 @@ def neighbor_corr(x: np.ndarray) -> float:
 
 
 def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
+    """Helper function used by this module."""
     x = np.asarray(x, dtype=np.float32)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -93,6 +102,7 @@ def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
 
 
 def gradient_mag_mean(x: np.ndarray) -> float:
+    """Helper function used by this module."""
     x = np.asarray(x, dtype=np.float32)
     gy, gx = np.gradient(x)
     g = np.sqrt(gx * gx + gy * gy)
@@ -101,6 +111,7 @@ def gradient_mag_mean(x: np.ndarray) -> float:
 
 
 def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> dict:
+    """Compute and return the requested measurement."""
     out = {
         "blue": {
             "neighbor_corr": neighbor_corr(blue),
@@ -119,6 +130,7 @@ def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> d
 
 
 def write_metrics_block(f, title: str, metrics: dict) -> None:
+    """Write the requested report or metadata file."""
     f.write(f"\n=== {title} ===\n")
     for ch_name, m in metrics.items():
         f.write(f"\n[{ch_name}]\n")
@@ -130,6 +142,7 @@ def write_metrics_block(f, title: str, metrics: dict) -> None:
 # Display helpers
 # -------------------------
 def _norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> np.ndarray:
+    """Internal helper used by this module."""
     x = x.astype(np.float32, copy=False)
     lo = float(np.percentile(x, p_lo))
     hi = float(np.percentile(x, p_hi))
@@ -141,6 +154,7 @@ def _norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> 
 
 
 def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
+    """Internal helper used by this module."""
     B = _norm01_percentile(blue)
     G = _norm01_percentile(green) if green is not None else np.zeros_like(B)
     R = np.zeros_like(B)
@@ -149,50 +163,28 @@ def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.nd
 
 
 def _make_crimson_cmap():
-    return LinearSegmentedColormap.from_list(
-        "black_to_crimson",
-        [
-            (0.0, (0.0, 0.0, 0.0)),
-            (0.10, (0.08, 0.0, 0.0)),
-            (0.35, (0.30, 0.0, 0.04)),
-            (0.65, (0.62, 0.02, 0.10)),
-            (1.0, (0.86, 0.08, 0.24)),
-        ],
-    )
+    """Internal helper used by this module."""
+    return viz.make_crimson_cmap()
 
 
 
 def _plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, out_png: Path):
-    diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
-    diff_map = np.mean(diff, axis=-1)
-    scale = float(np.percentile(diff_map, 99.7)) + 1e-12
-    diff_norm = np.clip(diff_map / scale, 0.0, 1.0)
-
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = fig.add_subplot(1, 3, 1)
-    ax2 = fig.add_subplot(1, 3, 2)
-    ax3 = fig.add_subplot(1, 3, 3)
-
-    ax1.imshow(orig_rgb)
-    ax1.set_title("Original (RGB, display-norm)")
-    ax1.axis("off")
-    ax2.imshow(filt_rgb)
-    ax2.set_title("Filtered (RGB, display-norm)")
-    ax2.axis("off")
-    ax3.imshow(diff_norm, cmap=_make_crimson_cmap(), vmin=0, vmax=1)
-    ax3.set_title("|Δ| (black=min, crimson=max)")
-    ax3.axis("off")
-
-    fig.suptitle(title)
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    """Internal helper used by this module."""
+    viz.plot_rgb_comparison(
+        orig_rgb,
+        filt_rgb,
+        title,
+        out_png,
+        original_label="Original (RGB, display-norm)",
+        filtered_label="Filtered (RGB, display-norm)",
+    )
 
 
 # -------------------------
 # FFT helpers
 # -------------------------
 def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
+    """Internal helper used by this module."""
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -201,6 +193,7 @@ def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
 
 
 def _center_crop(img2d: np.ndarray, target: int = 512) -> np.ndarray:
+    """Internal helper used by this module."""
     h, w = img2d.shape
     if min(h, w) <= target:
         return img2d
@@ -216,6 +209,7 @@ def mean_fft_magnitude(
     channel_index: int,
     fft_size: int = 512,
 ) -> np.ndarray:
+    """Helper function used by this module."""
     if not zarr_paths:
         raise ValueError("No images to compute mean FFT.")
 
@@ -257,6 +251,7 @@ def angle_energy_profile(
     r_max: int | None = None,
     n_bins: int = 360,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Helper function used by this module."""
     h, w = mean_logmag.shape
     cy = (h - 1) / 2.0
     cx = (w - 1) / 2.0
@@ -288,20 +283,19 @@ def angle_energy_profile(
 
 
 def _channel_cmap(name: str) -> str:
+    """Internal helper used by this module."""
     return {"blue": "Blues", "green": "Greens"}.get(name, "gray")
 
 
 
 def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
-    vmin = float(np.percentile(fft_img, 1.0))
-    vmax = float(np.percentile(fft_img, 99.7))
-    if vmax <= vmin:
-        vmax = vmin + 1e-6
-    ax.imshow(fft_img, cmap=cmap, vmin=vmin, vmax=vmax)
+    """Internal helper used by this module."""
+    viz.imshow_percentile(ax, fft_img, cmap=cmap)
 
 
 
 def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
+    """Internal helper used by this module."""
     h, w = mean_fft.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
 
@@ -325,6 +319,7 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
     selected = {"r": None}
 
     def on_move(event):
+        """Helper function used by this module."""
         if event.inaxes != ax or event.xdata is None or event.ydata is None:
             return
         r = float(np.sqrt((event.xdata - cx) ** 2 + (event.ydata - cy) ** 2))
@@ -333,6 +328,7 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
         fig.canvas.draw_idle()
 
     def on_click(event):
+        """Helper function used by this module."""
         if event.inaxes != ax or event.xdata is None or event.ydata is None:
             return
         r = float(np.sqrt((event.xdata - cx) ** 2 + (event.ydata - cy) ** 2))
@@ -353,32 +349,15 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
 
 
 def _save_fft_with_dc_overlay(fft_img: np.ndarray, r_dc: int, out_png: Path, title: str, cmap: str, linewidth: int = 3):
-    h, w = fft_img.shape
-    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
-    yy, xx = np.indices((h, w), dtype=np.float32)
-    rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-
-    fig, ax = plt.subplots()
-    _imshow_fft(ax, fft_img, cmap=cmap)
-    ax.axis("off")
-    ax.set_title(title)
-
-    overlay = np.zeros((h, w, 4), dtype=np.float32)
-    overlay[..., 0] = 1.0
-    overlay[..., 1] = 0.55
-    overlay[..., 2] = 0.0
-    ax.imshow(overlay, alpha=(rr <= float(r_dc)).astype(np.float32) * 0.25)
-    ax.add_patch(Circle((cx, cy), r_dc, fill=False, edgecolor="orange", linewidth=linewidth))
-
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_png, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    """Internal helper used by this module."""
+    viz.save_fft_with_dc_overlay(fft_img, r_dc, out_png, title, cmap, linewidth=linewidth)
 
 
 # -------------------------
 # CLI helpers
 # -------------------------
 def _prompt_floats(prompt: str, default: list[float]) -> list[float]:
+    """Internal helper used by this module."""
     s = input(prompt).strip()
     if not s:
         return default
@@ -388,18 +367,21 @@ def _prompt_floats(prompt: str, default: list[float]) -> list[float]:
 
 
 def _prompt_float(prompt: str, default: float) -> float:
+    """Internal helper used by this module."""
     s = input(prompt).strip()
     return default if not s else float(s)
 
 
 
 def _prompt_int(prompt: str, default: int) -> int:
+    """Internal helper used by this module."""
     s = input(prompt).strip()
     return default if not s else int(s)
 
 
 
 def _prompt_bool(prompt: str, default: bool = False) -> bool:
+    """Internal helper used by this module."""
     s = input(prompt).strip().lower()
     if not s:
         return default
@@ -408,6 +390,7 @@ def _prompt_bool(prompt: str, default: bool = False) -> bool:
 
 
 def _choose_dataset_interactive() -> str:
+    """Internal helper used by this module."""
     print("Choose dataset:")
     print("  1) 2d_time (blue only)")
     print("  2) 2d_wga_dapi (blue + green)")
@@ -417,6 +400,7 @@ def _choose_dataset_interactive() -> str:
 
 
 def _choose_mode_interactive() -> str:
+    """Internal helper used by this module."""
     print("Choose mode:")
     print("  1) Process ONE image directly (enter parameters first, skip tuning figures)")
     print("  2) Tune on curated subset first, then process curated subset")
@@ -427,6 +411,7 @@ def _choose_mode_interactive() -> str:
 
 
 def _path_to_index(all_paths: list[Path], target: Path) -> int:
+    """Internal helper used by this module."""
     target_resolved = target.resolve()
     for i, p in enumerate(all_paths):
         if p.resolve() == target_resolved:
@@ -436,6 +421,7 @@ def _path_to_index(all_paths: list[Path], target: Path) -> int:
 
 
 def _extract_display_plane(x: np.ndarray, axes: str, c: int) -> np.ndarray:
+    """Internal helper used by this module."""
     arr = x
     if "c" in axes:
         arr = np.take(arr, indices=c, axis=axes.index("c"))
@@ -448,6 +434,7 @@ def _extract_display_plane(x: np.ndarray, axes: str, c: int) -> np.ndarray:
 
 
 def _collect_dataset_channel_info(dataset: str, zarrs: list[Path]) -> tuple[list[int], list[str]]:
+    """Internal helper used by this module."""
     arr0, axes0 = load_ome_zarr(zarrs[0], level=0, as_numpy=False)
     x0 = _to_numpy(arr0)
     x0, axes0 = _ensure_cyx(x0, axes0)
@@ -462,6 +449,7 @@ def _collect_dataset_channel_info(dataset: str, zarrs: list[Path]) -> tuple[list
 
 
 def _load_planes(path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | None]:
+    """Internal helper used by this module."""
     arr, axes = load_ome_zarr(path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -481,6 +469,7 @@ def _write_single_metrics_report(
     metrics_before: dict,
     metrics_after: dict,
 ) -> None:
+    """Internal helper used by this module."""
     with rep.open("w", encoding="utf-8") as f:
         f.write("=== SETTINGS ===\n")
         f.write(f"dataset: {dataset}\n")
@@ -497,6 +486,7 @@ def _write_single_metrics_report(
 
 
 def _rows_for_batch(stem: str, metrics_before: dict, metrics_after: dict) -> list[dict]:
+    """Internal helper used by this module."""
     rows: list[dict] = []
     for ch_name in metrics_after.keys():
         b = metrics_before[ch_name]
@@ -519,6 +509,7 @@ def _rows_for_batch(stem: str, metrics_before: dict, metrics_after: dict) -> lis
 
 
 def _write_batch_summary_txt(out_txt: Path, rows: list[dict], dataset: str, params: NotchParams) -> None:
+    """Internal helper used by this module."""
     out_txt.parent.mkdir(parents=True, exist_ok=True)
     with out_txt.open("w", encoding="utf-8") as f:
         f.write("=== CURATED SUBSET BATCH SUMMARY ===\n")
@@ -550,6 +541,7 @@ def _write_batch_summary_txt(out_txt: Path, rows: list[dict], dataset: str, para
 
 
 def _prompt_notch_params(default_r_min: int) -> NotchParams:
+    """Internal helper used by this module."""
     print("\nEnter NOTCH parameters (press Enter for defaults):")
     angles = _prompt_floats("  angles_deg (e.g. '90 270') [default 90 270]: ", default=[90.0, 270.0])
     half_width = _prompt_float("  half_width_deg [default 5.0]: ", default=5.0)
@@ -578,6 +570,7 @@ def _save_mean_and_example_fft_overlays(
     dataset: str,
     fft_size: int,
 ) -> None:
+    """Internal helper used by this module."""
     for name, m in mean_ffts.items():
         _save_fft_with_dc_overlay(
             m,
@@ -609,6 +602,7 @@ def _save_mean_and_example_fft_overlays(
 
 
 def _process_one_image(dataset: str, idx: int, zarrs: list[Path], params: NotchParams, fft_size: int) -> tuple[Path, dict, dict]:
+    """Internal helper used by this module."""
     orig_path = zarrs[idx]
     stem = orig_path.parent.name
     out_dir = run_notch_on_dataset(dataset, params, apply=True, channel_mode="auto", image_index=idx)
@@ -651,6 +645,7 @@ def _process_one_image(dataset: str, idx: int, zarrs: list[Path], params: NotchP
 
 
 def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list[Path], params: NotchParams, fft_size: int) -> Path:
+    """Internal helper used by this module."""
     batch_rows: list[dict] = []
     for p in curated_paths:
         idx = _path_to_index(zarrs, p)
@@ -664,6 +659,7 @@ def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list
 
 
 def main():
+    """Helper function used by this module."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=False, choices=["2d_time", "2d_wga_dapi", "2d_dpa_wagi"])
     ap.add_argument("--fft_size", type=int, default=512)

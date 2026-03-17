@@ -18,6 +18,9 @@ from PFT.core_prog_parts.fuji_managment import (
 )
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 
+"Script to generate theoretical PSFs using PSFGenerator for OME-Zarr images."
+
+
 def _available_levels(zarr_dir: Path) -> list[int]:
     """
     Read OME-NGFF multiscales datasets list and return indices [0..L-1].
@@ -32,6 +35,7 @@ def _available_levels(zarr_dir: Path) -> list[int]:
 
 
 def _prompt_level(levels: list[int], default: int = 2) -> int:
+    """Internal helper used by this module."""
     if not levels:
         return 0
     print("\nAvailable OME-Zarr pyramid levels:")
@@ -44,6 +48,7 @@ def _prompt_level(levels: list[int], default: int = 2) -> int:
 
 
 def _find_java_exe(fiji_dir: Path) -> Path:
+    """Internal helper used by this module."""
     candidates = [
         fiji_dir / "java" / "win64" / "bin" / "java.exe",
         fiji_dir / "java" / "bin" / "java.exe",
@@ -85,6 +90,7 @@ def _parse_psfgenerator_config(cfg_path: Path) -> dict[str, str]:
 
 
 def write_psfgenerator_config(params: Mapping[str, str], dst: Path) -> None:
+    """Write the requested report or metadata file."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{k}={params[k]}" for k in sorted(params.keys())]
     dst.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -98,6 +104,7 @@ def _rewrite_with_imagej_metadata(
     res_axial_nm: float,
     unit: str = "nm",
 ) -> None:
+    """Internal helper used by this module."""
     arr = tiff.imread(str(src_tif)).astype("float32", copy=False)
 
     arr = np.maximum(arr, 0)
@@ -260,6 +267,7 @@ def update_params_for_image_and_channel(
     match_refractive_indices: bool = True,
 ) -> dict[str, str]:
   
+    """Update parameters or metadata in place and return results."""
     p = dict(base_params)
 
     p["Lambda"] = str(float(wavelength_nm))
@@ -302,6 +310,7 @@ def plan_psf_jobs_for_image(
     accuracy: str = "Best",
 ) -> list[PSFJob]:
    
+    """Prepare the list of jobs to run next."""
     project_root = project_root.resolve()
     zarr_dir = zarr_dir.resolve()
 
@@ -396,6 +405,7 @@ def generate_psfs_for_image(
 
 
 def _parse_models_arg(s: str) -> list[ModelName]:
+    """Internal helper used by this module."""
     s = (s or "").strip()
     parts = [p.strip().upper() for p in s.split(",") if p.strip()]
     if not parts:
@@ -409,6 +419,7 @@ def _parse_models_arg(s: str) -> list[ModelName]:
 
 
 def main() -> int:
+    """Helper function used by this module."""
     ap = argparse.ArgumentParser(
         description="Generate theoretical PSFs for an OME-Zarr, matching a chosen pyramid level."
     )

@@ -7,17 +7,15 @@ from typing import Iterable, Literal
 
 import numpy as np
 
+from PFT.core_prog_parts.common_paths import dataset_img_dir, find_project_root, normalize_dataset_name, results_filters_dir
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
-
+"Implements notch filtering in the frequency domain to suppress artifacts, with flexible parameterization and application to OME-Zarr images."
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def results_filters_dir() -> Path:
-    return _repo_root() / "results" / "Filters"
+    """Internal helper used by this module."""
+    return find_project_root()
 
 
 def _dataset_dir(dataset: str) -> Path:
@@ -27,19 +25,11 @@ def _dataset_dir(dataset: str) -> Path:
       - "2d_wga_dapi" (2 channels)
       - also accepts typo aliases: "2d_dpa_wagi", "2d_dpa_wga", "2d_dpa_wagi"
     """
-    ds = dataset.strip().lower()
-    aliases = {
-        "2d_time": "2d_time",
-        "2d_wga_dapi": "2d_wga_dapi",
-        "2d_dpa_wagi": "2d_wga_dapi",
-        "2d_dpa_wga": "2d_wga_dapi",
-        "2d_dpa_wagi ": "2d_wga_dapi",
-    }
-    ds = aliases.get(ds, ds)
-    return _repo_root() / "results" / "img" / ds
+    return dataset_img_dir(normalize_dataset_name(dataset), _repo_root())
 
 
 def list_omezarr_images(dataset: str) -> list[Path]:
+    """List available inputs for this workflow."""
     ds_dir = _dataset_dir(dataset)
     if not ds_dir.exists():
         return []
@@ -72,6 +62,7 @@ class NotchParams:
 
 def _to_numpy(a) -> np.ndarray:
     # load_ome_zarr may return dask arrays; enforce numpy
+    """Internal helper used by this module."""
     try:
         import dask.array as da  # type: ignore
         if isinstance(a, da.Array):
@@ -98,6 +89,7 @@ def _ensure_cyx(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _fft2_logmag(img2d: np.ndarray) -> np.ndarray:
+    """Internal helper used by this module."""
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -106,6 +98,7 @@ def _fft2_logmag(img2d: np.ndarray) -> np.ndarray:
 
 
 def _angle_grid(h: int, w: int) -> np.ndarray:
+    """Internal helper used by this module."""
     cy = (h - 1) / 2.0
     cx = (w - 1) / 2.0
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -114,6 +107,7 @@ def _angle_grid(h: int, w: int) -> np.ndarray:
 
 
 def _radius_grid(h: int, w: int) -> np.ndarray:
+    """Internal helper used by this module."""
     cy = (h - 1) / 2.0
     cx = (w - 1) / 2.0
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -136,6 +130,7 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
 
     # angular distance helper: smallest absolute difference modulo 360
     def ang_dist(a: np.ndarray, a0: float) -> np.ndarray:
+        """Helper function used by this module."""
         d = (a - a0 + 180.0) % 360.0 - 180.0
         return np.abs(d)
 
@@ -225,6 +220,7 @@ def run_notch_on_dataset(
         n_c = 1
 
     def _pick_channels() -> list[int]:
+        """Internal helper used by this module."""
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":

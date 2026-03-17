@@ -1,4 +1,17 @@
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import re
 import csv
 from dataclasses import dataclass
@@ -9,6 +22,9 @@ import numpy as np
 import zarr
 import tifffile
 from PIL import Image, ImageDraw, ImageFont
+
+"Compares original and deconvolved results"
+
 
 
 DEFAULT_RAW_LEVEL = 2

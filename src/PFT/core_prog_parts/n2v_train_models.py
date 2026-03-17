@@ -8,16 +8,20 @@ import matplotlib.pyplot as plt
 from n2v.models import N2VConfig, N2V
 from n2v.internals.N2V_DataGenerator import N2V_DataGenerator
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, ome_zarr_to_n2v_2d_stack
+"Trains N2V models on patches extracted from OME-Zarr images, with interactive dataset and mode selection."
 
 def project_root_from_this_file() -> Path:
+    """Helper function used by this module."""
     return Path(__file__).resolve().parents[3]
 
 
 def ensure_dir(p: Path) -> None:
+    """Ensure that the required resource exists."""
     p.mkdir(parents=True, exist_ok=True)
 
 
 def is_omezarr_store(p: Path) -> bool:
+    """Helper function used by this module."""
     if not p.is_dir():
         return False
     return (p / ".zgroup").exists() or (p / "zarr.json").exists() or (p / ".zattrs").exists()
@@ -44,6 +48,7 @@ def list_zarr_samples(folder: Path) -> list[Path]:
 
 
 def infer_axes_shape_channels(zarr_dir: Path) -> tuple[str, tuple[int, ...], int]:
+    """Infer a suitable value from the available inputs."""
     data, axes = load_ome_zarr(zarr_dir, as_numpy=False)
     shape = tuple(getattr(data, "shape", ()))
     if "c" not in axes:
@@ -68,6 +73,7 @@ def ensure_nyx1(x: np.ndarray) -> np.ndarray:
 
 
 def split_patches_80_20(patches: np.ndarray, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Helper function used by this module."""
     rng = np.random.default_rng(seed)
     idx = np.arange(patches.shape[0])
     rng.shuffle(idx)
@@ -76,6 +82,7 @@ def split_patches_80_20(patches: np.ndarray, seed: int = 0) -> tuple[np.ndarray,
     return patches[idx[:n_train]], patches[idx[n_train:]]
 
 def choose_dataset_interactive() -> str:
+    """Ask the user to choose a workflow option."""
     options = ["2d_time", "2d_wga_dapi"]
     print("Choose dataset to train:")
     for i, opt in enumerate(options, 1):
@@ -233,6 +240,7 @@ def generate_patches_from_frames(
 
 
 def show_two_random_patches(X: np.ndarray, title_prefix: str, seed: int = 0, show_channel: int = 0) -> None:
+    """Display a quick visual preview for inspection."""
     if X.shape[0] < 2:
         print("[WARN] Not enough patches to display 2 examples.")
         return
@@ -254,6 +262,7 @@ def show_two_random_patches(X: np.ndarray, title_prefix: str, seed: int = 0, sho
 
 
 def train_one_model(model_name: str, models_base: Path, X: np.ndarray, X_val: np.ndarray) -> None:
+    """Helper function used by this module."""
     steps = max(1, int(X.shape[0] / 128))
 
     config = N2VConfig(
@@ -302,6 +311,7 @@ def train_one_model(model_name: str, models_base: Path, X: np.ndarray, X_val: np
 
 
 def main() -> None:
+    """Helper function used by this module."""
     PATCH_SHAPE = (64, 64)
     SEED = 0
 

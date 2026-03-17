@@ -1,11 +1,24 @@
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import numpy as np
 
-"""Script to check the 2D OME-Zarr datasets for metadata uniformity and noise characteristics, and compare reported voxel sizes with OME-Zarr metadata."""
+"""Checks 2D image files and shows their basic content"""
 
 try:
     import zarr
@@ -16,7 +29,7 @@ except Exception as e:
     ) from e
 
 
-REPO_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
+REPO_ROOT = find_repo_root(_THIS_FILE)
 IN_2D_TIME = REPO_ROOT / "results" / "img" / "2d_time"
 IN_2D_WGA = REPO_ROOT / "results" / "img" / "2d_wga_dapi"
 OUT_ROOT = REPO_ROOT / "results" / "2d"

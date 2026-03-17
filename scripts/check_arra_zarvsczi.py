@@ -1,3 +1,24 @@
+from pathlib import Path
+import sys
+
+
+def find_repo_root(start: Path | None = None) -> Path:
+    start = (start or Path(__file__)).resolve()
+    for p in [start] + list(start.parents):
+        if (p / "pyproject.toml").exists():
+            return p
+        if (p / ".git").exists():
+            return p
+        if (p / "src" / "PFT").exists():
+            return p
+    return Path(__file__).resolve().parents[1]
+
+
+REPO_ROOT = find_repo_root(Path(__file__).resolve())
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 import numpy as np
 import zarr
 from pathlib import Path
@@ -6,7 +27,7 @@ from PFT.core_prog_parts.io import load_czi
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 
-"""Script to perform rigorous validation of the OME-Zarr saving/loading process by comparing original CZI data with the OME-Zarr copy at multiple levels (shape, dtype, statistics, bit-level, metadata)."""
+"""Compares data loaded from different file formats to confirm they match as expected"""
 
 
 def run_rigorous_validation(czi_path: str | Path):

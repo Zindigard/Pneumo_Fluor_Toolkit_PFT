@@ -21,8 +21,10 @@ from PFT.core_prog_parts.decoder_omezar import (
     extract_ome_zarr_meta_for_compare,
 )
 
+"Logic of running DeconvolutionLab2 RL deconvolution on OME-Zarr data, with checks and reporting"
 
 def _try_import_psutil():
+    """Internal helper used by this module."""
     try:
         import psutil  # type: ignore
         return psutil
@@ -38,7 +40,9 @@ def mem_box(
     peak_rss: Optional[int],
     py_peak_bytes: Optional[int],
 ) -> str:
+    """Helper function used by this module."""
     def fmt_mb(x: Optional[int]) -> str:
+        """Helper function used by this module."""
         return "n/a" if x is None else f"{x / (1024**2):.1f} MB"
 
     dt = time.time() - t0
@@ -85,6 +89,7 @@ def _select_psf_path(
     level: Optional[int] = None,
 ) -> Path:
     
+    """Internal helper used by this module."""
     if psf_mode == "file":
         if psf_tif is None:
             raise ValueError("--psf_mode file requires --psf_tif")
@@ -134,6 +139,7 @@ def load_omezarr_channel_zyx(
     time: Optional[int] = 0,
 ) -> tuple[np.ndarray, Optional[str]]:
    
+    """Load data and return the processed result."""
     image_omezarr_dir = Path(image_omezarr_dir)
 
     meta = extract_ome_zarr_meta_for_compare(image_omezarr_dir, level=level)
@@ -156,6 +162,7 @@ def load_omezarr_channel_zyx(
 
 
 def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
+    """Helper function used by this module."""
     if image_zyx.ndim != 3:
         raise ValueError(f"Image must be 3D (Z,Y,X). Got shape={image_zyx.shape}")
     if psf.ndim != 3:
@@ -177,6 +184,7 @@ def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
 
 def write_imagej_tiff_stack(arr: np.ndarray, out_path: Path, axes: str = "ZYX") -> None:
    
+    """Write the requested report or metadata file."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arr = np.ascontiguousarray(arr)
     tiff.imwrite(
@@ -199,6 +207,7 @@ def run_dl2_cli(
     background: float = 0.0,
 ) -> Path:
     
+    """Run the main processing step for this workflow."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img = tiff.imread(str(image_tif))
@@ -259,6 +268,7 @@ def run_dl2_cli(
 
 
 def main() -> int:
+    """Helper function used by this module."""
     ap = argparse.ArgumentParser(description="Run DeconvolutionLab2 Richardson–Lucy on ONE channel of an OME-Zarr.")
     ap.add_argument(
         "--omezarr_dir",

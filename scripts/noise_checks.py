@@ -1,4 +1,17 @@
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Tuple, List
@@ -11,6 +24,8 @@ try:
     import matplotlib.pyplot as plt
 except ImportError as e:
     raise ImportError("Please install matplotlib: pip install matplotlib") from e
+from PFT.core_prog_parts import visualization as viz
+from PFT.core_prog_parts.common_paths import ensure_dir
 try:
     import pandas as pd
 except ImportError:
@@ -120,7 +135,7 @@ def save_image_and_fft_png(
     log_scale: bool = True,
     save_image_png: bool = True,
 ) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out_dir)
 
     img = _as_float(img2d)
     x = img - float(img.mean())
@@ -128,22 +143,7 @@ def save_image_and_fft_png(
     mag = np.abs(F)
     disp = np.log1p(mag) if log_scale else mag
 
-    if save_image_png:
-        img_path = out_dir / f"{stem}_img.png"
-        plt.figure()
-        plt.imshow(img)
-        plt.axis("off")
-        plt.tight_layout(pad=0)
-        plt.savefig(img_path, dpi=200, bbox_inches="tight", pad_inches=0)
-        plt.close()
-
-    fft_path = out_dir / f"{stem}_fft2d.png"
-    plt.figure()
-    plt.imshow(disp)
-    plt.axis("off")
-    plt.tight_layout(pad=0)
-    plt.savefig(fft_path, dpi=200, bbox_inches="tight", pad_inches=0)
-    plt.close()
+    viz.save_image_and_fft(img, disp, out_dir, stem, save_image_png=save_image_png)
 
 
 @dataclass
@@ -180,7 +180,7 @@ def should_process(p: Path) -> bool:
 
 
 def write_summary_csv(path: Path, rows: List[FileSummary]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent)
     records = [asdict(r) for r in rows]
     if pd is not None:
         pd.DataFrame.from_records(records).to_csv(path, index=False)
@@ -199,7 +199,7 @@ def main() -> None:
     out_base = PATCH_ROOT / "_noise_diagnostics"
     out_fft_dir = out_base / "fft_single"
     out_csv = out_base / "fft_single_summary.csv"
-    out_base.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out_base)
 
     files = [p for p in list_tiff_files(PATCH_ROOT) if should_process(p)]
     if not files:

@@ -4,8 +4,10 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
+from PFT.core_prog_parts.common_paths import results_img_dir
+from PFT.core_prog_parts.image_utils import dtype_max, linear01, minmax01
 from PFT.core_prog_parts.io import CziMeta, read_czi_xml
-from PFT.core_prog_parts import visualize_2d
+from PFT.core_prog_parts import visualization as visualize_2d
 
 """
 Helper functions to save metadata, previews and OME-Zarr files for 2D and 3D datasets,
@@ -13,13 +15,9 @@ with structured output directories and error handling for missing metadata or OM
 """
 
 
-def results_img_dir() -> Path:
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / "results" / "img"
-
-
 def safe_axes_label(meta: CziMeta) -> str:
     # Store header axes string.
+    """Helper function used by this module."""
     return meta.axes if isinstance(meta.axes, str) and meta.axes else "unknown"
 
 
@@ -48,39 +46,16 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
         (out_dir / "metadata.xml").write_text("No XML metadata available.\n", encoding="utf-8")
 
 
-def _dtype_max(arr: np.ndarray) -> float:
-    if np.issubdtype(arr.dtype, np.integer):
-        return float(np.iinfo(arr.dtype).max)
-    m = float(np.nanmax(arr)) if arr.size else 1.0
-    return m if m > 0 else 1.0
-
-
-def _linear01(img: np.ndarray, denom: float) -> np.ndarray:
-    img = img.astype(np.float32, copy=False)
-    out = img / float(denom)
-    return np.clip(out, 0.0, 1.0)
-
-
-def _minmax01(arr: np.ndarray) -> np.ndarray:
-    a = arr.astype(np.float32, copy=False)
-    if not a.size:
-        return np.zeros_like(a, dtype=np.float32)
-    lo = float(a.min())
-    hi = float(a.max())
-    if hi <= lo:
-        return np.zeros_like(a, dtype=np.float32)
-    out = (a - lo) / (hi - lo)
-    return np.clip(out, 0.0, 1.0)
-
-
 def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
+    """Internal helper used by this module."""
     img2d = visualize_2d.max_project_to_2d(arr)
-    b = _linear01(img2d, _dtype_max(arr))
+    b = linear01(img2d, dtype_max(arr))
     z = np.zeros_like(b)
     return np.dstack([z, z, b])
 
 
 def _rgb01_time_norm(arr: np.ndarray) -> np.ndarray:
+    """Internal helper used by this module."""
     return visualize_2d.rgb_time_hada_blue(arr)
 
 
@@ -95,8 +70,8 @@ def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
     blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
     green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
 
-    b = _linear01(blue, _dtype_max(arr))
-    g = _linear01(green, _dtype_max(arr))
+    b = linear01(blue, dtype_max(arr))
+    g = linear01(green, dtype_max(arr))
     r = np.zeros_like(g)
     return np.dstack([r, g, b])
 
@@ -145,7 +120,7 @@ def save_raw_and_normalized_tiffs_and_previews(
 
     tifffile.imwrite(out_dir / "image_raw.tif", arr)
 
-    a01 = _minmax01(arr)  # min-max per-array
+    a01 = minmax01(arr)  # min-max per-array
     a16 = np.round(a01 * 65535.0).astype(np.uint16) if a01.size else np.zeros_like(arr, dtype=np.uint16)
     tifffile.imwrite(out_dir / "image_norm16.tif", a16)
 
@@ -261,6 +236,7 @@ def export_2d(
 
 
 def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | None = None) -> Path:
+    """Export processed outputs to disk."""
     if out_base is None:
         out_base = results_img_dir()
 
@@ -273,6 +249,7 @@ def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | N
 
 
 def fmt(v: object) -> str:
+    """Helper function used by this module."""
     if v is None:
         return "-"
     s = str(v).strip()
@@ -280,6 +257,7 @@ def fmt(v: object) -> str:
 
 
 def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
+    """Write the requested report or metadata file."""
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_xml = getattr(meta, "raw_xml", None)
     if not (isinstance(raw_xml, str) and raw_xml.strip()):
@@ -292,6 +270,7 @@ def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
+    """Write the requested report or metadata file."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     vox = (

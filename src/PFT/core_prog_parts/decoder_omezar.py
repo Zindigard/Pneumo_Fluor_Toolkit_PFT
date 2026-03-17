@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Tuple, Optional, Sequence
 import numpy as np
-
+"Loads and interprets OME-Zarr image data"
 
 def infer_axes_from_ndim(ndim: int | None) -> str:
     """Fallback axes inference if multiscales axes are missing."""
@@ -216,6 +216,7 @@ def load_ome_zarr(
     return data, axes
 
 def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -> dict[str, object]:
+    """Helper function used by this module."""
     zarr_dir = Path(zarr_dir)
 
     try:
@@ -298,6 +299,7 @@ def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -
     pft_meta = root.attrs.get("pft_meta")
 
     def _pft_get(key: str):
+        """Internal helper used by this module."""
         if isinstance(pft_meta, dict):
             return pft_meta.get(key)
         return None
@@ -444,12 +446,14 @@ def load_ome_zarr_volume_csyx(
     prefer: tuple[str, str] = ("z", "t"),
     as_numpy: bool = True,
 ) -> tuple[np.ndarray, dict]:
+    """Load data and return the processed result."""
     arr, axes = load_ome_zarr(zarr_dir, level=level, as_numpy=False)
     axes = normalize_axes(axes)
     if axes == "unknown":
         raise ValueError(f"Axes could not be inferred for: {zarr_dir}")
 
     def _ax_size(letter: str) -> int:
+        """Internal helper used by this module."""
         if letter not in axes:
             return 1
         return int(getattr(arr, "shape")[axes.index(letter)])
@@ -635,6 +639,7 @@ def decode_omezarr_volume(
     return vol, meta_out
 
 def parse_psfgenerator_config(path: str | Path) -> dict[str, str]:
+    """Parse input text or metadata into a structured form."""
     path = Path(path)
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -647,10 +652,12 @@ def parse_psfgenerator_config(path: str | Path) -> dict[str, str]:
 
 
 def psfgenerator_required_keys() -> list[str]:
+    """Helper function used by this module."""
     return ["Lambda", "NA", "NX", "NY", "NZ", "ResAxial", "ResLateral", "Type"]
 
 
 def check_config_has_required(cfg: dict[str, str]) -> tuple[bool, list[str]]:
+    """Helper function used by this module."""
     req = psfgenerator_required_keys()
     missing = [k for k in req if k not in cfg]
     return (len(missing) == 0), missing

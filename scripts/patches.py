@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import os
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from PFT.core_prog_parts import visualization as viz
+from PFT.core_prog_parts.common_paths import ensure_dir
+from PFT.core_prog_parts.image_utils import normalize01_percentile, rgb_wga_dapi_norm, rgb_wga_dapi_raw_shared
 from matplotlib.widgets import RectangleSelector
 import tifffile as tiff
 
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 
 ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\training_files\2d_wga_dapi\training_data")
-OUTDIR = ROOT / "normvsnormalized_image"
-OUTDIR.mkdir(parents=True, exist_ok=True)
+OUTDIR = ensure_dir(ROOT / "normvsnormalized_image")
 
 DEFAULT_LEVEL = 0
 
@@ -74,16 +88,8 @@ def ensure_cyx_keep_dtype(arr: np.ndarray, axes: str) -> np.ndarray:
 
 
 def normalize_percentile_to_float01(img2d: np.ndarray, p_low: float = 1.0, p_high: float = 99.0) -> np.ndarray:
-    """
-    Returns float32 in [0,1] for visualization.
-    """
-    im = img2d.astype(np.float32, copy=False)
-    lo = float(np.percentile(im, p_low))
-    hi = float(np.percentile(im, p_high))
-    if hi <= lo:
-        return np.zeros_like(im, dtype=np.float32)
-    out = (im - lo) / (hi - lo)
-    return np.clip(out, 0.0, 1.0).astype(np.float32)
+    """Compatibility wrapper around the shared percentile normalization helper."""
+    return normalize01_percentile(img2d, p_lo=p_low, p_hi=p_high)
 
 
 def normalized_uint16_from_raw(img2d_uint16: np.ndarray, p_low: float = 1.0, p_high: float = 99.0) -> np.ndarray:
@@ -95,51 +101,31 @@ def normalized_uint16_from_raw(img2d_uint16: np.ndarray, p_low: float = 1.0, p_h
 
 
 def rgb_raw_uint8_c0blue_c1green(cyx: np.ndarray, vmax: float) -> np.ndarray:
-    """
-    RAW display composite:
-      - NO percentile normalization
-      - linear mapping: raw/vmax -> [0,1] -> uint8 [0,255]
-      - C0 -> Blue, C1 -> Green
-    """
-    C, H, W = cyx.shape
-    rgb = np.zeros((H, W, 3), dtype=np.uint8)
-
+    """Compatibility wrapper using the shared raw RGB composition helper."""
+    if cyx.ndim != 3:
+        raise ValueError(f"Expected (C,Y,X), got {cyx.shape}")
+    C = cyx.shape[0]
     if C >= 2:
-        b = np.clip(cyx[0].astype(np.float32) / vmax, 0.0, 1.0)
-        g = np.clip(cyx[1].astype(np.float32) / vmax, 0.0, 1.0)
-        rgb[..., 1] = (g * 255.0 + 0.5).astype(np.uint8)
-        rgb[..., 2] = (b * 255.0 + 0.5).astype(np.uint8)
-    elif C == 1:
-        x = np.clip(cyx[0].astype(np.float32) / vmax, 0.0, 1.0)
+        rgb = rgb_wga_dapi_raw_shared(cyx[0], cyx[1])
+        return np.clip(rgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    if C == 1:
+        x = np.clip(cyx[0].astype(np.float32) / max(float(vmax), 1e-12), 0.0, 1.0)
         u = (x * 255.0 + 0.5).astype(np.uint8)
-        rgb[..., 0] = u
-        rgb[..., 1] = u
-        rgb[..., 2] = u
-
-    return rgb
+        return np.dstack([u, u, u])
+    return np.zeros((cyx.shape[1], cyx.shape[2], 3), dtype=np.uint8)
 
 
 def rgb_norm_float_c0blue_c1green(cyx: np.ndarray) -> np.ndarray:
-    """
-    Normalized display composite (float [0,1]):
-      - percentile p1..p99 per channel
-      - C0 -> Blue, C1 -> Green
-    """
-    C, H, W = cyx.shape
-    rgb = np.zeros((H, W, 3), dtype=np.float32)
-
+    """Compatibility wrapper using the shared normalized RGB composition helper."""
+    if cyx.ndim != 3:
+        raise ValueError(f"Expected (C,Y,X), got {cyx.shape}")
+    C = cyx.shape[0]
     if C >= 2:
-        b = normalize_percentile_to_float01(cyx[0], 1, 99)
-        g = normalize_percentile_to_float01(cyx[1], 1, 99)
-        rgb[..., 1] = g
-        rgb[..., 2] = b
-    elif C == 1:
-        x = normalize_percentile_to_float01(cyx[0], 1, 99)
-        rgb[..., 0] = x
-        rgb[..., 1] = x
-        rgb[..., 2] = x
-
-    return rgb
+        return rgb_wga_dapi_norm(cyx[0], cyx[1])
+    if C == 1:
+        x = normalize01_percentile(cyx[0], p_lo=1, p_hi=99)
+        return np.dstack([x, x, x]).astype(np.float32)
+    return np.zeros((cyx.shape[1], cyx.shape[2], 3), dtype=np.float32)
 
 def extract_patches_grid(img2d: np.ndarray, patch: int, stride: int, max_patches: int) -> np.ndarray:
     H, W = img2d.shape
@@ -244,23 +230,7 @@ def print_stats_cyx(name: str, cyx: np.ndarray):
         print(f"  ch{ch} min/max: {cmin} / {cmax}")
 
 def save_comparison_figure(raw_rgb_uint8: np.ndarray, norm_rgb_float: np.ndarray, out_path: Path, title: str):
-    fig = plt.figure(figsize=(10, 5))
-
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax1.imshow(raw_rgb_uint8)
-    ax1.set_title("RAW display (linear -> uint8)")
-    ax1.axis("off")
-
-    ax2 = fig.add_subplot(1, 2, 2)
-    ax2.imshow(norm_rgb_float)
-    ax2.set_title("NORMALIZED display (p1-p99)")
-    ax2.axis("off")
-
-    fig.suptitle(title)
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="tiff", dpi=200)
-    plt.close(fig)
+    viz.save_comparison_figure_tiff(raw_rgb_uint8, norm_rgb_float, out_path, title)
 
 def main():
     print(f"Searching for OME-Zarr datasets under:\n  {ROOT}\n")

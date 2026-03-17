@@ -22,6 +22,9 @@ from PFT.core_prog_parts.dl2 import run_dl2_cli, write_imagej_tiff_stack
 
 PSFModel = Literal["BW", "GL", "RW"]
 
+"Applies deconvolution directly to OME-Zarr-based image data"
+
+
 DEFAULT_CHANNEL_WAVELENGTH_NM = {
     "TV1-T1-SR": 405.0,
     "TV1-T2-SR": 488.0,
@@ -71,6 +74,7 @@ def _psf_path_for(*, model: PSFModel, channel_name: str, wavelength_nm: float, l
 
 
 def _ensure_empty_dir(p: Path) -> None:
+    """Internal helper used by this module."""
     if p.exists():
         shutil.rmtree(p)
     p.mkdir(parents=True, exist_ok=True)
@@ -130,6 +134,7 @@ def _create_output_omezarr_single_scale_like_input(
 
 
 def _print_omezarr_meta(title: str, zarr_dir: Path, *, level: int) -> None:
+    """Internal helper used by this module."""
     meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
     print(f"\n[{title}] OME-Zarr meta")
     print(f"  path         : {zarr_dir}")
@@ -190,6 +195,7 @@ def deconvolve_omezarr_3ch_to_omezarr(
     overwrite: bool = True,
 ) -> DeconvRunInfo:
    
+    """Helper function used by this module."""
     in_omezarr = Path(in_omezarr)
     out_root = Path(out_root)
     channel_wavelength_nm = channel_wavelength_nm or dict(DEFAULT_CHANNEL_WAVELENGTH_NM)

@@ -71,6 +71,7 @@ class CziMeta:
 
 
 def list_czi_files(folder: str | Path) -> list[Path]:
+    """List available inputs for this workflow."""
     folder = Path(folder)
     files = sorted(folder.glob("*.czi"))
     if not files:
@@ -110,6 +111,7 @@ def read_czi_xml(path: str | Path) -> str | None:
 
 
 def _parse_float(text: str | None) -> float | None:
+    """Internal helper used by this module."""
     if text is None:
         return None
     try:
@@ -119,6 +121,7 @@ def _parse_float(text: str | None) -> float | None:
 
 
 def _find_text(root: ET.Element | None, xpath: str) -> str | None:
+    """Internal helper used by this module."""
     if root is None:
         return None
     el = root.find(xpath)
@@ -138,6 +141,7 @@ def _parse_scaling_um(xml_text: str) -> tuple[float | None, float | None, float 
         return None, None, None
 
     def get_um(axis: str) -> float | None:
+        """Helper function used by this module."""
         el = root.find(f".//Scaling/Items/Distance[@Id='{axis}']/Value")
         if el is None:
             el = root.find(f".//Scaling//Distance[@Id='{axis}']/Value")
@@ -195,6 +199,7 @@ def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, lis
     names: list[str] = []
 
     def to_nm(v: float | None) -> float | None:
+        """Helper function used by this module."""
         if v is None:
             return None
         return v * 1e9 if v < 1e-3 else v

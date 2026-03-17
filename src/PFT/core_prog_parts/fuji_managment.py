@@ -49,6 +49,7 @@ def find_project_root(start: Path) -> Path:
 
 
 def get_cache_dir(project_root: Path) -> Path:
+    """Helper function used by this module."""
     return project_root / ".cache" / "fiji"
 
 
@@ -68,6 +69,7 @@ def find_fiji_dir(cache: Path) -> Path:
     ]
 
     def is_fiji_dir(p: Path) -> bool:
+        """Helper function used by this module."""
         if not (p / "jars").is_dir():
             return False
         return any((p / name).exists() for name in launcher_names)
@@ -93,6 +95,7 @@ def find_fiji_dir(cache: Path) -> Path:
 
 
 def ensure_fiji_installed(cache_dir: Path) -> Path:
+    """Ensure that the required resource exists."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     zip_path = cache_dir / "fiji.zip"
 
@@ -135,6 +138,7 @@ def ensure_fiji_in_project(project_root: Path, quiet: bool = True) -> Path:
 
 
 def psf_generator_exists(fiji_dir: Path) -> Path | None:
+    """Helper function used by this module."""
     jar_path = fiji_dir / "plugins" / PSFGEN_JAR_NAME
     if jar_path.exists() and jar_path.stat().st_size > 0:
         return jar_path
@@ -198,6 +202,7 @@ def ensure_psf_generator_exists(
 
 # --- NEW: DL2 plugin ensure ---
 def deconvolutionlab2_exists(fiji_dir: Path) -> Path | None:
+    """Helper function used by this module."""
     jar_path = fiji_dir / "plugins" / DL2_JAR_NAME
     if jar_path.exists() and jar_path.stat().st_size > 0:
         return jar_path
@@ -269,6 +274,7 @@ def configure_java_from_conda() -> None:
 
 
 def main() -> int:
+    """Helper function used by this module."""
     configure_java_from_conda()
 
     here = Path(__file__).resolve()

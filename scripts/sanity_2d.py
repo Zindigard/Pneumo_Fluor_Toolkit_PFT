@@ -1,8 +1,22 @@
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import random
 from pathlib import Path
 import numpy as np
-import matplotlib.pyplot as plt
+from PFT.core_prog_parts import visualization as viz
+from PFT.core_prog_parts.image_utils import normalize01_percentile, rgb_wga_dapi_norm
 import zarr
 
 """ Sanity check for 2-channel OME-Zarr """
@@ -13,16 +27,8 @@ OMEZARR_PATH = Path(
 
 
 def percentile_norm01(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
-    x = np.asarray(x)
-    if x.size == 0:
-        return x.astype(np.float32, copy=False)
-    lo, hi = np.percentile(x, [p_low, p_high])
-    x = x.astype(np.float32, copy=False)
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        m = float(np.max(x)) if x.size else 0.0
-        return (x / m) if m > 0 else np.zeros_like(x, dtype=np.float32)
-    x = (x - lo) / (hi - lo)
-    return np.clip(x, 0.0, 1.0)
+    """Compatibility wrapper around the shared percentile normalization helper."""
+    return normalize01_percentile(x, p_lo=p_low, p_hi=p_high)
 
 
 def load_highest_res_array(zarr_path: Path) -> np.ndarray:
@@ -114,30 +120,14 @@ def main() -> None:
     c0n = percentile_norm01(c0)
     c1n = percentile_norm01(c1)
 
-    rgb = np.zeros((*c0n.shape, 3), dtype=np.float32)
-    rgb[..., 2] = c0n  # Blue
-    rgb[..., 1] = c1n  # Green
+    rgb = rgb_wga_dapi_norm(c0, c1)
 
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = fig.add_subplot(1, 3, 1)
-    ax2 = fig.add_subplot(1, 3, 2)
-    ax3 = fig.add_subplot(1, 3, 3)
-
-    ax1.imshow(c0n, cmap="gray")
-    ax1.set_title("Channel 0 (grayscale)")
-    ax1.axis("off")
-
-    ax2.imshow(c1n, cmap="gray")
-    ax2.set_title("Channel 1 (grayscale)")
-    ax2.axis("off")
-
-    ax3.imshow(rgb)
-    ax3.set_title("Overlay: ch0=Blue, ch1=Green")
-    ax3.axis("off")
-
-    fig.suptitle(f"{OMEZARR_PATH.name} | raw shape={arr.shape} | shown slice shape={a3.shape}", fontsize=10)
-    plt.tight_layout()
-    plt.show()
+    viz.show_two_channel_overlay(
+        c0n,
+        c1n,
+        rgb,
+        f"{OMEZARR_PATH.name} | raw shape={arr.shape} | shown slice shape={a3.shape}",
+    )
 
 
 if __name__ == "__main__":

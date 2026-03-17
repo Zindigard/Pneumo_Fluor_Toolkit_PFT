@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
-import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
 
@@ -15,11 +14,17 @@ from PFT.core_prog_parts.notch_filter import list_omezarr_images, _ensure_cyx, _
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 from PFT.core_prog_parts.free_hand_filter import results_filters_dir
 from PFT.core_prog_parts.BM3D import BM3DParams, apply_bm3d_to_image
+from PFT.core_prog_parts import visualization as viz
+from PFT.core_prog_parts.image_utils import extract_display_plane as _extract_display_plane
+from PFT.core_prog_parts.image_utils import normalize01_percentile as norm01_percentile, to_uint8_percentile
+from PFT.core_prog_parts.common_paths import filtered_img_root
 
 try:
     from scipy.ndimage import uniform_filter
 except Exception:
     uniform_filter = None
+
+"Implements a local-high thresholding filter with neighborhood support criteria, applied to OME-Zarr images, with comprehensive metrics and visualizations for analysis."
 
 EPS = 1e-12
 
@@ -45,33 +50,15 @@ ALLOWED_120MIN_EXCEPTIONS = {"WT_HADA_NHS_120min_ROI3_SIM"}
 
 
 def _is_120min_stem(stem: str) -> bool:
+    """Internal helper used by this module."""
     return ("120min" in stem) and (stem not in ALLOWED_120MIN_EXCEPTIONS)
 
 
-def norm01_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> np.ndarray:
-    x = np.asarray(x, dtype=np.float32)
-    lo = float(np.percentile(x, p_lo))
-    hi = float(np.percentile(x, p_hi))
-    if hi <= lo:
-        return np.zeros_like(x, dtype=np.float32)
-    return np.clip((x - lo) / (hi - lo + EPS), 0.0, 1.0).astype(np.float32)
 
-
-def to_uint8_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.5) -> np.ndarray:
-    return np.clip(255.0 * norm01_percentile(x, p_lo=p_lo, p_hi=p_hi), 0, 255).astype(np.uint8)
-
-
-def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.ndarray:
-    if "c" in axes:
-        plane = np.take(x, indices=channel_index, axis=axes.index("c"))
-    else:
-        plane = x
-    if "t" in axes and plane.ndim == 3:
-        plane = plane[0]
-    return np.asarray(plane, dtype=np.float32)
 
 
 def _make_rgb_norm(dataset: str, x: np.ndarray, axes: str) -> np.ndarray:
+    """Internal helper used by this module."""
     if "c" in axes:
         c_i = axes.index("c")
         blue = np.take(x, indices=0, axis=c_i)
@@ -96,6 +83,7 @@ def _make_rgb_norm(dataset: str, x: np.ndarray, axes: str) -> np.ndarray:
 
 
 def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
+    """Internal helper used by this module."""
     B = norm01_percentile(blue)
     G = norm01_percentile(green) if green is not None else np.zeros_like(B)
     R = np.zeros_like(B)
@@ -103,6 +91,7 @@ def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.nd
 
 
 def _scale_shared_raw(orig: np.ndarray, filt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Internal helper used by this module."""
     lo = float(min(np.min(orig), np.min(filt)))
     hi = float(max(np.max(orig), np.max(filt)))
     if hi <= lo:
@@ -114,6 +103,7 @@ def _scale_shared_raw(orig: np.ndarray, filt: np.ndarray) -> tuple[np.ndarray, n
 
 
 def _to_rgb_from_blue_green_raw_shared(blue_orig, green_orig, blue_filt, green_filt):
+    """Internal helper used by this module."""
     b1, b2 = _scale_shared_raw(np.asarray(blue_orig, dtype=np.float32), np.asarray(blue_filt, dtype=np.float32))
     if green_orig is not None and green_filt is not None:
         g1, g2 = _scale_shared_raw(np.asarray(green_orig, dtype=np.float32), np.asarray(green_filt, dtype=np.float32))
@@ -124,50 +114,25 @@ def _to_rgb_from_blue_green_raw_shared(blue_orig, green_orig, blue_filt, green_f
 
 
 def _make_crimson_cmap():
-    from matplotlib.colors import LinearSegmentedColormap
-    return LinearSegmentedColormap.from_list(
-        "black_to_crimson",
-        [
-            (0.0, (0.0, 0.0, 0.0)),
-            (0.10, (0.08, 0.0, 0.0)),
-            (0.35, (0.30, 0.0, 0.04)),
-            (0.65, (0.62, 0.02, 0.10)),
-            (1.0, (0.86, 0.08, 0.24)),
-        ],
-    )
+    """Internal helper used by this module."""
+    return viz.make_crimson_cmap()
 
 
 def _plot_rgb_comparison(orig_rgb, filt_rgb, title: str, out_png: Path, *, variant_label: str):
-    diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
-    diff_map = np.mean(diff, axis=-1)
-    scale = float(np.percentile(diff_map, 99.7)) + EPS
-    diff_norm = np.clip(diff_map / scale, 0.0, 1.0)
-
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = fig.add_subplot(1, 3, 1)
-    ax2 = fig.add_subplot(1, 3, 2)
-    ax3 = fig.add_subplot(1, 3, 3)
-
-    ax1.imshow(orig_rgb)
-    ax1.set_title(f"Original ({variant_label})")
-    ax1.axis("off")
-
-    ax2.imshow(filt_rgb)
-    ax2.set_title(f"Thresholded ({variant_label})")
-    ax2.axis("off")
-
-    ax3.imshow(diff_norm, cmap=_make_crimson_cmap(), vmin=0, vmax=1)
-    ax3.set_title("|Δ| (black=min, crimson=max)")
-    ax3.axis("off")
-
-    fig.suptitle(title)
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.patch.set_facecolor("black")
-    fig.savefig(out_png, dpi=200, bbox_inches="tight", facecolor="black")
-    plt.close(fig)
+    """Internal helper used by this module."""
+    viz.plot_rgb_comparison(
+        orig_rgb,
+        filt_rgb,
+        title,
+        out_png,
+        original_label=f"Original ({variant_label})",
+        filtered_label=f"Thresholded ({variant_label})",
+        facecolor="black",
+    )
 
 
 def _save_both_comparisons(blue_before, green_before, blue_after, green_after, title: str, out_dir: Path):
+    """Internal helper used by this module."""
     raw_orig_rgb, raw_filt_rgb = _to_rgb_from_blue_green_raw_shared(
         blue_before, green_before, blue_after, green_after
     )
@@ -188,6 +153,7 @@ def _save_both_comparisons(blue_before, green_before, blue_after, green_after, t
 
 
 def _mean_filter(mask: np.ndarray, size: int) -> np.ndarray:
+    """Internal helper used by this module."""
     x = np.asarray(mask, dtype=np.float32)
     if uniform_filter is not None:
         return uniform_filter(x, size=size, mode="constant", cval=0.0)
@@ -213,6 +179,7 @@ class LocalHighThresholdSpec:
 
     @property
     def label(self) -> str:
+        """Helper function used by this module."""
         return (
             f"p{self.high_percentile:.1f}_k3f{int(round(self.frac3_keep*100))}"
             f"_s3{int(round(self.support3_frac*100))}_k10f{int(round(self.frac10_keep*100))}"
@@ -220,6 +187,7 @@ class LocalHighThresholdSpec:
 
     @property
     def human_title(self) -> str:
+        """Helper function used by this module."""
         return (
             f"local-high threshold "
             f"(high>p{self.high_percentile:.1f}, 3x3>={self.frac3_keep:.2f}, "
@@ -228,6 +196,7 @@ class LocalHighThresholdSpec:
 
 
 def apply_local_high_threshold_single(raw_img: np.ndarray, spec: LocalHighThresholdSpec):
+    """Apply the requested processing operation."""
     x = np.asarray(raw_img, dtype=np.float32)
     thr = float(np.percentile(x, spec.high_percentile))
     high_mask = x >= thr
@@ -254,6 +223,7 @@ def apply_local_high_threshold_single(raw_img: np.ndarray, spec: LocalHighThresh
 
 
 def compute_basic_stats(img: np.ndarray) -> dict:
+    """Compute and return the requested measurement."""
     x = np.asarray(img, dtype=np.float32)
     nz = x[x > 0]
     return {
@@ -266,6 +236,7 @@ def compute_basic_stats(img: np.ndarray) -> dict:
 
 
 def _load_planes(zarr_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | None]:
+    """Internal helper used by this module."""
     arr, axes = load_ome_zarr(zarr_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -275,23 +246,27 @@ def _load_planes(zarr_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray 
 
 
 def list_source_images(dataset: str) -> list[Path]:
+    """List available inputs for this workflow."""
     zarrs = list_omezarr_images(dataset)
     return [p for p in zarrs if not _is_120min_stem(p.parent.name)]
 
 
 def list_curated_test_images(dataset: str, zarrs: list[Path]) -> list[Path]:
+    """List available inputs for this workflow."""
     want = [s for s in CURATED_TEST_STEMS.get(dataset, []) if not _is_120min_stem(s)]
     by_stem = {p.parent.name: p for p in zarrs}
     return [by_stem[s] for s in want if s in by_stem]
 
 
 def missing_curated_test_stems(dataset: str, zarrs: list[Path]) -> list[str]:
+    """Helper function used by this module."""
     want = [s for s in CURATED_TEST_STEMS.get(dataset, []) if not _is_120min_stem(s)]
     all_stems = {p.parent.name for p in zarrs}
     return [s for s in want if s not in all_stems]
 
 
 def _path_to_index(zarrs: list[Path], target: Path) -> int:
+    """Internal helper used by this module."""
     for i, p in enumerate(zarrs):
         if p == target:
             return i
@@ -299,6 +274,7 @@ def _path_to_index(zarrs: list[Path], target: Path) -> int:
 
 
 def _pick_filter_channels(dataset: str, axes: str, x: np.ndarray) -> list[int]:
+    """Internal helper used by this module."""
     if "c" not in axes:
         return [0]
     if dataset == "2d_time":
@@ -307,6 +283,7 @@ def _pick_filter_channels(dataset: str, axes: str, x: np.ndarray) -> list[int]:
 
 
 def _write_metrics(path: Path, dataset: str, stem: str, spec: LocalHighThresholdSpec, before: dict, after: dict, extra: dict, bm3d_applied: bool):
+    """Internal helper used by this module."""
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"dataset: {dataset}\n")
         f.write(f"image: {stem}\n")
@@ -328,18 +305,20 @@ def _write_metrics(path: Path, dataset: str, stem: str, spec: LocalHighThreshold
 
 
 def _save_mask_preview(mask: np.ndarray, out_png: Path, title: str):
-    fig, ax = plt.subplots(figsize=(6, 6), facecolor="black")
+    """Internal helper used by this module."""
+    fig, ax = viz.plt.subplots(figsize=(6, 6), facecolor="black")
     ax.set_facecolor("black")
     ax.imshow(mask, cmap="gray", vmin=0, vmax=1)
     ax.set_title(title, color="white")
     ax.axis("off")
     fig.tight_layout()
     fig.savefig(out_png, dpi=200, bbox_inches="tight", facecolor="black")
-    plt.close(fig)
+    viz.plt.close(fig)
 
 
 def _save_single_channel_panel(before: np.ndarray, after: np.ndarray, mask: np.ndarray, out_png: Path, stem: str, channel_name: str):
-    fig = plt.figure(figsize=(12, 4))
+    """Internal helper used by this module."""
+    fig = viz.plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 3, 1)
     ax2 = fig.add_subplot(1, 3, 2)
     ax3 = fig.add_subplot(1, 3, 3)
@@ -360,11 +339,13 @@ def _save_single_channel_panel(before: np.ndarray, after: np.ndarray, mask: np.n
     fig.suptitle(f"{stem} / {channel_name}")
     fig.patch.set_facecolor("black")
     fig.savefig(out_png, dpi=200, bbox_inches="tight", facecolor="black")
-    plt.close(fig)
+    viz.plt.close(fig)
 
 
 def _choose_bm3d_params_interactive() -> BM3DParams:
+    """Internal helper used by this module."""
     def _pf(prompt: str, default: float) -> float:
+        """Internal helper used by this module."""
         s = input(prompt).strip()
         return default if not s else float(s)
 
@@ -384,6 +365,7 @@ def _choose_bm3d_params_interactive() -> BM3DParams:
 
 
 def _process_one_image(dataset: str, idx: int, zarrs: list[Path], spec: LocalHighThresholdSpec, *, apply_bm3d_after: bool, bm3d_params: BM3DParams | None) -> tuple[Path, dict, dict]:
+    """Internal helper used by this module."""
     in_path = zarrs[idx]
     stem = in_path.parent.name
     arr, axes = load_ome_zarr(in_path, level=0, as_numpy=False)
@@ -476,6 +458,7 @@ def _process_one_image(dataset: str, idx: int, zarrs: list[Path], spec: LocalHig
 
 
 def _write_batch_summary_txt(path: Path, rows: list[dict], dataset: str, spec: LocalHighThresholdSpec, *, apply_bm3d_after: bool) -> None:
+    """Internal helper used by this module."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"dataset: {dataset}\nfilter: {spec.human_title}\nbm3d_after_threshold: {apply_bm3d_after}\nskip_120min: True\n\n")
@@ -489,6 +472,7 @@ def _write_batch_summary_txt(path: Path, rows: list[dict], dataset: str, spec: L
 
 
 def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list[Path], spec: LocalHighThresholdSpec, *, apply_bm3d_after: bool, bm3d_params: BM3DParams | None) -> Path:
+    """Internal helper used by this module."""
     rows: list[dict] = []
     for p in curated_paths:
         idx = _path_to_index(zarrs, p)
@@ -506,6 +490,7 @@ def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list
 
 
 def _choose_dataset_interactive() -> str:
+    """Internal helper used by this module."""
     print("Choose dataset:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
@@ -519,6 +504,7 @@ def _choose_dataset_interactive() -> str:
 
 
 def _choose_mode_interactive() -> str:
+    """Internal helper used by this module."""
     print("Choose mode:")
     print("  1) One image")
     print("  2) Curated subset")
@@ -531,6 +517,7 @@ def _choose_mode_interactive() -> str:
 
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
+    """Internal helper used by this module."""
     suffix = "[Y/n]" if default else "[y/N]"
     s = input(f"{prompt} {suffix} ").strip().lower()
     if not s:
@@ -539,6 +526,7 @@ def _prompt_yes_no(prompt: str, default: bool) -> bool:
 
 
 def _prompt_float(prompt: str, default: float) -> float:
+    """Internal helper used by this module."""
     s = input(prompt).strip()
     if not s:
         return default
@@ -546,6 +534,7 @@ def _prompt_float(prompt: str, default: float) -> float:
 
 
 def _choose_index_interactive(paths: list[Path]) -> int:
+    """Internal helper used by this module."""
     for i, p in enumerate(paths):
         print(f"  [{i:02d}] {p.parent.name}")
     while True:
@@ -560,6 +549,7 @@ def _choose_index_interactive(paths: list[Path]) -> int:
 
 
 def main():
+    """Helper function used by this module."""
     ap = argparse.ArgumentParser(description="Local high-intensity thresholding, always skipping 120min images, with optional BM3D after threshold.")
     ap.add_argument("--dataset", choices=["2d_time", "2d_wga_dapi"], required=False)
     ap.add_argument("--mode", choices=["one", "curated", "all"], required=False)

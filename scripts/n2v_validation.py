@@ -1,4 +1,17 @@
 from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+_THIS_FILE = Path(__file__).resolve()
+for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
+    if (_p / "src" / "PFT").exists():
+        _SRC_DIR = _p / "src"
+        if str(_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_SRC_DIR))
+        break
+
+from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,9 +19,12 @@ from typing import Optional, Tuple, List
 import numpy as np
 import matplotlib  
 from n2v.models import N2V
+from PFT.core_prog_parts.common_paths import ensure_dir
 from PFT.core_prog_parts.decoder_omezar import ome_zarr_to_n2v_2d_stack
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
+
+"checks and visualizes the quality of Noise2Void denoising results."
 _PLT = None
 _RectangleSelector = None
 
@@ -31,11 +47,9 @@ def get_plt(gui: bool):
 
 
 def project_root_from_this_file() -> Path:
-    return Path(__file__).resolve().parents[1]
+    """Return the project root using the shared path helper."""
+    return find_repo_root(_THIS_FILE)
 
-
-def ensure_dir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
 
 
 def is_omezarr_store(p: Path) -> bool:
