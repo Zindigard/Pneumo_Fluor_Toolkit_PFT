@@ -5,7 +5,6 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-
 import numpy as np
 import tifffile
 
