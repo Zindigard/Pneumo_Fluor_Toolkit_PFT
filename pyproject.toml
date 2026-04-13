@@ -94,6 +94,13 @@ cellpose = [
   "cellpose",
 ]
 
+segmentation = [
+  "cellpose",
+  "stardist",
+  "csbdeep",
+  "scikit-image>=0.22",
+]
+
 dev = [
   "pytest",
   "ruff",
