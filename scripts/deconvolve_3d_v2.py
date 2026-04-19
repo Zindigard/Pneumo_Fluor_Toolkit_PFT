@@ -2,18 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-
-_THIS_FILE = Path(__file__).resolve()
-for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
-    if (_p / "src" / "PFT").exists():
-        _SRC_DIR = _p / "src"
-        if str(_SRC_DIR) not in sys.path:
-            sys.path.insert(0, str(_SRC_DIR))
-        break
-
 import argparse
 import zarr
-
 from PFT.core_prog_parts.common_paths import find_project_root, ensure_dir
 from PFT.core_prog_parts.deconvolution_no_fuji import (
     deconvolve_omezarr_3ch_to_omezarr_skimage,
@@ -22,7 +12,6 @@ from PFT.core_prog_parts.deconvolution_no_fuji import (
 
 """
 Interactive runner for scikit-image Richardson-Lucy deconvolution on 3D OME-Zarr.
-Uses common project path helpers so it works on different computers.
 """
 
 
