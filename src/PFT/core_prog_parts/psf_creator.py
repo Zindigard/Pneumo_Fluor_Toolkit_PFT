@@ -48,7 +48,7 @@ def _prompt_level(levels: list[int], default: int = 2) -> int:
 
 
 def _find_java_exe(fiji_dir: Path) -> Path:
-    """Internal helper used by this module."""
+    """Find Java bundled with Fiji or available on the system."""
     candidates = [
         fiji_dir / "java" / "win64" / "bin" / "java.exe",
         fiji_dir / "java" / "bin" / "java.exe",
@@ -57,6 +57,11 @@ def _find_java_exe(fiji_dir: Path) -> Path:
     for c in candidates:
         if c.exists():
             return c
+
+  
+    nested = list((fiji_dir / "java" / "win64").glob("*/bin/java.exe"))
+    if nested:
+        return nested[0]
 
     java_home = os.environ.get("JAVA_HOME")
     if java_home:
