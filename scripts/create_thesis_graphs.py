@@ -6,20 +6,9 @@ import numpy as np
 import pandas as pd
 
 
-# ============================================================
-# Project-root detection
-# ============================================================
-
 def find_project_root(start_path: Path | None = None) -> Path:
     """
     Find project root independently of computer-specific path.
-
-    Expected structure:
-
-        Pneumo_Fluor_Toolkit_PFT/
-            models/
-            scripts/
-            results/
     """
     if start_path is None:
         start_path = Path(__file__).resolve()
@@ -41,9 +30,6 @@ COMBINED_PDF_PATH = GRAPH_OUTPUT_DIR / "all_thesis_graphs_combined.pdf"
 DARK_BLUE = "#0B2C6B"
 
 
-# ============================================================
-# Thesis style
-# ============================================================
 
 def setup_thesis_style() -> None:
     plt.rcParams.update({
@@ -61,14 +47,8 @@ def setup_thesis_style() -> None:
     })
 
 
-# ============================================================
-# Saving
-# ============================================================
-
 def save_figure(fig, output_dir: Path, filename_stem: str) -> None:
-    """
-    Save each graph as individual PNG and PDF.
-    """
+ 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     png_path = output_dir / f"{filename_stem}.png"
@@ -87,18 +67,13 @@ def save_figure_and_collect(
     filename_stem: str,
     figure_collection: list,
 ) -> None:
-    """
-    Save one figure individually and also keep it for combined PDF export.
-    """
+    
     save_figure(fig, output_dir, filename_stem)
     figure_collection.append(fig)
 
 
 def save_combined_pdf(figures: list, output_pdf_path: Path) -> None:
-    """
-    Save all created figures into one combined multi-page PDF.
-    Individual PNG/PDF graph files are kept.
-    """
+  
     output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not figures:
@@ -111,10 +86,6 @@ def save_combined_pdf(figures: list, output_pdf_path: Path) -> None:
 
     print(f"Saved combined PDF: {output_pdf_path}")
 
-
-# ============================================================
-# CSV loading
-# ============================================================
 
 def require_csv(csv_path: Path) -> None:
     """
@@ -136,10 +107,6 @@ def load_csv(csv_filename: str) -> pd.DataFrame:
     return pd.read_csv(csv_path)
 
 
-# ============================================================
-# Shared visual helpers
-# ============================================================
-
 def scatter_small_dots(
     ax,
     x_position: float,
@@ -148,11 +115,7 @@ def scatter_small_dots(
     jitter_width: float = 0.060,
     dot_size: float = 7,
 ) -> np.ndarray:
-    """
-    Draw small dark-blue dots around one x-position.
-
-    Dots are horizontally spread so individual samples are easier to see.
-    """
+ 
     values = np.asarray(values, dtype=float)
 
     x = np.full(len(values), x_position, dtype=float)
@@ -180,9 +143,7 @@ def scatter_small_dots_with_errorbars(
     jitter_width: float = 0.060,
     dot_size: float = 7,
 ) -> np.ndarray:
-    """
-    Draw small dark-blue dots with per-sample error bars.
-    """
+  
     values = np.asarray(values, dtype=float)
     errors = np.asarray(errors, dtype=float)
 
@@ -218,7 +179,6 @@ def draw_single_boxplot_light(
     """
     Draw one boxplot with thin, light whiskers and caps.
 
-    Mean diamond is intentionally not shown.
     """
     values = np.asarray(values, dtype=float)
 
@@ -257,10 +217,6 @@ def draw_single_boxplot_light(
         patch.set_alpha(patch_alpha)
 
 
-# ============================================================
-# Generic two-group SNR boxplot
-# ============================================================
-
 def draw_two_group_boxplot(
     ax,
     before_values: np.ndarray,
@@ -275,14 +231,8 @@ def draw_two_group_boxplot(
     dot_size: float = 7,
 ) -> None:
     """
-    Thesis-style two-column boxplot.
+    Two-column boxplot.
 
-    Used for:
-    - 2D WGA + DAPI SNR
-    - 3D SNR
-
-    Mean diamond is removed.
-    Whiskers/caps are kept but thin and light.
     """
     before_values = np.asarray(before_values, dtype=float)
     after_values = np.asarray(after_values, dtype=float)
@@ -376,10 +326,6 @@ def draw_two_group_boxplot(
         ax.set_ylim(*ylim)
 
 
-# ============================================================
-# 2D timelapse grouped/overlaid graph
-# ============================================================
-
 def plot_2d_1channel_grouped_before_after_from_csv(
     csv_filename: str,
     title: str,
@@ -391,17 +337,6 @@ def plot_2d_1channel_grouped_before_after_from_csv(
     """
     2D timelapse / single-channel SNR graph.
 
-    Main visual structure:
-
-        Before denoising        After denoising
-             x = 1                   x = 2
-
-    Internally:
-        BEFORE x-position contains 2 overlaid subgroup boxplots.
-        AFTER x-position contains 3 overlaid subgroup boxplots.
-
-    Mean diamond is removed.
-    Whiskers/caps are kept but thin and light.
     """
     df = load_csv(csv_filename)
 
@@ -499,10 +434,6 @@ def plot_2d_1channel_grouped_before_after_from_csv(
     before_errors_all = df["snr_before_std"].to_numpy(dtype=float)
     after_errors_all = df["snr_after_std"].to_numpy(dtype=float)
 
-    # ------------------------------------------------------------
-    # BEFORE dots
-    # ------------------------------------------------------------
-
     x_before = before_x + rng.uniform(-0.13, 0.13, len(df))
 
     if show_sample_errorbars:
@@ -530,9 +461,6 @@ def plot_2d_1channel_grouped_before_after_from_csv(
             zorder=3,
         )
 
-    # ------------------------------------------------------------
-    # AFTER dots
-    # ------------------------------------------------------------
 
     x_after = after_x + rng.uniform(-0.14, 0.14, len(df))
 
@@ -570,9 +498,6 @@ def plot_2d_1channel_grouped_before_after_from_csv(
         after_x_by_sample[sample_index] = float(x_after[row_i])
         after_y_by_sample[sample_index] = float(row["snr_after"])
 
-    # ------------------------------------------------------------
-    # Optional paired lines
-    # ------------------------------------------------------------
 
     if connect_points:
         for sample_index in before_x_by_sample:
@@ -607,10 +532,6 @@ def plot_2d_1channel_grouped_before_after_from_csv(
     plt.show()
 
 
-# ============================================================
-# Generic SNR boxplot from CSV
-# ============================================================
-
 def plot_snr_boxplot_from_csv(
     csv_filename: str,
     title: str,
@@ -624,14 +545,8 @@ def plot_snr_boxplot_from_csv(
     """
     Generic SNR boxplot.
 
-    Reads existing CSV files only.
-
     Required CSV columns:
-        sample_index
-        snr_before
-        snr_after
-        snr_before_std
-        snr_after_std
+
     """
     df = load_csv(csv_filename)
 
@@ -670,10 +585,6 @@ def plot_snr_boxplot_from_csv(
     plt.show()
 
 
-# ============================================================
-# IoU boxplot from CSV
-# ============================================================
-
 def plot_iou_boxplot_from_csv(
     csv_filename: str,
     title: str,
@@ -685,9 +596,6 @@ def plot_iou_boxplot_from_csv(
     """
     IoU distribution graph.
 
-    Mean diamond is removed.
-    Whiskers/caps are kept but thin and light.
-    Optional per-sample error bars can be shown.
     """
     df = load_csv(csv_filename)
 
@@ -752,9 +660,6 @@ def plot_iou_boxplot_from_csv(
     plt.show()
 
 
-# ============================================================
-# Cellpose fine-tuning line graph
-# ============================================================
 
 def plot_cellpose_finetuning_from_csv(
     csv_filename: str,
@@ -766,9 +671,6 @@ def plot_cellpose_finetuning_from_csv(
     Cellpose fine-tuning remains an epoch-based line graph.
 
     Required CSV columns:
-        epoch
-        iou
-        iou_std
     """
     df = load_csv(csv_filename)
 
@@ -811,10 +713,6 @@ def plot_cellpose_finetuning_from_csv(
     plt.show()
 
 
-# ============================================================
-# Main runner
-# ============================================================
-
 def main() -> None:
     setup_thesis_style()
 
@@ -825,13 +723,7 @@ def main() -> None:
     print(f"Saving individual graphs to: {GRAPH_OUTPUT_DIR}")
     print(f"Saving combined PDF to: {COMBINED_PDF_PATH}")
 
-    # ------------------------------------------------------------
-    # 1. 2D timelapse / 1-channel SNR
-    # Three versions:
-    #   a) no connection, no sample error bars
-    #   b) no connection, with sample error bars
-    #   c) paired connection, no sample error bars
-    # ------------------------------------------------------------
+
 
     plot_2d_1channel_grouped_before_after_from_csv(
         csv_filename="graph1_2d_1channel_snr_current.csv",
@@ -860,9 +752,6 @@ def main() -> None:
         show_sample_errorbars=False,
     )
 
-    # ------------------------------------------------------------
-    # 2. 2D WGA + DAPI SNR
-    # ------------------------------------------------------------
 
     plot_snr_boxplot_from_csv(
         csv_filename="graph2_2d_wga_dapi_snr_current.csv",
@@ -897,10 +786,6 @@ def main() -> None:
         dot_size=6,
     )
 
-    # ------------------------------------------------------------
-    # 3. 3D dataset SNR
-    # ------------------------------------------------------------
-
     plot_snr_boxplot_from_csv(
         csv_filename="graph3_3d_snr_current.csv",
         title="3D dataset SNR improvement across volume",
@@ -934,13 +819,6 @@ def main() -> None:
         dot_size=7,
     )
 
-    # ------------------------------------------------------------
-    # 4. Segmentation performance
-    # Two versions:
-    #   a) no sample error bars
-    #   b) with sample error bars
-    # ------------------------------------------------------------
-
     plot_iou_boxplot_from_csv(
         csv_filename="graph2b_2d_wga_dapi_iou_current.csv",
         title="2D WGA DAPI segmentation",
@@ -959,9 +837,6 @@ def main() -> None:
         ylim=(0.48, 0.88),
     )
 
-    # ------------------------------------------------------------
-    # 5. Cellpose fine-tuning IoU
-    # ------------------------------------------------------------
 
     plot_cellpose_finetuning_from_csv(
         csv_filename="graph4_cellpose_finetuning_iou_current.csv",
@@ -970,9 +845,6 @@ def main() -> None:
         figure_collection=created_figures,
     )
 
-    # ------------------------------------------------------------
-    # Final combined PDF
-    # ------------------------------------------------------------
 
     save_combined_pdf(
         figures=created_figures,
