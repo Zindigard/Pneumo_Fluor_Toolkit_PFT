@@ -67,6 +67,8 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [project.optional-dependencies]
+# Basic image I/O and scientific stack used by OME-Zarr, TIFF, previews,
+# filtering, deconvolution, and segmentation output saving.
 io = [
   "czifile",
   "imageio>=2.31",
@@ -78,10 +80,27 @@ io = [
   "numcodecs",
   "dask",
   "pandas",
+  "opencv-python",
 ]
 
+# U-Net training/running:
+# - 2d_time
+# - 2d_wga_dapi
+# - 3d 2.5D U-Net
+unet = [
+  "tensorflow>=2.13",
+  "matplotlib",
+  "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
+  "opencv-python",
+]
+
+# Existing N2V / CSBDeep stack.
 ml = [
-  "tensorflow",
+  "tensorflow>=2.13",
   "csbdeep",
   "n2v",
 ]
@@ -90,15 +109,100 @@ napari = [
   "napari[all]>=0.6",
 ]
 
+# Cellpose fine-tuning/running:
+# - 2d_time
+# - 2d_wga_dapi
+# - 3d slice-wise
 cellpose = [
   "cellpose",
+  "torch",
+  "opencv-python",
+  "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
 ]
 
-segmentation = [
-  "cellpose",
+# YOLO fine-tuning/running through Ultralytics.
+yolo = [
+  "ultralytics",
+  "opencv-python",
+  "pyyaml",
+  "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
+]
+
+# StarDist fine-tuning/running.
+stardist = [
   "stardist",
   "csbdeep",
+  "tensorflow>=2.13",
   "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
+]
+
+# Omnipose fine-tuning/running.
+omnipose = [
+  "omnipose",
+  "cellpose",
+  "torch",
+  "opencv-python",
+  "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
+]
+
+# All segmentation methods together.
+# If dependency conflicts appear, install method-specific extras separately
+# in separate environments, especially for Cellpose/Omnipose/StarDist.
+segmentation = [
+  "cellpose",
+  "omnipose",
+  "stardist",
+  "csbdeep",
+  "ultralytics",
+  "tensorflow>=2.13",
+  "torch",
+  "opencv-python",
+  "pyyaml",
+  "scikit-image>=0.22",
+  "tifffile>=2023.9.26",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs",
+]
+
+# Everything needed for the current thesis processing pipeline.
+all = [
+  "czifile",
+  "imageio>=2.31",
+  "matplotlib",
+  "ome-zarr>=0.11,<0.12",
+  "pillow",
+  "scikit-image>=0.22",
+  "zarr>=2.16,<3",
+  "numcodecs",
+  "dask",
+  "pandas",
+  "opencv-python",
+  "tensorflow>=2.13",
+  "csbdeep",
+  "n2v",
+  "cellpose",
+  "omnipose",
+  "stardist",
+  "ultralytics",
+  "torch",
+  "pyyaml",
 ]
 
 dev = [
@@ -120,6 +224,7 @@ extend-exclude = [
   "build",
   "dist",
   "results",
+  "models",
 ]
 
 [tool.ruff.lint]
