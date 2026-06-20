@@ -42,6 +42,8 @@ class PCAMaskAlignmentConfig:
     save_individual_cells: bool = True
     save_omezarr: bool = True
     overwrite: bool = False
+    save_final_values_csv: bool = True
+    final_values_subfolder: str = "pca_alignment"
 
     def validate(self) -> None:
         self.project_root = Path(self.project_root).expanduser().resolve()
@@ -81,6 +83,17 @@ class PCAMaskAlignmentConfig:
         ):
             raise ValueError(
                 "output_subfolder must be a single folder name without path separators"
+            )
+
+        final_values_path = Path(self.final_values_subfolder)
+        if (
+            not self.final_values_subfolder.strip()
+            or final_values_path.is_absolute()
+            or len(final_values_path.parts) != 1
+            or final_values_path.name in {".", ".."}
+        ):
+            raise ValueError(
+                "final_values_subfolder must be a single folder name without path separators"
             )
 
 
@@ -581,10 +594,127 @@ def _align_plane(
     return aligned, records, binary_was_relabelled
 
 
+
+def _safe_slug(value: str) -> str:
+    """Create a filesystem-safe identifier for CSV filenames."""
+    text = str(value).strip()
+    allowed = []
+    for char in text:
+        if char.isalnum() or char in {"-", "_"}:
+            allowed.append(char)
+        elif char in {" ", ".", "+", ":", ";", ","}:
+            allowed.append("_")
+    slug = "".join(allowed).strip("_")
+    return slug or "sample"
+
+
+def _final_values_root(cfg: PCAMaskAlignmentConfig) -> Path:
+    """
+    Directory used by the graph-generation scripts.
+
+    Graph scripts read CSV files from:
+        results/final_values
+    """
+    path = Path(cfg.project_root) / "results" / "final_values" / cfg.final_values_subfolder
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _add_alignment_metadata(
+    records: list[dict[str, Any]],
+    cfg: PCAMaskAlignmentConfig,
+    sample_name: str,
+    mask_path: Path,
+    sample_dir: Path,
+    output_dir: Path,
+) -> list[dict[str, Any]]:
+    """
+    Add graph-friendly metadata columns to per-cell PCA records.
+
+    The resulting CSV can be selected directly by the graph launcher from
+    results/final_values.
+    """
+    enriched: list[dict[str, Any]] = []
+    for record in records:
+        row = {
+            "dataset": cfg.dataset,
+            "method": cfg.method,
+            "sample_name": sample_name,
+            "source_mask": str(mask_path),
+            "sample_dir": str(sample_dir),
+            "alignment_output_dir": str(output_dir),
+        }
+        row.update(record)
+        enriched.append(row)
+    return enriched
+
+
+def _write_final_values_sample_csv(
+    records: list[dict[str, Any]],
+    cfg: PCAMaskAlignmentConfig,
+    sample_name: str,
+) -> Path:
+    """Write one graph-ready PCA-alignment CSV for one sample."""
+    final_root = _final_values_root(cfg)
+    filename = (
+        f"pca_alignment_{_safe_slug(cfg.dataset)}_"
+        f"{_safe_slug(cfg.method)}_{_safe_slug(sample_name)}.csv"
+    )
+    path = final_root / filename
+    _write_records_csv(path, records)
+    return path
+
+
+def _write_final_values_combined_csv(
+    cfg: PCAMaskAlignmentConfig,
+    output_dirs: list[Path],
+) -> Path | None:
+    """
+    Combine all sample-level pca_alignment.csv files into one graph-ready CSV.
+
+    This file is convenient for plots across all selected samples.
+    """
+    all_rows: list[dict[str, Any]] = []
+    fieldnames: list[str] = []
+
+    for output_dir in output_dirs:
+        csv_path = Path(output_dir) / "pca_alignment.csv"
+        if not csv_path.exists() or csv_path.stat().st_size == 0:
+            continue
+
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames:
+                for field in reader.fieldnames:
+                    if field not in fieldnames:
+                        fieldnames.append(field)
+            for row in reader:
+                all_rows.append(dict(row))
+
+    if not all_rows:
+        return None
+
+    final_root = _final_values_root(cfg)
+    path = (
+        final_root
+        / f"pca_alignment_{_safe_slug(cfg.dataset)}_{_safe_slug(cfg.method)}_all_samples.csv"
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in all_rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+    return path
+
+
 def align_mask_file(
     mask_path: Path,
     sample_dir: Path,
     cfg: PCAMaskAlignmentConfig,
+    sample_name: str | None = None,
 ) -> Path:
     """Align all instances in one 2D or slice-wise 3D label mask."""
     mask_path = Path(mask_path)
@@ -638,7 +768,25 @@ def align_mask_file(
             zarr_path = output_dir / "labels_pca_aligned.ome.zarr"
             _save_omezarr(zarr_path, aligned_labels, axes=axes)
 
+    sample_name = sample_name or sample_dir.name
+    records = _add_alignment_metadata(
+        records=records,
+        cfg=cfg,
+        sample_name=sample_name,
+        mask_path=mask_path,
+        sample_dir=sample_dir,
+        output_dir=output_dir,
+    )
+
     _write_records_csv(output_dir / "pca_alignment.csv", records)
+
+    final_values_csv: Path | None = None
+    if cfg.save_final_values_csv:
+        final_values_csv = _write_final_values_sample_csv(
+            records=records,
+            cfg=cfg,
+            sample_name=sample_name,
+        )
 
     statuses: dict[str, int] = {}
     for record in records:
@@ -653,6 +801,7 @@ def align_mask_file(
         "output_axes": axes,
         "output_tiff": str(tiff_path) if tiff_path is not None else None,
         "output_omezarr": str(zarr_path) if zarr_path is not None else None,
+        "final_values_csv": str(final_values_csv) if final_values_csv is not None else None,
         "individual_cells_directory": str(cells_root) if cells_root is not None else None,
         "binary_source_was_connected_component_labelled": binary_relabelled,
         "n_objects": len(records),
@@ -707,12 +856,23 @@ def run_pca_alignment(cfg: PCAMaskAlignmentConfig) -> list[Path]:
 
     outputs: list[Path] = []
     for sample_name, sample_dir, mask_path in selected:
-        output_dir = align_mask_file(mask_path, sample_dir, cfg)
+        output_dir = align_mask_file(
+            mask_path=mask_path,
+            sample_dir=sample_dir,
+            cfg=cfg,
+            sample_name=sample_name,
+        )
         outputs.append(output_dir)
         print(
             f"[PCA alignment | {cfg.method} | {cfg.dataset}] "
             f"{sample_name} -> {output_dir}"
         )
+
+    if cfg.save_final_values_csv:
+        combined_csv = _write_final_values_combined_csv(cfg, outputs)
+        if combined_csv is not None:
+            print(f"[PCA alignment] Combined graph-ready CSV -> {combined_csv}")
+
     return outputs
 
 

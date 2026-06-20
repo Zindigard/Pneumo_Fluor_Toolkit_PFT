@@ -296,6 +296,17 @@ def build_config_interactive() -> PCAMaskAlignmentConfig:
         False,
     )
 
+    save_final_values_csv = ask_yes_no(
+        "Save graph-ready PCA CSV files to results/final_values?",
+        True,
+    )
+    final_values_subfolder = "pca_alignment"
+    if save_final_values_csv:
+        final_values_subfolder = ask_folder_name(
+            "Subfolder inside results/final_values for graph-ready PCA CSV files",
+            "pca_alignment",
+        )
+
     return PCAMaskAlignmentConfig(
         project_root=project_root,
         method=method,
@@ -312,6 +323,8 @@ def build_config_interactive() -> PCAMaskAlignmentConfig:
         save_individual_cells=save_individual_cells,
         save_omezarr=save_omezarr,
         overwrite=overwrite,
+        save_final_values_csv=save_final_values_csv,
+        final_values_subfolder=final_values_subfolder,
     )
 
 
@@ -333,6 +346,9 @@ def print_config(cfg: PCAMaskAlignmentConfig) -> None:
     print(f"Save individual cells: {cfg.save_individual_cells}")
     print(f"Save OME-Zarr:         {cfg.save_omezarr}")
     print(f"Overwrite:             {cfg.overwrite}")
+    print(f"Save final-values CSV: {cfg.save_final_values_csv}")
+    if cfg.save_final_values_csv:
+        print(f"Final-values folder:   {cfg.project_root / 'results' / 'final_values' / cfg.final_values_subfolder}")
 
 
 def main() -> int:
@@ -354,6 +370,12 @@ def main() -> int:
     print("\nPCA alignment finished. Output folders:")
     for path in outputs:
         print(f"  {path}")
+
+    if cfg.save_final_values_csv:
+        print("\nGraph-ready PCA CSV files were saved under:")
+        print(f"  {cfg.project_root / 'results' / 'final_values' / cfg.final_values_subfolder}")
+        print("These CSV files can be selected by scripts/create_results_graphs.py.")
+
     return 0
 
 
