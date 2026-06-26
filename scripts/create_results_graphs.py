@@ -31,6 +31,7 @@ GRAPH_TYPES = {
     "8": "kymograph",
     "9": "colocalization",
     "10": "correlation",
+    "11": "3d_all",
 }
 
 DATASET_HINTS = {
@@ -110,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--radius-col", default=None)
     parser.add_argument("--cell-col", default=None)
     parser.add_argument("--pair-col", default=None)
+    parser.add_argument("--channel-col", default=None)
+    parser.add_argument("--no-3d-channel-switch", action="store_true", help="Do not apply the final blue/green channel switch for 3D SIM graphs.")
     parser.add_argument("--x-col", default=None)
     parser.add_argument("--y-col", default=None)
     parser.add_argument("--stem", default=None, help="Output filename without extension.")
@@ -151,6 +154,8 @@ def main() -> None:
         radius_col=args.radius_col,
         cell_col=args.cell_col,
         pair_col=args.pair_col,
+        channel_col=args.channel_col,
+        switch_blue_green=not args.no_3d_channel_switch,
         x_col=args.x_col,
         y_col=args.y_col,
         stem=args.stem,
@@ -163,6 +168,10 @@ def main() -> None:
     print(f"  PDF: {result.pdf_path}")
     if result.csv_path:
         print(f"  CSV: {result.csv_path}")
+    if getattr(result, "extra_paths", None):
+        print("  Extra files:")
+        for path in result.extra_paths:
+            print(f"    {path}")
 
 
 if __name__ == "__main__":

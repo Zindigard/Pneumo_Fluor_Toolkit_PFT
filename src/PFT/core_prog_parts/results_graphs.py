@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -134,6 +134,15 @@ class FigureResult:
     png_path: Path
     pdf_path: Path
     csv_path: Optional[Path] = None
+    extra_paths: list[Path] = field(default_factory=list)
+
+    @property
+    def all_paths(self) -> list[Path]:
+        paths = [self.png_path, self.pdf_path]
+        if self.csv_path is not None:
+            paths.append(self.csv_path)
+        paths.extend(self.extra_paths)
+        return paths
 
 
 def save_current_figure(output_dir: Path, stem: str, dpi: int = 600) -> FigureResult:
@@ -536,6 +545,666 @@ def correlation_plot_from_csv(
     return result
 
 
+
+
+# -----------------------------------------------------------------------------
+# 3D SIM graph helpers
+# -----------------------------------------------------------------------------
+# These functions implement the final 3D figure logic discussed for the thesis:
+#   - blue and green are switched relative to the earlier intermediate version;
+#   - blue has a central axial signal and remains non-zero at poles in kymographs;
+#   - green is the most homogeneous and is higher at the poles;
+#   - red is the least homogeneous and remains lower than blue in the homogeneity plot.
+#
+# The functions still use the same data-loading pattern as the 2D functions:
+# values are read from CSV files in results/final_values, then summarized and plotted.
+# No synthetic values are generated inside these functions.
+
+CHANNEL_COLOURS_3D: dict[str, str] = {
+    "blue": "tab:blue",
+    "green": "tab:green",
+    "red": "tab:red",
+}
+
+CHANNEL_CMAPS_3D: dict[str, str] = {
+    "blue": "Blues",
+    "green": "Greens",
+    "red": "Reds",
+}
+
+CHANNEL_ORDER_3D_FINAL: list[str] = ["green", "blue", "red"]
+CONDITION_ORDER_3D: list[str] = ["THY", "NHS"]
+
+
+def _ordered_present(values: Sequence[object], preferred: Sequence[str]) -> list[str]:
+    present = list(dict.fromkeys(str(v) for v in values if pd.notna(v)))
+    upper_map = {p.upper(): p for p in present}
+    ordered: list[str] = []
+    for item in preferred:
+        if item.upper() in upper_map:
+            ordered.append(upper_map[item.upper()])
+    ordered.extend([p for p in present if p not in ordered])
+    return ordered
+
+
+def _is_numeric_series(series: pd.Series) -> bool:
+    numeric = pd.to_numeric(series, errors="coerce")
+    return numeric.notna().mean() > 0.5
+
+
+def _classify_3d_source_channel(raw: object) -> str:
+    """Classify CSV channel names before the final blue/green switch."""
+    name = normalize_column_name(str(raw))
+    if any(key in name for key in ["hada", "blue", "b_channel", "channel_b"]):
+        return "old_blue"
+    if any(key in name for key in ["nada", "green", "g_channel", "channel_g"]):
+        return "old_green"
+    if any(key in name for key in ["tada", "red", "r_channel", "channel_r"]):
+        return "red"
+    return name
+
+
+def map_3d_channel(raw: object, switch_blue_green: bool = True) -> str:
+    """Map HADA/NADA/TADA or blue/green/red labels to final thesis channel names.
+
+    With switch_blue_green=True, the earlier blue-like channel is plotted as green,
+    and the earlier green-like channel is plotted as blue. This is the final setting
+    used for the discussed 3D graphs.
+    """
+    source = _classify_3d_source_channel(raw)
+    if switch_blue_green:
+        if source == "old_blue":
+            return "green"
+        if source == "old_green":
+            return "blue"
+    else:
+        if source == "old_blue":
+            return "blue"
+        if source == "old_green":
+            return "green"
+    if source == "red":
+        return "red"
+    return source
+
+
+def _discover_3d_value_columns(df: pd.DataFrame, value_cols: Optional[Sequence[str]] = None) -> list[str]:
+    if value_cols:
+        return [normalize_column_name(c) for c in value_cols]
+
+    discovered: list[str] = []
+    for logical in ["hada", "nada", "tada"]:
+        col = find_column(df, logical, required=False)
+        if col and col not in discovered and _is_numeric_series(df[col]):
+            discovered.append(col)
+
+    for col in df.columns:
+        if col in discovered:
+            continue
+        name = normalize_column_name(col)
+        if any(key in name for key in ["hada", "nada", "tada", "blue", "green", "red"]):
+            if _is_numeric_series(df[col]):
+                discovered.append(col)
+
+    return discovered
+
+
+def _three_d_long_values(
+    df: pd.DataFrame,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    channel_col: Optional[str] = None,
+    switch_blue_green: bool = True,
+    logical_value: str = "value",
+    id_cols: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Return long-format columns: id columns + condition/channel/value.
+
+    Accepts either:
+      1) long CSV: condition, channel, value;
+      2) wide CSV: condition and one column per channel, e.g. HADA/NADA/TADA,
+         blue/green/red, or *_intensity / *_homogeneity variants.
+    """
+    work = df.copy()
+
+    condition_col = find_column(work, "condition", required=False)
+    if condition_col is None:
+        work["condition"] = "all"
+        condition_col = "condition"
+
+    channel_col = normalize_column_name(channel_col) if channel_col else find_column(work, "channel", required=False)
+
+    if value_col:
+        value_col = normalize_column_name(value_col)
+    else:
+        value_col = find_column(work, logical_value, required=False)
+        if value_col is None and logical_value != "value":
+            value_col = find_column(work, "value", required=False)
+
+    id_cols_norm = [normalize_column_name(c) for c in (id_cols or []) if c]
+    id_cols_norm = [c for c in id_cols_norm if c in work.columns]
+
+    if channel_col is not None and value_col is not None:
+        keep = list(dict.fromkeys([*id_cols_norm, condition_col, channel_col, value_col]))
+        long = work[keep].copy()
+        long = long.rename(columns={channel_col: "source_channel", value_col: "value"})
+    else:
+        wide_cols = _discover_3d_value_columns(work, value_cols=value_cols)
+        if not wide_cols:
+            available = ", ".join(work.columns)
+            raise ValueError(
+                "Could not detect 3D channel columns. Provide --value-cols or use a long CSV "
+                f"with channel and value columns. Available columns: {available}"
+            )
+        keep_ids = list(dict.fromkeys([*id_cols_norm, condition_col]))
+        long = work.melt(
+            id_vars=keep_ids,
+            value_vars=wide_cols,
+            var_name="source_channel",
+            value_name="value",
+        )
+
+    long["condition"] = long[condition_col].astype(str)
+    long["channel"] = long["source_channel"].map(lambda v: map_3d_channel(v, switch_blue_green=switch_blue_green))
+    long["value"] = pd.to_numeric(long["value"], errors="coerce")
+    long = long.dropna(subset=["value"])
+    long = long[long["channel"].isin(["blue", "green", "red"])]
+    return long
+
+
+def _save_figure_pair(output_dir: Path, stem: str, dpi: int = 600) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    png_path = output_dir / f"{stem}.png"
+    pdf_path = output_dir / f"{stem}.pdf"
+    plt.savefig(png_path, dpi=dpi, bbox_inches="tight")
+    plt.savefig(pdf_path, bbox_inches="tight")
+    plt.close()
+    return png_path, pdf_path
+
+
+def _line_style_for_condition(condition: str) -> str:
+    return "--" if condition.upper() == "NHS" else "-"
+
+
+def _summarize_profile(long: pd.DataFrame, coordinate_col: str) -> pd.DataFrame:
+    work = long.copy()
+    work[coordinate_col] = pd.to_numeric(work[coordinate_col], errors="coerce")
+    work = work.dropna(subset=[coordinate_col, "value"])
+    summary = (
+        work.groupby(["condition", "channel", coordinate_col], as_index=False)
+        .agg(mean_value=("value", "mean"), sd_value=("value", "std"), n=("value", "size"))
+        .sort_values(["condition", "channel", coordinate_col])
+    )
+    summary["sem_value"] = summary["sd_value"] / np.sqrt(summary["n"].clip(lower=1))
+    return summary
+
+
+def three_d_axial_profile_from_csv(
+    csv_path: Path,
+    output_dir: Path,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    axis_col: Optional[str] = None,
+    group_col: Optional[str] = None,
+    channel_col: Optional[str] = None,
+    stem: str = "3d_sim_mip_axial_profiles",
+    switch_blue_green: bool = True,
+    ylabel: str = "Normalized fluorescence intensity",
+) -> FigureResult:
+    """Create the final 3D SIM axial profile graph from CSV values."""
+    df = load_csv(csv_path)
+    axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
+    if group_col:
+        group_col = normalize_column_name(group_col)
+        df = df.rename(columns={group_col: "condition"})
+
+    long = _three_d_long_values(
+        df,
+        value_col=value_col,
+        value_cols=value_cols,
+        channel_col=channel_col,
+        switch_blue_green=switch_blue_green,
+        id_cols=[axis_col],
+    )
+    long[axis_col] = pd.to_numeric(long[axis_col], errors="coerce")
+    summary = _summarize_profile(long, axis_col)
+
+    fig, ax = plt.subplots(figsize=(10.8, 6.2), dpi=180)
+    conditions = _ordered_present(summary["condition"].unique(), CONDITION_ORDER_3D)
+    for channel in ["blue", "red", "green"]:
+        for condition in conditions:
+            sub = summary[(summary["channel"] == channel) & (summary["condition"] == condition)]
+            if sub.empty:
+                continue
+            ax.plot(
+                sub[axis_col],
+                sub["mean_value"],
+                color=CHANNEL_COLOURS_3D[channel],
+                linestyle=_line_style_for_condition(condition),
+                linewidth=2.0,
+                label=f"{condition} {channel}",
+            )
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 0.97)
+    ax.set_xticks([0, 0.5, 1])
+    ax.set_xticklabels(["Pole 1", "Midcell", "Pole 2"])
+    ax.set_xlabel("Normalized cell axis")
+    ax.set_ylabel(ylabel)
+    ax.set_title("3D SIM MIP axial fluorescence profiles")
+    ax.grid(True, alpha=0.3)
+    ax.legend(frameon=True, ncol=2, loc="upper right")
+    fig.tight_layout()
+
+    png_path, pdf_path = _save_figure_pair(output_dir, stem)
+    summary_csv = save_summary_csv(summary, output_dir, f"{stem}_summary")
+    return FigureResult(png_path=png_path, pdf_path=pdf_path, csv_path=summary_csv)
+
+
+def _plot_three_d_radial_pair(
+    summary: pd.DataFrame,
+    radius_col: str,
+    output_dir: Path,
+    channels: tuple[str, str],
+    stem: str,
+) -> FigureResult:
+    fig, ax = plt.subplots(figsize=(10.5, 6.0), dpi=180)
+    conditions = _ordered_present(summary["condition"].unique(), CONDITION_ORDER_3D)
+    for channel in channels:
+        for condition in conditions:
+            sub = summary[(summary["channel"] == channel) & (summary["condition"] == condition)]
+            if sub.empty:
+                continue
+            ax.plot(
+                sub[radius_col],
+                sub["mean_value"],
+                color=CHANNEL_COLOURS_3D[channel],
+                linestyle=_line_style_for_condition(condition),
+                linewidth=2.0,
+                label=f"{condition} {channel}",
+            )
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 0.97)
+    ax.set_xticks([0, 0.5, 1])
+    ax.set_xticklabels(["Cell centre", "Intermediate radius", "Cell boundary"])
+    ax.set_xlabel("Normalized radial distance")
+    ax.set_ylabel("Normalized fluorescence intensity")
+    ax.set_title(f"3D SIM MIP radial profiles: {channels[0]} vs {channels[1]}")
+    ax.grid(True, alpha=0.3)
+    ax.legend(frameon=True, ncol=2, loc="upper right")
+    fig.tight_layout()
+    png_path, pdf_path = _save_figure_pair(output_dir, stem)
+    return FigureResult(png_path=png_path, pdf_path=pdf_path)
+
+
+def three_d_radial_profiles_from_csv(
+    csv_path: Path,
+    output_dir: Path,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    radius_col: Optional[str] = None,
+    group_col: Optional[str] = None,
+    channel_col: Optional[str] = None,
+    stem: str = "3d_sim_mip_radial_profiles",
+    switch_blue_green: bool = True,
+) -> FigureResult:
+    """Create the three final 3D radial pairwise profiles from CSV values."""
+    df = load_csv(csv_path)
+    radius_col = normalize_column_name(radius_col) if radius_col else find_column(df, "radius")
+    if group_col:
+        group_col = normalize_column_name(group_col)
+        df = df.rename(columns={group_col: "condition"})
+
+    long = _three_d_long_values(
+        df,
+        value_col=value_col,
+        value_cols=value_cols,
+        channel_col=channel_col,
+        switch_blue_green=switch_blue_green,
+        id_cols=[radius_col],
+    )
+    long[radius_col] = pd.to_numeric(long[radius_col], errors="coerce")
+    summary = _summarize_profile(long, radius_col)
+    summary_csv = save_summary_csv(summary, output_dir, f"{stem}_summary")
+
+    pairs = [("red", "green"), ("red", "blue"), ("blue", "green")]
+    results: list[FigureResult] = []
+    for pair in pairs:
+        pair_stem = f"{stem}_{pair[0]}_vs_{pair[1]}"
+        results.append(_plot_three_d_radial_pair(summary, radius_col, output_dir, pair, pair_stem))
+
+    primary = results[0]
+    primary.csv_path = summary_csv
+    for extra in results[1:]:
+        primary.extra_paths.extend([extra.png_path, extra.pdf_path])
+    return primary
+
+
+def three_d_homogeneity_from_csv(
+    csv_path: Path,
+    output_dir: Path,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    group_col: Optional[str] = None,
+    channel_col: Optional[str] = None,
+    stem: str = "3d_sim_mip_channel_homogeneity",
+    switch_blue_green: bool = True,
+) -> FigureResult:
+    """Create final 3D channel homogeneity box plot.
+
+    Final order is Green > Blue > Red. The plot is data-driven: if the CSV values
+    differ from this pattern, the actual values are still shown.
+    """
+    df = load_csv(csv_path)
+    if group_col:
+        group_col = normalize_column_name(group_col)
+        df = df.rename(columns={group_col: "condition"})
+
+    long = _three_d_long_values(
+        df,
+        value_col=value_col,
+        value_cols=value_cols,
+        channel_col=channel_col,
+        switch_blue_green=switch_blue_green,
+        logical_value="homogeneity",
+    )
+
+    conditions = _ordered_present(long["condition"].unique(), CONDITION_ORDER_3D)
+    channels = ["green", "blue", "red"]
+
+    data: list[np.ndarray] = []
+    positions: list[int] = []
+    labels: list[str] = []
+    colors: list[str] = []
+    pos = 1
+    for channel in channels:
+        for condition in conditions:
+            arr = long[(long["channel"] == channel) & (long["condition"] == condition)]["value"].to_numpy()
+            if arr.size == 0:
+                continue
+            data.append(arr)
+            positions.append(pos)
+            labels.append(condition)
+            colors.append(CHANNEL_COLOURS_3D[channel])
+            pos += 1
+        pos += 1
+
+    fig, ax = plt.subplots(figsize=(9.5, 5.8), dpi=180)
+    box = ax.boxplot(
+        data,
+        positions=positions,
+        widths=0.65,
+        patch_artist=True,
+        showfliers=False,
+        medianprops={"linewidth": 1.7, "color": "black"},
+        whiskerprops={"linewidth": 1.2},
+        capprops={"linewidth": 1.2},
+        boxprops={"linewidth": 1.2},
+    )
+    for patch, color in zip(box["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.45)
+
+    rng = np.random.default_rng(42)
+    for position, arr, color in zip(positions, data, colors):
+        jitter = rng.normal(0, 0.055, size=len(arr))
+        ax.scatter(np.full(len(arr), position) + jitter, arr, s=13, alpha=0.60, color=color, zorder=3)
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+
+    # channel labels centered below each condition pair
+    group_centres: list[tuple[float, str]] = []
+    for channel in channels:
+        channel_positions = [p for p, c in zip(positions, colors) if c == CHANNEL_COLOURS_3D[channel]]
+        if channel_positions:
+            group_centres.append((float(np.mean(channel_positions)), channel.capitalize()))
+    for centre, label in group_centres:
+        ax.text(centre, -0.105, label, ha="center", va="top", transform=ax.get_xaxis_transform(), fontsize=11)
+
+    ax.set_xlim(min(positions) - 0.75, max(positions) + 0.75)
+    ax.set_ylim(0, 0.95)
+    ax.set_ylabel("Spatial homogeneity")
+    ax.set_title("3D SIM MIP channel homogeneity")
+    ax.grid(True, axis="y", alpha=0.25)
+    fig.tight_layout()
+
+    png_path, pdf_path = _save_figure_pair(output_dir, stem)
+    summary = (
+        long.groupby(["channel", "condition"], as_index=False)
+        .agg(n=("value", "size"), mean=("value", "mean"), sd=("value", "std"), median=("value", "median"))
+    )
+    summary_csv = save_summary_csv(summary, output_dir, f"{stem}_summary")
+    return FigureResult(png_path=png_path, pdf_path=pdf_path, csv_path=summary_csv)
+
+
+def _plot_single_three_d_kymograph(
+    long: pd.DataFrame,
+    axis_col: str,
+    cell_col: str,
+    output_dir: Path,
+    channel: str,
+    stem: str,
+    intensity_label: str,
+) -> FigureResult:
+    channel_df = long[long["channel"] == channel].copy()
+    if channel_df.empty:
+        raise ValueError(f"No rows found for 3D channel '{channel}'.")
+
+    conditions = _ordered_present(channel_df["condition"].unique(), CONDITION_ORDER_3D)
+    matrices: list[np.ndarray] = []
+    xticks: list[float] = []
+    xlabels: list[str] = []
+    start = 0
+
+    for condition in conditions:
+        sub = channel_df[channel_df["condition"] == condition]
+        mat = sub.pivot_table(index=axis_col, columns=cell_col, values="value", aggfunc="mean")
+        mat = mat.reindex(sorted(mat.index), axis=0)
+        mat = mat.reindex(sorted(mat.columns), axis=1)
+        arr = mat.to_numpy(dtype=float)
+        if arr.size == 0:
+            continue
+        # Sort cells by central-band intensity for a readable pooled kymograph.
+        axis_values = np.asarray(mat.index, dtype=float)
+        centre_mask = (axis_values > 0.38) & (axis_values < 0.62)
+        if centre_mask.any():
+            order = np.argsort(np.nanmean(arr[centre_mask, :], axis=0))
+            arr = arr[:, order]
+        matrices.append(arr)
+        xticks.append(start + arr.shape[1] / 2)
+        xlabels.append(f"{condition}\nn={arr.shape[1]}")
+        start += arr.shape[1]
+
+    if not matrices:
+        raise ValueError(f"No matrix could be built for 3D channel '{channel}'.")
+
+    stacked = np.concatenate(matrices, axis=1)
+
+    fig, ax = plt.subplots(figsize=(13.5, 4.6), dpi=180)
+    im = ax.imshow(
+        stacked,
+        aspect="auto",
+        origin="lower",
+        cmap=CHANNEL_CMAPS_3D[channel],
+        vmin=0,
+        vmax=0.95,
+        extent=[0, stacked.shape[1], 0, 1],
+        interpolation="nearest",
+    )
+
+    start = 0
+    for arr in matrices[:-1]:
+        start += arr.shape[1]
+        ax.axvline(start, color="black", linewidth=1.0)
+
+    ax.set_yticks([0, 0.5, 1])
+    ax.set_yticklabels(["Pole 1", "0.5", "Pole 2"])
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xlabels)
+    ax.set_xlabel("Cells grouped by condition")
+    ax.set_ylabel("Normalized cell axis")
+    ax.set_title(f"3D SIM MIP {channel} channel kymograph")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+    cbar.set_label(intensity_label)
+    fig.tight_layout()
+
+    png_path, pdf_path = _save_figure_pair(output_dir, stem)
+    return FigureResult(png_path=png_path, pdf_path=pdf_path)
+
+
+def three_d_kymographs_from_csv(
+    csv_path: Path,
+    output_dir: Path,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    axis_col: Optional[str] = None,
+    group_col: Optional[str] = None,
+    channel_col: Optional[str] = None,
+    cell_col: Optional[str] = None,
+    stem: str = "3d_sim_mip_kymograph",
+    intensity_label: str = "Normalized fluorescence intensity",
+    switch_blue_green: bool = True,
+) -> FigureResult:
+    """Create final 3D blue, green, and red kymographs from long/wide CSV values."""
+    df = load_csv(csv_path)
+    axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
+    cell_col = normalize_column_name(cell_col) if cell_col else find_column(df, "cell_id")
+    if group_col:
+        group_col = normalize_column_name(group_col)
+        df = df.rename(columns={group_col: "condition"})
+
+    long = _three_d_long_values(
+        df,
+        value_col=value_col,
+        value_cols=value_cols,
+        channel_col=channel_col,
+        switch_blue_green=switch_blue_green,
+        id_cols=[axis_col, cell_col],
+    )
+    long[axis_col] = pd.to_numeric(long[axis_col], errors="coerce")
+    long = long.dropna(subset=[axis_col, "value"])
+
+    results: list[FigureResult] = []
+    for channel in ["blue", "green", "red"]:
+        results.append(
+            _plot_single_three_d_kymograph(
+                long=long,
+                axis_col=axis_col,
+                cell_col=cell_col,
+                output_dir=output_dir,
+                channel=channel,
+                stem=f"{stem}_{channel}",
+                intensity_label=intensity_label,
+            )
+        )
+
+    summary = (
+        long.groupby(["channel", "condition", axis_col], as_index=False)
+        .agg(mean_value=("value", "mean"), sd_value=("value", "std"), n=("value", "size"))
+    )
+    summary_csv = save_summary_csv(summary, output_dir, f"{stem}_summary")
+
+    primary = results[0]
+    primary.csv_path = summary_csv
+    for extra in results[1:]:
+        primary.extra_paths.extend([extra.png_path, extra.pdf_path])
+    return primary
+
+
+
+def three_d_all_graphs_from_csv(
+    csv_path: Path,
+    output_dir: Path,
+    value_col: Optional[str] = None,
+    value_cols: Optional[Sequence[str]] = None,
+    axis_col: Optional[str] = None,
+    radius_col: Optional[str] = None,
+    group_col: Optional[str] = None,
+    channel_col: Optional[str] = None,
+    cell_col: Optional[str] = None,
+    stem: str = "3d_sim_mip",
+    intensity_label: str = "Normalized fluorescence intensity",
+    switch_blue_green: bool = True,
+    ylabel: str = "Normalized fluorescence intensity",
+) -> FigureResult:
+    """Create the full discussed 3D graph set from one combined CSV file.
+
+    The CSV must contain the columns required by each graph type. In practice this
+    works best with one long table containing condition, channel, cell_id, axis,
+    radius, value, and optionally homogeneity.
+    """
+    results: list[FigureResult] = []
+    results.append(
+        three_d_axial_profile_from_csv(
+            csv_path=csv_path,
+            output_dir=output_dir,
+            value_col=value_col,
+            value_cols=value_cols,
+            axis_col=axis_col,
+            group_col=group_col,
+            channel_col=channel_col,
+            stem=f"{stem}_axial_profiles",
+            switch_blue_green=switch_blue_green,
+            ylabel=ylabel,
+        )
+    )
+    results.append(
+        three_d_radial_profiles_from_csv(
+            csv_path=csv_path,
+            output_dir=output_dir,
+            value_col=value_col,
+            value_cols=value_cols,
+            radius_col=radius_col,
+            group_col=group_col,
+            channel_col=channel_col,
+            stem=f"{stem}_radial_profiles",
+            switch_blue_green=switch_blue_green,
+        )
+    )
+    try:
+        results.append(
+            three_d_kymographs_from_csv(
+                csv_path=csv_path,
+                output_dir=output_dir,
+                value_col=value_col,
+                value_cols=value_cols,
+                axis_col=axis_col,
+                group_col=group_col,
+                channel_col=channel_col,
+                cell_col=cell_col,
+                stem=f"{stem}_kymograph",
+                intensity_label=intensity_label,
+                switch_blue_green=switch_blue_green,
+            )
+        )
+    except KeyError:
+        # A profile-only CSV may not contain cell_id. Axial/radial graphs still remain valid.
+        pass
+    try:
+        results.append(
+            three_d_homogeneity_from_csv(
+                csv_path=csv_path,
+                output_dir=output_dir,
+                value_col=None,
+                value_cols=None,
+                group_col=group_col,
+                channel_col=channel_col,
+                stem=f"{stem}_channel_homogeneity",
+                switch_blue_green=switch_blue_green,
+            )
+        )
+    except (KeyError, ValueError):
+        pass
+
+    primary = results[0]
+    for extra in results[1:]:
+        primary.extra_paths.extend([extra.png_path, extra.pdf_path])
+        if extra.csv_path is not None:
+            primary.extra_paths.append(extra.csv_path)
+        primary.extra_paths.extend(extra.extra_paths)
+    return primary
+
+
 def run_graph(
     dataset: str,
     graph: str,
@@ -550,6 +1219,78 @@ def run_graph(
     out = graphs_dir(project_root) / (output_subdir or dataset)
     out.mkdir(parents=True, exist_ok=True)
 
+    is_3d = dataset in {"3d_sim", "3d", "sim", "3d_sim_mip"}
+
+    if is_3d and graph in {"axial_profile", "axial", "3d_axial"}:
+        return three_d_axial_profile_from_csv(
+            csv_path=csv_path,
+            output_dir=out,
+            value_col=kwargs.get("value_col"),
+            value_cols=kwargs.get("value_cols"),
+            axis_col=kwargs.get("axis_col"),
+            group_col=kwargs.get("group_col"),
+            channel_col=kwargs.get("channel_col"),
+            stem=(kwargs.get("stem") or "3d_sim_mip_axial_profiles"),
+            switch_blue_green=kwargs.get("switch_blue_green", True),
+            ylabel=(kwargs.get("ylabel") or "Normalized fluorescence intensity"),
+        )
+
+    if is_3d and graph in {"radial_profile", "radial", "3d_radial"}:
+        return three_d_radial_profiles_from_csv(
+            csv_path=csv_path,
+            output_dir=out,
+            value_col=kwargs.get("value_col"),
+            value_cols=kwargs.get("value_cols"),
+            radius_col=kwargs.get("radius_col"),
+            group_col=kwargs.get("group_col"),
+            channel_col=kwargs.get("channel_col"),
+            stem=(kwargs.get("stem") or "3d_sim_mip_radial_profiles"),
+            switch_blue_green=kwargs.get("switch_blue_green", True),
+        )
+
+    if is_3d and graph in {"kymograph", "standardized_map", "standardized_cell_map", "3d_kymograph"}:
+        return three_d_kymographs_from_csv(
+            csv_path=csv_path,
+            output_dir=out,
+            value_col=kwargs.get("value_col"),
+            value_cols=kwargs.get("value_cols"),
+            axis_col=kwargs.get("axis_col"),
+            group_col=kwargs.get("group_col"),
+            channel_col=kwargs.get("channel_col"),
+            cell_col=kwargs.get("cell_col"),
+            stem=(kwargs.get("stem") or "3d_sim_mip_kymograph"),
+            intensity_label=(kwargs.get("intensity_label") or "Normalized fluorescence intensity"),
+            switch_blue_green=kwargs.get("switch_blue_green", True),
+        )
+
+    if is_3d and graph in {"homogeneity", "channel_homogeneity", "3d_homogeneity"}:
+        return three_d_homogeneity_from_csv(
+            csv_path=csv_path,
+            output_dir=out,
+            value_col=kwargs.get("value_col"),
+            value_cols=kwargs.get("value_cols"),
+            group_col=kwargs.get("group_col"),
+            channel_col=kwargs.get("channel_col"),
+            stem=(kwargs.get("stem") or "3d_sim_mip_channel_homogeneity"),
+            switch_blue_green=kwargs.get("switch_blue_green", True),
+        )
+
+    if is_3d and graph in {"all", "all_3d", "3d_all", "summary_3d"}:
+        return three_d_all_graphs_from_csv(
+            csv_path=csv_path,
+            output_dir=out,
+            value_col=kwargs.get("value_col"),
+            value_cols=kwargs.get("value_cols"),
+            axis_col=kwargs.get("axis_col"),
+            radius_col=kwargs.get("radius_col"),
+            group_col=kwargs.get("group_col"),
+            channel_col=kwargs.get("channel_col"),
+            cell_col=kwargs.get("cell_col"),
+            stem=(kwargs.get("stem") or "3d_sim_mip"),
+            intensity_label=(kwargs.get("intensity_label") or "Normalized fluorescence intensity"),
+            switch_blue_green=kwargs.get("switch_blue_green", True),
+        )
+
     if graph in {"cell_count", "detected_cells", "time_population"}:
         return time_population_plot_from_csv(
             csv_path=csv_path,
@@ -557,37 +1298,37 @@ def run_graph(
             value_col=kwargs.get("value_col"),
             time_col=kwargs.get("time_col"),
             group_col=kwargs.get("group_col"),
-            stem=kwargs.get("stem", f"{dataset}_{graph}"),
-            ylabel=kwargs.get("ylabel", "Detected cells"),
+            stem=(kwargs.get("stem") or f"{dataset}_{graph}"),
+            ylabel=(kwargs.get("ylabel") or "Detected cells"),
         )
 
     if graph in {"cell_length", "length"}:
-        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_length_um"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_cell_length"), ylabel=kwargs.get("ylabel", "Cell length (µm)"))
+        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_length_um"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_cell_length"), ylabel=(kwargs.get("ylabel") or "Cell length (µm)"))
 
     if graph in {"cell_area", "area"}:
-        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_area_um2"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_cell_area"), ylabel=kwargs.get("ylabel", "Cell area (µm²)"))
+        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_area_um2"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_cell_area"), ylabel=(kwargs.get("ylabel") or "Cell area (µm²)"))
 
     if graph in {"cell_volume", "volume"}:
-        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_volume_um3"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_cell_volume"), ylabel=kwargs.get("ylabel", "Cell volume (µm³)"))
+        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col", "cell_volume_um3"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_cell_volume"), ylabel=(kwargs.get("ylabel") or "Cell volume (µm³)"))
 
     if graph in {"homogeneity", "wga_homogeneity", "dapi_homogeneity"}:
-        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_{graph}"), ylabel=kwargs.get("ylabel", graph.replace("_", " ").title()))
+        return boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_{graph}"), ylabel=(kwargs.get("ylabel") or graph.replace("_", " ").title()))
 
     if graph in {"axial_profile", "wga_axial", "dapi_axial", "hada_axial"}:
-        return axial_profile_from_csv(csv_path, out, value_cols=kwargs.get("value_cols"), axis_col=kwargs.get("axis_col"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_{graph}"), ylabel=kwargs.get("ylabel", "Normalized intensity"))
+        return axial_profile_from_csv(csv_path, out, value_cols=kwargs.get("value_cols"), axis_col=kwargs.get("axis_col"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_{graph}"), ylabel=(kwargs.get("ylabel") or "Normalized intensity"))
 
     if graph in {"radial_profile", "radial"}:
-        return radial_profile_from_csv(csv_path, out, value_cols=kwargs.get("value_cols"), radius_col=kwargs.get("radius_col"), group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_radial_profile"), ylabel=kwargs.get("ylabel", "Normalized intensity"))
+        return radial_profile_from_csv(csv_path, out, value_cols=kwargs.get("value_cols"), radius_col=kwargs.get("radius_col"), group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_radial_profile"), ylabel=(kwargs.get("ylabel") or "Normalized intensity"))
 
     if graph in {"kymograph", "standardized_map", "standardized_cell_map"}:
-        return standardized_cell_map_from_csv(csv_path, out, value_col=kwargs.get("value_col"), axis_col=kwargs.get("axis_col"), group_col=kwargs.get("group_col"), cell_col=kwargs.get("cell_col"), stem=kwargs.get("stem", f"{dataset}_{graph}"), intensity_label=kwargs.get("intensity_label", "Normalized intensity"))
+        return standardized_cell_map_from_csv(csv_path, out, value_col=kwargs.get("value_col"), axis_col=kwargs.get("axis_col"), group_col=kwargs.get("group_col"), cell_col=kwargs.get("cell_col"), stem=(kwargs.get("stem") or f"{dataset}_{graph}"), intensity_label=kwargs.get("intensity_label", "Normalized intensity"))
 
     if graph in {"colocalization", "spatial_relationship", "spatial_relation"}:
-        return colocalization_boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col"), group_col=kwargs.get("group_col"), pair_col=kwargs.get("pair_col"), stem=kwargs.get("stem", f"{dataset}_{graph}"))
+        return colocalization_boxplot_from_csv(csv_path, out, value_col=kwargs.get("value_col"), group_col=kwargs.get("group_col"), pair_col=kwargs.get("pair_col"), stem=(kwargs.get("stem") or f"{dataset}_{graph}"))
 
     if graph in {"correlation", "scatter"}:
         if not kwargs.get("x_col") or not kwargs.get("y_col"):
             raise ValueError("Correlation plot requires x_col and y_col.")
-        return correlation_plot_from_csv(csv_path, out, x_col=kwargs["x_col"], y_col=kwargs["y_col"], group_col=kwargs.get("group_col"), stem=kwargs.get("stem", f"{dataset}_correlation"))
+        return correlation_plot_from_csv(csv_path, out, x_col=kwargs["x_col"], y_col=kwargs["y_col"], group_col=kwargs.get("group_col"), stem=(kwargs.get("stem") or f"{dataset}_correlation"))
 
     raise ValueError(f"Unknown graph type: {graph}")
