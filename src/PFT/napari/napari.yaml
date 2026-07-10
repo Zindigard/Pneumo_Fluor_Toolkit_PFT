@@ -6,6 +6,12 @@ contributions:
     - id: PFT.read_image
       title: Read PFT microscopy image
       python_name: PFT.napari.reader:napari_get_reader
+    - id: PFT.denoise_widget
+      title: PFT denoising / restoration
+      python_name: PFT.napari.denoise_widget:make_denoise_widget
+    - id: PFT.segmentation_widget
+      title: PFT segmentation
+      python_name: PFT.napari.segmentation_widget:make_segmentation_widget
   readers:
     - command: PFT.read_image
       filename_patterns:
@@ -17,3 +23,8 @@ contributions:
         - "*.zarr"
         - "*.ome.zarr"
       accepts_directories: true
+  widgets:
+    - command: PFT.denoise_widget
+      display_name: PFT denoising / restoration
+    - command: PFT.segmentation_widget
+      display_name: PFT segmentation
