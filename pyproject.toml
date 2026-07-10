@@ -5,211 +5,207 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "PFT"
 version = "0.1.0"
-description = "Pneumo-Fluor Toolkit (PFT)"
+description = "Pneumo-Fluor Toolkit for fluorescence microscopy processing and analysis"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
   { name = "PFT contributors" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: napari",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# Dependencies needed by the non-deep-learning pipeline, OME-Zarr I/O,
+# visualization, deconvolution, filtering, and statistical analysis.
 dependencies = [
-  "numpy",
-  "tifffile>=2023.9.26",
-  "psutil>=5.9",
+  "numpy>=1.23.5,<2",
+  "scipy>=1.10,<2",
+  "pandas>=2.0,<3",
+  "statsmodels>=0.14,<0.15",
+  "matplotlib>=3.7,<4",
+  "pillow>=10,<12",
+  "imageio>=2.31,<3",
+  "tifffile>=2023.9.26,<2027",
+  "scikit-image>=0.22,<0.26",
+  "czifile>=2019.7.2",
+  "ome-zarr>=0.11,<0.12",
+  "zarr>=2.16,<3",
+  "numcodecs>=0.11,<1",
+  "dask[array]>=2023.9,<2027",
+  "psutil>=5.9,<8",
 ]
 
 [project.urls]
-Homepage = "https://github.com/"
+Homepage = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT"
+Repository = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT"
+Issues = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT/issues"
 
+# Commands implemented directly in core_prog_parts.
 [project.scripts]
 pft-psf = "PFT.core_prog_parts.psf_creator:main"
 pft-dl2 = "PFT.core_prog_parts.dl2:main"
 pft-fiji = "PFT.core_prog_parts.fuji_managment:main"
+pft-denoise = "PFT.core_prog_parts.denoiser:main"
+pft-intensity = "PFT.core_prog_parts.intenisty:main"
 pft-n2v-train = "PFT.core_prog_parts.n2v_train_models:main"
 pft-tune-notch = "PFT.core_prog_parts.tune_notch:main"
 pft-tune-freehand = "PFT.core_prog_parts.tune_freehand:main"
-pft-sanity-2d = "PFT.core_prog_parts.sanity_2d:main"
-pft-sanity-3d = "PFT.core_prog_parts.sanity_3d:main"
-pft-check-2d = "PFT.core_prog_parts.check_2d:main"
-pft-check-3d = "PFT.core_prog_parts.check_3d:main"
-pft-check-3d-psf-suff = "PFT.core_prog_parts.check_3d_psf_suff:main"
-pft-collage = "PFT.core_prog_parts.collage:main"
-pft-collect-training-omezarr = "PFT.core_prog_parts.collect_training_omezarr:main"
-pft-compare-deconvolve = "PFT.core_prog_parts.compare_deconvolve:main"
-pft-create-psf = "PFT.core_prog_parts.create_psf:main"
-pft-damp-meta = "PFT.core_prog_parts.damp_meta:main"
-pft-deconvolve-3d = "PFT.core_prog_parts.deconvolve_3d:main"
-pft-fft = "PFT.core_prog_parts.FFT:main"
-pft-fft-3d = "PFT.core_prog_parts.FFT_3d:main"
-pft-n2v-validation = "PFT.core_prog_parts.n2v_validation:main"
-pft-noise-checks = "PFT.core_prog_parts.noise_checks:main"
-pft-normalization-psf = "PFT.core_prog_parts.normalizarion_PSF:main"
-pft-patches = "PFT.core_prog_parts.patches:main"
-pft-process-czi = "PFT.core_prog_parts.process_czi:main"
-pft-psf-checks = "PFT.core_prog_parts.PSF_checks:main"
+
+# Terminal wrappers stored in src/PFT/scripts.
+pft-fft = "PFT.scripts.FFT:main"
+pft-fft-3d = "PFT.scripts.FFT_3d:main"
+pft-psf-checks = "PFT.scripts.PSF_checks:main"
+pft-check-2d = "PFT.scripts.check_2d:main"
+pft-check-3d = "PFT.scripts.check_3d:main"
+pft-check-3d-psf-suff = "PFT.scripts.check_3d_psf_suff:main"
+pft-collage = "PFT.scripts.collage:main"
+pft-collect-training-omezarr = "PFT.scripts.collect_training_omezarr:main"
+pft-compare-deconvolve = "PFT.scripts.compare_deconvolve:main"
+pft-composites = "PFT.scripts.composites:main"
+pft-create-psf = "PFT.scripts.create_psf:main"
+pft-results-graphs = "PFT.scripts.create_results_graphs:main"
+pft-results-statistics = "PFT.scripts.create_results_statistics:main"
+pft-thesis-graphs = "PFT.scripts.create_thesis_graphs:main"
+pft-damp-meta = "PFT.scripts.damp_meta:main"
+pft-deconvolve-3d = "PFT.scripts.deconvolve_3d:main"
+pft-deconvolve-3d-v2 = "PFT.scripts.deconvolve_3d_v2:main"
+pft-intensity-3d = "PFT.scripts.intensity_distribution_3d:main"
+pft-n2v-validation = "PFT.scripts.n2v_validation:main"
+pft-noise-checks = "PFT.scripts.noise_checks:main"
+pft-normalization-psf = "PFT.scripts.normalizarion_PSF:main"
+pft-normalized = "PFT.scripts.normalized:main"
+pft-patches = "PFT.scripts.patches:main"
+pft-process-czi = "PFT.scripts.process_czi:main"
+pft-run-cellpose = "PFT.scripts.run_cellpose_terminal:main"
+pft-run-microbj = "PFT.scripts.run_microbj:main"
+pft-run-omnipose = "PFT.scripts.run_omnipose_terminal:main"
+pft-run-pca-mask = "PFT.scripts.run_pca_mask_terminal:main"
+pft-run-stardist = "PFT.scripts.run_stardist_terminal:main"
+pft-run-unet = "PFT.scripts.run_unet_terminal:main"
+pft-run-yolo = "PFT.scripts.run_yolo_terminal:main"
+pft-sanity-2d = "PFT.scripts.sanity_2d:main"
+pft-sanity-3d = "PFT.scripts.sanity_3d:main"
+pft-segmentation = "PFT.scripts.segmentation_launcher:main"
+pft-train-cellpose = "PFT.scripts.train_cellpose_terminal:main"
+pft-train-omnipose = "PFT.scripts.train_omnipose_terminal:main"
+pft-train-stardist = "PFT.scripts.train_stardist_terminal:main"
+pft-train-unet = "PFT.scripts.train_unet_terminal:main"
+pft-train-yolo = "PFT.scripts.train_yolo_terminal:main"
+pft-yolo-launcher = "PFT.scripts.yolo_launcher:main"
 
 [project.entry-points."napari.manifest"]
 PFT = "PFT.napari:napari.yaml"
 
+[project.optional-dependencies]
+# BM3D denoising.
+bm3d = [
+  "bm3d>=4,<5",
+]
+
+# TensorFlow U-Net training and inference.
+unet = [
+  "tensorflow>=2.13,<2.16",
+  "keras>=2.13,<3",
+  "opencv-python>=4.8,<5",
+]
+
+# Noise2Void. N2V is not compatible with TensorFlow 2.16+.
+n2v = [
+  "tensorflow>=2.13,<2.16",
+  "keras>=2.13,<3",
+  "csbdeep>=0.7.4,<0.9",
+  "n2v>=0.3,<0.4",
+]
+
+# Cellpose 3.x is required because the current code uses APIs removed in Cellpose 4.
+cellpose = [
+  "cellpose>=3,<4",
+  "torch>=2.1,<3",
+  "opencv-python>=4.8,<5",
+]
+
+# Omnipose and its cellpose_omni compatibility package.
+omnipose = [
+  "omnipose>=1.1,<2",
+  "cellpose>=3,<4",
+  "torch>=2.1,<3",
+  "opencv-python>=4.8,<5",
+]
+
+# StarDist uses TensorFlow and CSBDeep.
+stardist = [
+  "tensorflow>=2.13,<2.16",
+  "keras>=2.13,<3",
+  "csbdeep>=0.7.4,<0.9",
+  "stardist>=0.9,<1",
+]
+
+# Ultralytics YOLO training and inference.
+yolo = [
+  "ultralytics>=8,<9",
+  "torch>=2.1,<3",
+  "opencv-python>=4.8,<5",
+  "pyyaml>=6,<7",
+]
+
+# napari application and OME-Zarr reader support.
+napari = [
+  "napari[all]>=0.6,<0.7",
+  "napari-ome-zarr",
+]
+
+# Complete CPU-oriented thesis environment. For CUDA, install the correct
+# PyTorch build first, then install this project with the same extra.
+all = [
+  "bm3d>=4,<5",
+  "tensorflow>=2.13,<2.16",
+  "keras>=2.13,<3",
+  "csbdeep>=0.7.4,<0.9",
+  "n2v>=0.3,<0.4",
+  "cellpose>=3,<4",
+  "omnipose>=1.1,<2",
+  "stardist>=0.9,<1",
+  "ultralytics>=8,<9",
+  "torch>=2.1,<3",
+  "opencv-python>=4.8,<5",
+  "pyyaml>=6,<7",
+  "napari[all]>=0.6,<0.7",
+  "napari-ome-zarr",
+]
+
+dev = [
+  "build>=1.2",
+  "pytest>=8,<9",
+  "pytest-cov>=5,<7",
+  "ruff>=0.6,<1",
+  "black>=24,<27",
+]
+
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["PFT*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 "PFT" = [
   "napari/napari.yaml",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-
-[project.optional-dependencies]
-# Basic image I/O and scientific stack used by OME-Zarr, TIFF, previews,
-# filtering, deconvolution, and segmentation output saving.
-io = [
-  "czifile",
-  "imageio>=2.31",
-  "matplotlib",
-  "ome-zarr>=0.11,<0.12",
-  "pillow",
-  "scikit-image>=0.22",
-  "zarr>=2.16,<3",
-  "numcodecs",
-  "dask",
-  "pandas",
-  "opencv-python",
-]
-
-# U-Net training/running:
-# - 2d_time
-# - 2d_wga_dapi
-# - 3d 2.5D U-Net
-unet = [
-  "tensorflow>=2.13",
-  "matplotlib",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-  "opencv-python",
-]
-
-# Existing N2V / CSBDeep stack.
-ml = [
-  "tensorflow>=2.13",
-  "csbdeep",
-  "n2v",
-]
-
-napari = [
-  "napari[all]>=0.6",
-]
-
-# Cellpose fine-tuning/running:
-# - 2d_time
-# - 2d_wga_dapi
-# - 3d slice-wise
-cellpose = [
-  "cellpose",
-  "torch",
-  "opencv-python",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-]
-
-# YOLO fine-tuning/running through Ultralytics.
-yolo = [
-  "ultralytics",
-  "opencv-python",
-  "pyyaml",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-]
-
-# StarDist fine-tuning/running.
-stardist = [
-  "stardist",
-  "csbdeep",
-  "tensorflow>=2.13",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-]
-
-# Omnipose fine-tuning/running.
-omnipose = [
-  "omnipose",
-  "cellpose",
-  "torch",
-  "opencv-python",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-]
-
-# All segmentation methods together.
-# If dependency conflicts appear, install method-specific extras separately
-# in separate environments, especially for Cellpose/Omnipose/StarDist.
-segmentation = [
-  "cellpose",
-  "omnipose",
-  "stardist",
-  "csbdeep",
-  "ultralytics",
-  "tensorflow>=2.13",
-  "torch",
-  "opencv-python",
-  "pyyaml",
-  "scikit-image>=0.22",
-  "tifffile>=2023.9.26",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
-  "numcodecs",
-]
-
-# Everything needed for the current thesis processing pipeline.
-all = [
-  "czifile",
-  "imageio>=2.31",
-  "matplotlib",
-  "ome-zarr>=0.11,<0.12",
-  "pillow",
-  "scikit-image>=0.22",
-  "zarr>=2.16,<3",
-  "numcodecs",
-  "dask",
-  "pandas",
-  "opencv-python",
-  "tensorflow>=2.13",
-  "csbdeep",
-  "n2v",
-  "cellpose",
-  "omnipose",
-  "stardist",
-  "ultralytics",
-  "torch",
-  "pyyaml",
-]
-
-dev = [
-  "pytest",
-  "ruff",
-  "black",
-]
 
 [tool.black]
 line-length = 100

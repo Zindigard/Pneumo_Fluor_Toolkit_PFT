@@ -1,7 +1,19 @@
 name: PFT
 display_name: PFT Toolkit
+schema_version: 0.2.1
 contributions:
+  commands:
+    - id: PFT.read_image
+      title: Read PFT microscopy image
+      python_name: PFT.napari.reader:napari_get_reader
   readers:
-    - command: PFT.napari.reader:napari_get_reader
-      filename_patterns: ["*.czi"]
-      accepts_directories: false
+    - command: PFT.read_image
+      filename_patterns:
+        - "*.czi"
+        - "*.tif"
+        - "*.tiff"
+        - "*.ome.tif"
+        - "*.ome.tiff"
+        - "*.zarr"
+        - "*.ome.zarr"
+      accepts_directories: true
