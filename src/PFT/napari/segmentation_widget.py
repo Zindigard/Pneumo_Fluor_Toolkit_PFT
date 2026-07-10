@@ -318,6 +318,23 @@ def _run_omnipose(req: SegmentationRequest, merged: np.ndarray) -> np.ndarray:
     return labels
 
 
+
+def _make_label_boundary_overlay(labels: np.ndarray) -> np.ndarray:
+    """Create a uint8 boundary overlay from a 2D or 3D label mask."""
+    from skimage.segmentation import find_boundaries
+
+    lab = np.asarray(labels)
+    if lab.ndim == 2:
+        return (find_boundaries(lab, mode="outer") * 255).astype(np.uint8)
+
+    if lab.ndim == 3:
+        out = np.zeros_like(lab, dtype=np.uint8)
+        for z in range(lab.shape[0]):
+            out[z] = (find_boundaries(lab[z], mode="outer") * 255).astype(np.uint8)
+        return out
+
+    raise ValueError(f"Boundary overlay expects 2D or 3D labels. Got shape={lab.shape}")
+
 def _segmentation_worker(req: SegmentationRequest) -> Iterable[StepLayerResult]:
     merged = _merge_for_segmentation(req.layers, req.mode)
     axes = "yx" if req.mode == "2d" else "zyx"
@@ -372,6 +389,26 @@ def _segmentation_worker(req: SegmentationRequest) -> Iterable[StepLayerResult]:
     if req.active_scale is not None and len(req.active_scale) == labels.ndim:
         label_kwargs["scale"] = req.active_scale
     yield StepLayerResult(labels.astype(np.uint16), label_kwargs["name"], "labels", label_kwargs)
+
+    overlay = _make_label_boundary_overlay(labels)
+    overlay_kwargs = {
+        "name": f"PFT | segmentation | {req.model_family} boundaries",
+        "metadata": {
+            "pft_step": f"segmentation_{req.model_family}_boundaries",
+            "pft_dataset": req.dataset,
+            "pft_model_family": req.model_family,
+            "pft_source_layer": req.active_layer_name,
+            "pft_axes": axes,
+            "pft_ome_zarr_path": req.source_ome_zarr,
+            "pft_save_default": False,
+        },
+        "blending": "additive",
+        "colormap": "yellow",
+        "contrast_limits": (0, 255),
+    }
+    if req.active_scale is not None and len(req.active_scale) == overlay.ndim:
+        overlay_kwargs["scale"] = req.active_scale
+    yield StepLayerResult(overlay.astype(np.uint8), overlay_kwargs["name"], "image", overlay_kwargs)
 
 
 class PFTSegmentationWidget(QWidget):

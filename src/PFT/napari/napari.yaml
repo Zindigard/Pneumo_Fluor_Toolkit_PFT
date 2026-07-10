@@ -12,6 +12,9 @@ contributions:
     - id: PFT.segmentation_widget
       title: PFT segmentation
       python_name: PFT.napari.segmentation_widget:make_segmentation_widget
+    - id: PFT.results_widget
+      title: PFT results / statistics
+      python_name: PFT.napari.results_widget:make_results_widget
   readers:
     - command: PFT.read_image
       filename_patterns:
@@ -28,3 +31,5 @@ contributions:
       display_name: PFT denoising / restoration
     - command: PFT.segmentation_widget
       display_name: PFT segmentation
+    - command: PFT.results_widget
+      display_name: PFT results / statistics
