@@ -21,9 +21,6 @@ from PFT.core_prog_parts.common_paths import find_project_root
 class PFTResultsWidget(QWidget):
     """
     Placeholder napari widget for PFT statistical and quantitative outputs.
-
-    This widget is intentionally minimal at this stage. It reserves the GUI slot
-    for future measurements, statistics, plots, CSV export, and model comparison.
     """
 
     def __init__(self, napari_viewer):
