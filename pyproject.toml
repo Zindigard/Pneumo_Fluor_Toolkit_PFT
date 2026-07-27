@@ -48,58 +48,58 @@ Homepage = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT"
 Repository = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT"
 Issues = "https://github.com/Zindigard/Pneumo_Fluor_Toolkit_PFT/issues"
 
-# Commands implemented directly in core_prog_parts.
+# Commands implemented in categorized core processing subpackages.
 [project.scripts]
-pft-psf = "PFT.core_prog_parts.psf_creator:main"
-pft-dl2 = "PFT.core_prog_parts.dl2:main"
-pft-fiji = "PFT.core_prog_parts.fuji_managment:main"
-pft-denoise = "PFT.core_prog_parts.denoiser:main"
-pft-intensity = "PFT.core_prog_parts.intenisty:main"
-pft-n2v-train = "PFT.core_prog_parts.n2v_train_models:main"
-pft-tune-notch = "PFT.core_prog_parts.tune_notch:main"
-pft-tune-freehand = "PFT.core_prog_parts.tune_freehand:main"
+pft-psf = "PFT.core_prog_parts.denoising.psf_creator:main"
+pft-dl2 = "PFT.core_prog_parts.denoising.dl2:main"
+pft-fiji = "PFT.core_prog_parts.denoising.fuji_managment:main"
+pft-denoise = "PFT.core_prog_parts.denoising.denoiser:main"
+pft-intensity = "PFT.core_prog_parts.statistics.intenisty:main"
+pft-n2v-train = "PFT.core_prog_parts.denoising.n2v_train_models:main"
+pft-tune-notch = "PFT.core_prog_parts.denoising.tune_notch:main"
+pft-tune-freehand = "PFT.core_prog_parts.denoising.tune_freehand:main"
 
-# Terminal wrappers stored in src/PFT/scripts.
-pft-fft = "PFT.scripts.FFT:main"
-pft-fft-3d = "PFT.scripts.FFT_3d:main"
-pft-psf-checks = "PFT.scripts.PSF_checks:main"
-pft-check-2d = "PFT.scripts.check_2d:main"
-pft-check-3d = "PFT.scripts.check_3d:main"
-pft-check-3d-psf-suff = "PFT.scripts.check_3d_psf_suff:main"
-pft-collage = "PFT.scripts.collage:main"
-pft-collect-training-omezarr = "PFT.scripts.collect_training_omezarr:main"
-pft-compare-deconvolve = "PFT.scripts.compare_deconvolve:main"
-pft-composites = "PFT.scripts.composites:main"
-pft-create-psf = "PFT.scripts.create_psf:main"
-pft-results-graphs = "PFT.scripts.create_results_graphs:main"
-pft-results-statistics = "PFT.scripts.create_results_statistics:main"
-pft-thesis-graphs = "PFT.scripts.create_thesis_graphs:main"
-pft-damp-meta = "PFT.scripts.damp_meta:main"
-pft-deconvolve-3d = "PFT.scripts.deconvolve_3d:main"
-pft-deconvolve-3d-v2 = "PFT.scripts.deconvolve_3d_v2:main"
-pft-intensity-3d = "PFT.scripts.intensity_distribution_3d:main"
-pft-n2v-validation = "PFT.scripts.n2v_validation:main"
-pft-noise-checks = "PFT.scripts.noise_checks:main"
-pft-normalization-psf = "PFT.scripts.normalizarion_PSF:main"
-pft-normalized = "PFT.scripts.normalized:main"
-pft-patches = "PFT.scripts.patches:main"
-pft-process-czi = "PFT.scripts.process_czi:main"
-pft-run-cellpose = "PFT.scripts.run_cellpose_terminal:main"
-pft-run-microbj = "PFT.scripts.run_microbj:main"
-pft-run-omnipose = "PFT.scripts.run_omnipose_terminal:main"
-pft-run-pca-mask = "PFT.scripts.run_pca_mask_terminal:main"
-pft-run-stardist = "PFT.scripts.run_stardist_terminal:main"
-pft-run-unet = "PFT.scripts.run_unet_terminal:main"
-pft-run-yolo = "PFT.scripts.run_yolo_terminal:main"
-pft-sanity-2d = "PFT.scripts.sanity_2d:main"
-pft-sanity-3d = "PFT.scripts.sanity_3d:main"
-pft-segmentation = "PFT.scripts.segmentation_launcher:main"
-pft-train-cellpose = "PFT.scripts.train_cellpose_terminal:main"
-pft-train-omnipose = "PFT.scripts.train_omnipose_terminal:main"
-pft-train-stardist = "PFT.scripts.train_stardist_terminal:main"
-pft-train-unet = "PFT.scripts.train_unet_terminal:main"
-pft-train-yolo = "PFT.scripts.train_yolo_terminal:main"
-pft-yolo-launcher = "PFT.scripts.yolo_launcher:main"
+# Terminal wrappers stored in categorized repository-root scripts subpackages.
+pft-fft = "scripts.denoising.FFT:main"
+pft-fft-3d = "scripts.denoising.FFT_3d:main"
+pft-psf-checks = "scripts.denoising.PSF_checks:main"
+pft-check-2d = "scripts.denoising.check_2d:main"
+pft-check-3d = "scripts.denoising.check_3d:main"
+pft-check-3d-psf-suff = "scripts.denoising.check_3d_psf_suff:main"
+pft-collage = "scripts.denoising.collage:main"
+pft-collect-training-omezarr = "scripts.segmentation.collect_training_omezarr:main"
+pft-compare-deconvolve = "scripts.denoising.compare_deconvolve:main"
+pft-composites = "scripts.denoising.composites:main"
+pft-create-psf = "scripts.denoising.create_psf:main"
+pft-results-graphs = "scripts.statistics.create_results_graphs:main"
+pft-results-statistics = "scripts.statistics.create_results_statistics:main"
+pft-thesis-graphs = "scripts.statistics.create_thesis_graphs:main"
+pft-damp-meta = "scripts.denoising.damp_meta:main"
+pft-deconvolve-3d = "scripts.denoising.deconvolve_3d:main"
+pft-deconvolve-3d-v2 = "scripts.denoising.deconvolve_3d_v2:main"
+pft-intensity-3d = "scripts.statistics.intensity_distribution_3d:main"
+pft-n2v-validation = "scripts.denoising.n2v_validation:main"
+pft-noise-checks = "scripts.denoising.noise_checks:main"
+pft-normalization-psf = "scripts.denoising.normalizarion_PSF:main"
+pft-normalized = "scripts.denoising.normalized:main"
+pft-patches = "scripts.denoising.patches:main"
+pft-process-czi = "scripts.denoising.process_czi:main"
+pft-run-cellpose = "scripts.segmentation.run_cellpose_terminal:main"
+pft-run-microbj = "scripts.segmentation.run_microbj:main"
+pft-run-omnipose = "scripts.segmentation.run_omnipose_terminal:main"
+pft-run-pca-mask = "scripts.statistics.run_pca_mask_terminal:main"
+pft-run-stardist = "scripts.segmentation.run_stardist_terminal:main"
+pft-run-unet = "scripts.segmentation.run_unet_terminal:main"
+pft-run-yolo = "scripts.segmentation.run_yolo_terminal:main"
+pft-sanity-2d = "scripts.denoising.sanity_2d:main"
+pft-sanity-3d = "scripts.denoising.sanity_3d:main"
+pft-segmentation = "scripts.segmentation.segmentation_launcher:main"
+pft-train-cellpose = "scripts.segmentation.train_cellpose_terminal:main"
+pft-train-omnipose = "scripts.segmentation.train_omnipose_terminal:main"
+pft-train-stardist = "scripts.segmentation.train_stardist_terminal:main"
+pft-train-unet = "scripts.segmentation.train_unet_terminal:main"
+pft-train-yolo = "scripts.segmentation.train_yolo_terminal:main"
+pft-yolo-launcher = "scripts.segmentation.yolo_launcher:main"
 
 [project.entry-points."napari.manifest"]
 PFT = "PFT.napari:napari.yaml"
@@ -190,12 +190,14 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = { "" = "src" }
+# The importable PFT package remains under src/PFT, while command wrappers
+# remain in the repository-root scripts directory.
+package-dir = { "PFT" = "src/PFT", "scripts" = "scripts" }
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["PFT*"]
+where = ["src", "."]
+include = ["PFT*", "scripts*"]
 namespaces = true
 
 [tool.setuptools.package-data]
