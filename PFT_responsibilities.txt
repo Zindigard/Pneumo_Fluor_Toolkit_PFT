@@ -1,0 +1,689 @@
+PNEUMO-FLUOR TOOLKIT (PFT)
+================================================================================
+Document version: 2026-07-27
+
+PURPOSE
+--------------------------------------------------------------------------------
+This document identifies the responsibility of the current command-line scripts
+and reusable core modules in the Pneumo-Fluor Toolkit.
+
+ARCHITECTURE RULE
+--------------------------------------------------------------------------------
+1. User-facing commands are stored under:
+
+   scripts/
+
+2. Reusable implementation code is stored under:
+
+   src/PFT/core_prog_parts/
+
+3. Scripts import core code with package imports such as:
+
+   from PFT.core_prog_parts.io import load_czi
+
+4. The repository's src directory must be on the Python import path. The current
+   scripts locate the repository from their own file location and add <root>/src
+   when they are executed directly.
+
+
+LABELS
+--------------------------------------------------------------------------------
+[PRIMARY] Main supported workflow entry point.
+[RUN]     User-facing terminal command or analysis utility.
+[CORE]    Reusable processing implementation imported by scripts.
+[SUPPORT] Shared paths, I/O, plotting, metadata, or conversion utilities.
+[COMPAT]  Compatibility module retained for older imports.
+[PACKAGE] Python package marker.
+[SPECIAL] Specialized diagnostic, comparison, or thesis-output script.
+
+
+A. PROJECT CONFIGURATION AND IMPORT VALIDATION
+================================================================================
+
+pyproject.toml
+  [SUPPORT] Defines the PFT package, Python-version requirement, dependencies,
+  optional deep-learning environments, console commands, setuptools package
+  discovery, test settings, and formatting/linting configuration.
+
+scripts/check_project_imports.py
+  [PRIMARY] Checks that scripts/ and src/PFT/core_prog_parts/ belong to the same
+  repository root. Indexes local PFT modules and verifies that local module and
+  imported-symbol references exist. Writes results/import_check_report.txt.
+  This check validates local source structure, not installation of third-party
+  packages such as NumPy, TensorFlow, Cellpose, or napari.
+
+scripts/__init__.py
+  [PACKAGE] Marks scripts as an importable command-wrapper package.
+
+src/PFT/core_prog_parts/__init__.py
+  [PACKAGE] Marks the reusable core-processing package.
+
+src/PFT/core_prog_parts/common_paths.py
+  [SUPPORT] Central path utilities for finding the project root, creating output
+  directories, normalizing dataset names, and resolving standard results/img
+  and results/filters locations.
+
+
+B. RAW-DATA DISCOVERY, CZI IMPORT, OME-ZARR CREATION, AND VALIDATION
+================================================================================
+
+PRIMARY WORKFLOW
+--------------------------------------------------------------------------------
+Raw CZI data
+  -> scripts/denoising/process_czi.py
+  -> data_discovery.py + io.py
+  -> save.py + omezarr_utils.py
+  -> omezarr_validation.py
+  -> results/img/<dataset>/<sample>/
+
+scripts/denoising/process_czi.py
+  [PRIMARY] Main CZI-import command. Processes 2d_time, 2d_wga_dapi, 3d, or all
+  datasets. Resolves raw-data folders, discovers CZI files recursively, loads
+  pixels and metadata, creates compact TIFF/PNG exports, writes OME-Zarr, runs
+  exact validation, and writes dataset/global summaries. Supports one-file,
+  one-dataset, and all-dataset operation.
+
+scripts/denoising/validate_omezarr.py
+  [PRIMARY] Revalidates one or all existing *.ome.zarr stores against original
+  CZI files. With no target, scans results/img. Keeps detailed checks in each
+  sample's ome_zarr_validation.txt and creates compact dataset-level and global
+  summary files. Can search a replacement raw-data root when source paths moved.
+
+src/PFT/core_prog_parts/data_discovery.py
+  [CORE] Resolves raw-data directories without assuming a fixed drive letter.
+  Recognizes accepted dataset-folder aliases, searches parent folders, supports
+  graphical/terminal selection, detects CZI content, and groups 3D CZI files by
+  relative experiment directory.
+
+src/PFT/core_prog_parts/io.py
+  [CORE] Reads Zeiss CZI files. Loads the pixel array, reads CZI header axes and
+  shape, extracts XML, physical sampling, channel names, channel settings,
+  microscope, objective, detector, SIM, and acquisition information, and stores
+  these values in the CziMeta dataclass.
+
+src/PFT/core_prog_parts/save.py
+  [CORE] Writes per-sample outputs below results/img. For 2D data it writes
+  metadata.txt, metadata.xml, image_norm16.tif, image_norm16_rgb.tif,
+  preview_raw.png, preview_norm.png, image.ome.zarr, and
+  ome_zarr_validation.txt. It intentionally does not create duplicate raw TIFF
+  files because lossless, non-normalized source pixels are retained in OME-Zarr
+  level 0. For 3D it writes metadata reports and validated multiscale OME-Zarr.
+
+src/PFT/core_prog_parts/omezarr_utils.py
+  [CORE] Writes OME-NGFF OME-Zarr data. Determines canonical axes, preserves
+  exact non-normalized level-0 pixels, stores physical scales and complete CZI
+  metadata, writes channel information, and optionally creates lateral XY
+  multiscale pyramid levels for 3D data.
+
+src/PFT/core_prog_parts/omezarr_validation.py
+  [CORE] Performs exact OME-Zarr validation. Compares axes, shape, dtype, every
+  level-0 pixel, SHA-256 digest, channel names, physical scales, pyramid layout,
+  XML sidecar content, and all CziMeta fields. Writes detailed per-image reports,
+  compact per-dataset summaries, and a global results/img summary.
+
+src/PFT/core_prog_parts/decoder_omezar.py
+  [CORE] Reads and standardizes existing OME-Zarr arrays. Handles axis
+  normalization, CZYX conversion, selected slices, complete 3D volume loading,
+  N2V stack preparation, metadata extraction, and PSF-generator configuration
+  parsing used by diagnostic and restoration scripts.
+
+scripts/denoising/damp_meta.py
+  [SPECIAL] Reads selected CZI files and dumps header, array-shape, and XML-based
+  metadata for inspection. Useful when testing metadata parsing or diagnosing
+  unusual CZI dimensions before conversion.
+
+scripts/denoising/sanity_2d.py
+  [RUN] Opens a 2D OME-Zarr level, selects a representative plane, splits
+  channels, normalizes display data, and performs a quick visual sanity check.
+  It is a visual inspection tool, not the exact preservation validator.
+
+scripts/denoising/sanity_3d.py
+  [RUN] Inspects 3D OME-Zarr hierarchy, multiscale metadata, axes, channel count,
+  and selected content. Used for structural and visual checks after conversion.
+
+scripts/denoising/from_ome_to_tiff.py
+  [SPECIAL] Exports grouped, normalized, colored TIFF representations from
+  denoised OME-Zarr volumes. It is a downstream export utility and does not
+  replace the original CZI-to-OME-Zarr import workflow.
+
+scripts/segmentation/collect_training_omezarr.py
+  [SPECIAL] Collects image.ome.zarr stores from results/img and transfers them
+  into results/training_files for segmentation training. Current behavior uses
+  shutil.move, so source OME-Zarr stores are removed from results/img unless the
+  script is changed to copy. Use deliberately and only after validation.
+
+
+C. SHARED IMAGE, VISUALIZATION, AND PLOTTING UTILITIES
+================================================================================
+
+src/PFT/core_prog_parts/image_utils.py
+  [SUPPORT] Numeric image helpers for percentile/min-max normalization, dtype
+  conversion, display-plane extraction, shared raw scaling, and construction of
+  time-series and WGA-DAPI RGB composites.
+
+src/PFT/core_prog_parts/visualization.py
+  [SUPPORT] Shared visualization functions for 2D/3D processing. Creates channel
+  composites, microscopy previews, FFT displays, scale bars, comparison panels,
+  TIFF figures, U-Net overlays, and single-channel outputs. Preview functions
+  call normalize01_percentile with the currently supported p_lo/p_hi arguments.
+
+src/PFT/core_prog_parts/visualize_2d.py
+  [COMPAT] Re-exports functions from visualization.py for older imports. New code
+  should import PFT.core_prog_parts.visualization directly.
+
+src/PFT/core_prog_parts/plot_utils.py
+  [SUPPORT] Common publication-figure helpers for scale bars, axis styling,
+  figure finalization, and side-by-side image export.
+
+
+D. DENOISING, FILTERING, PSF GENERATION, AND DECONVOLUTION
+================================================================================
+
+D1. USER-FACING DENOISING AND DIAGNOSTIC SCRIPTS
+--------------------------------------------------------------------------------
+
+scripts/denoising/__init__.py
+  [PACKAGE] Marks the denoising command package.
+
+scripts/denoising/check_2d.py
+  [RUN] Computes 2D image-quality and noise diagnostics for time-series and
+  WGA-DAPI OME-Zarr data, including robust difference-based noise estimates and
+  channel/image measurements. Produces analysis reports rather than denoised
+  images.
+
+scripts/denoising/check_3d.py
+  [RUN] Computes 3D image and metadata diagnostics, including noise, correlation,
+  intensity-trend, sampling, and volume consistency checks.
+
+scripts/denoising/noise_checks.py
+  [RUN] General noise-pattern assessment using neighbor correlations, row/column
+  correlation, FFT peak scores, and saved image/FFT visualizations.
+
+scripts/denoising/FFT.py
+  [SPECIAL] Performs 2D Fourier-domain diagnostic analysis and computes image
+  metrics related to periodic noise and spatial correlation.
+
+scripts/denoising/FFT_3d.py
+  [SPECIAL] Loads 3D OME-Zarr data, selects representative slices, creates RGB
+  and FFT visualizations, and computes volume/slice-level frequency diagnostics.
+
+scripts/denoising/patches.py
+  [SPECIAL] Creates selected image patches/crops from OME-Zarr data, including
+  normalized and raw-scaled channel/RGB representations for comparison or
+  training-data inspection.
+
+scripts/denoising/collage.py
+  [SPECIAL] Builds fixed-layout collages from available preview images for
+  dataset comparison and reporting.
+
+scripts/denoising/normalized.py
+  [SPECIAL] Generates normalized views or derivative outputs from selected
+  OME-Zarr pyramid levels and records output information.
+
+scripts/denoising/composites.py
+  [SPECIAL] Builds channel composites from selected OME-Zarr datasets and pyramid
+  levels for visual comparison.
+
+scripts/denoising/create_psf.py
+  [RUN] User-facing PSF-generation wrapper. Selects an OME-Zarr image and calls
+  psf_creator.py to generate channel-specific PSFs based on image metadata and
+  selected optical models.
+
+scripts/denoising/normalizarion_PSF.py
+  [RUN] Analyzes, centers, normalizes, and saves PSF TIFF files in a form suitable
+  for subsequent deconvolution. The filename contains a historical spelling and
+  should not be renamed without updating pyproject and references.
+
+scripts/denoising/PSF_checks.py
+  [RUN] Compares PSF TIFF pairs, checks array properties, computes hashes, and
+  writes reports for PSF integrity and reproducibility.
+
+scripts/denoising/check_3d_psf_suff.py
+  [RUN] Compares 3D OME-Zarr optical/sampling metadata with PSFGenerator
+  configuration files and reports whether the PSF configuration contains the
+  required and compatible parameters.
+
+scripts/denoising/deconvolve_3d.py
+  [RUN] Runs the Fiji/DeconvolutionLab2-based 3D deconvolution implementation on
+  selected OME-Zarr datasets and pyramid levels.
+
+scripts/denoising/deconvolve_3d_v2.py
+  [RUN] Runs the Python/scikit-image Richardson-Lucy 3D deconvolution path that
+  does not require Fiji.
+
+scripts/denoising/compare_deconvolve.py
+  [SPECIAL] Compares original and deconvolved OME-Zarr data through selected
+  slices, scaling, metadata, and visual/quantitative comparison outputs.
+
+scripts/denoising/n2v_validation.py
+  [RUN] Prepares OME-Zarr data for Noise2Void evaluation, applies or compares N2V
+  results, supports crop selection, and writes validation outputs.
+
+D2. REUSABLE DENOISING CORE MODULES
+--------------------------------------------------------------------------------
+
+src/PFT/core_prog_parts/denoising/__init__.py
+  [PACKAGE] Marks the denoising/restoration core package.
+
+src/PFT/core_prog_parts/denoising/denoiser.py
+  [CORE] Main configurable denoising and filtering workflow. Loads source images,
+  selects datasets/channels, applies selected filters and thresholds, computes
+  metrics, saves comparison panels and masks, and writes batch summaries.
+
+src/PFT/core_prog_parts/denoising/BM3D.py
+  [CORE] Applies BM3D denoising to 2D images or dataset collections with explicit
+  normalization, sigma/profile parameters, and restoration to the source range.
+
+src/PFT/core_prog_parts/denoising/notch_filter.py
+  [CORE] Implements Fourier-domain notch/wedge masks and applies periodic-noise
+  suppression to selected channels in OME-Zarr datasets.
+
+src/PFT/core_prog_parts/denoising/free_hand_filter.py
+  [CORE] Applies user-defined freehand frequency masks to selected image planes
+  and writes filtered results.
+
+src/PFT/core_prog_parts/denoising/tune_notch.py
+  [CORE] Interactive parameter-tuning and batch-evaluation workflow for notch
+  filtering. Computes correlations, FFT peak scores, gradient measures, and
+  comparison reports.
+
+src/PFT/core_prog_parts/denoising/tune_freehand.py
+  [CORE] Interactive and batch tuning for freehand FFT masks, rectangular
+  frequency deletion, and rolling-ball background subtraction, with metrics and
+  visual comparison reports.
+
+src/PFT/core_prog_parts/denoising/n2v_train_models.py
+  [CORE] Builds N2V training data from OME-Zarr, splits patches into training and
+  validation groups, previews patches, and trains single-channel or joint-channel
+  Noise2Void models.
+
+src/PFT/core_prog_parts/denoising/n2v_denoising.py
+  [CORE] Loads trained N2V models and performs prediction for WGA-DAPI or generic
+  2D inputs intended for later segmentation.
+
+src/PFT/core_prog_parts/denoising/psf_creator.py
+  [CORE] Reads image sampling/channel metadata, creates PSFGenerator parameter
+  files, plans channel-specific PSF jobs, runs PSFGenerator through Java/Fiji,
+  and rewrites PSF output metadata when required.
+
+src/PFT/core_prog_parts/denoising/fuji_managment.py
+  [CORE] Locates or installs Fiji-related project resources, checks required
+  plugins such as PSFGenerator and DeconvolutionLab2, configures Java, and manages
+  the local Fiji integration.
+
+src/PFT/core_prog_parts/denoising/Deconvolution_omezarr.py
+  [CORE] Fiji/DeconvolutionLab2-based channel-wise 3D deconvolution. Selects PSFs,
+  runs restoration, creates output OME-Zarr, and verifies written output.
+
+src/PFT/core_prog_parts/denoising/deconvolution_no_fuji.py
+  [CORE] Python/scikit-image Richardson-Lucy 3D deconvolution. Normalizes PSFs,
+  prepares image arrays, processes channels, and writes single-scale OME-Zarr
+  output without Fiji.
+
+src/PFT/core_prog_parts/denoising/dl2.py
+  [CORE] DeconvolutionLab2 command-line support, including channel wavelength/PSF
+  selection, OME-Zarr channel loading, validity checks, memory reporting, and
+  ImageJ-compatible TIFF stack export.
+
+
+E. SEGMENTATION AND MODEL TRAINING
+================================================================================
+
+E1. USER-FACING SEGMENTATION SCRIPTS
+--------------------------------------------------------------------------------
+
+scripts/segmentation/__init__.py
+  [PACKAGE] Marks the segmentation command package.
+
+scripts/segmentation/segmentation_launcher.py
+  [PRIMARY] General interactive launcher for supported segmentation workflows.
+  Selects dataset/model/training or inference options and calls shared Cellpose,
+  StarDist, Omnipose, and OME-Zarr output functions.
+
+scripts/segmentation/run_cellpose_terminal.py
+  [RUN] Runs Cellpose inference for 2d_time, 2d_wga_dapi, or 3d data using the
+  corresponding dataset-specific core configuration.
+
+scripts/segmentation/train_cellpose_terminal.py
+  [RUN] Fine-tunes Cellpose models for the three supported dataset classes using
+  dataset-specific training cores.
+
+scripts/segmentation/run_omnipose_terminal.py
+  [RUN] Runs Omnipose inference for 2d_time, 2d_wga_dapi, or 3d data.
+
+scripts/segmentation/train_omnipose_terminal.py
+  [RUN] Fine-tunes Omnipose models for the three supported dataset classes.
+
+scripts/segmentation/run_stardist_terminal.py
+  [RUN] Runs StarDist inference for 2d_time, 2d_wga_dapi, or 3d data.
+
+scripts/segmentation/train_stardist_terminal.py
+  [RUN] Fine-tunes StarDist models for the three supported dataset classes.
+
+scripts/segmentation/run_unet_terminal.py
+  [RUN] Runs the current U-Net inference core for 2D time, 2D WGA-DAPI, and 3D
+  2.5D workflows with user-selected model, channels, and target images.
+
+scripts/segmentation/train_unet_terminal.py
+  [RUN] Trains current U-Net models for 2d_time, 2d_wga_dapi, or 3D 2.5D data.
+
+scripts/segmentation/run_unet.py
+  [SPECIAL] Older/general U-Net inference script that loads models directly,
+  applies tiled inference, and saves masks/overlays and OME-Zarr output. Prefer
+  run_unet_terminal.py for the categorized current workflow unless this script's
+  special behavior is required.
+
+scripts/segmentation/run_yolo_terminal.py
+  [RUN] Runs YOLO segmentation inference for 2d_time, 2d_wga_dapi, or 3d data.
+
+scripts/segmentation/train_yolo_terminal.py
+  [RUN] Fine-tunes YOLO models for the three supported dataset classes.
+
+scripts/segmentation/yolo_launcher.py
+  [RUN] Interactive YOLO-specific launcher for training or inference.
+
+scripts/segmentation/run_microbj.py
+  [RUN] Locates Fiji/MicrobeJ, selects TIFF inputs, generates macros, and runs
+  MicrobeJ batch segmentation through Fiji.
+
+E2. SHARED AND DATASET-SPECIFIC SEGMENTATION CORE
+--------------------------------------------------------------------------------
+
+src/PFT/core_prog_parts/segmentation/__init__.py
+  [PACKAGE] Marks the segmentation, training, prediction, and mask-processing
+  package.
+
+src/PFT/core_prog_parts/segmentation/segmentation_model_io_core.py
+  [CORE] Shared segmentation I/O and preprocessing. Loads OME-Zarr, normalizes
+  arrays, extracts 2D/3D inputs, locates masks and images, builds training pairs,
+  saves label outputs/JSON, and resolves model/prediction directories.
+
+src/PFT/core_prog_parts/segmentation/thresholding.py
+  [CORE] Intensity-threshold segmentation/preprocessing utilities. Builds base
+  intensity images, classifies and dilates masks, applies weighted threshold
+  filters, creates RGB views, and saves thresholded datasets.
+
+src/PFT/core_prog_parts/segmentation/floodfill_algorythm.py
+  [CORE] Validated 2D flood-fill segmentation from one or multiple seed points,
+  with tolerance/connectivity handling, mask merging, uint8 conversion, and mask
+  application. Filename spelling is retained for import compatibility.
+
+src/PFT/core_prog_parts/segmentation/microbj.py
+  [CORE] Fiji/MicrobeJ integration. Finds Fiji and the plugin JAR, installs the
+  plugin when needed, generates safe macros, collects TIFF inputs, and runs
+  single or batch MicrobeJ jobs.
+
+CELLPOSE
+--------------------------------------------------------------------------------
+src/PFT/core_prog_parts/segmentation/cellpose_run.py
+  [CORE] General Cellpose inference implementation used by the general launcher.
+  Loads filtered images, extracts channels/slices, runs one image or a dataset,
+  and saves segmentation outputs.
+
+src/PFT/core_prog_parts/segmentation/cellpose_train.py
+  [CORE] General Cellpose training implementation. Resolves filtered OME-Zarr and
+  masks, prepares inputs/labels, and trains a model from a configured dataset.
+
+src/PFT/core_prog_parts/segmentation/cellpose_run_2d_time_core.py
+  [CORE] Dataset-specific Cellpose inference for 2D time-series images.
+
+src/PFT/core_prog_parts/segmentation/cellpose_run_2d_wga_dapi_core.py
+  [CORE] Dataset-specific Cellpose inference for 2D WGA-DAPI images.
+
+src/PFT/core_prog_parts/segmentation/cellpose_run_3d_core.py
+  [CORE] Dataset-specific Cellpose inference for 3D images.
+
+src/PFT/core_prog_parts/segmentation/cellpose_finetune_2d_time_core.py
+  [CORE] Cellpose fine-tuning workflow for 2D time-series data.
+
+src/PFT/core_prog_parts/segmentation/cellpose_finetune_2d_wga_dapi_core.py
+  [CORE] Cellpose fine-tuning workflow for 2D WGA-DAPI data.
+
+src/PFT/core_prog_parts/segmentation/cellpose_finetune_3d_core.py
+  [CORE] Cellpose fine-tuning workflow for 3D data.
+
+OMNIPOSE
+--------------------------------------------------------------------------------
+src/PFT/core_prog_parts/segmentation/omnipose_run.py
+  [CORE] General Omnipose inference implementation used by the general launcher.
+
+src/PFT/core_prog_parts/segmentation/omnipose_train.py
+  [CORE] General Omnipose training implementation and training-folder preparation.
+
+src/PFT/core_prog_parts/segmentation/omnipose_run_2d_time_core.py
+  [CORE] Omnipose inference for 2D time-series images.
+
+src/PFT/core_prog_parts/segmentation/omnipose_run_2d_wga_dapi_core.py
+  [CORE] Omnipose inference for 2D WGA-DAPI images.
+
+src/PFT/core_prog_parts/segmentation/omnipose_run_3d_core.py
+  [CORE] Omnipose inference for 3D images.
+
+src/PFT/core_prog_parts/segmentation/omnipose_finetune_2d_time_core.py
+  [CORE] Omnipose fine-tuning for 2D time-series data.
+
+src/PFT/core_prog_parts/segmentation/omnipose_finetune_2d_wga_dapi_core.py
+  [CORE] Omnipose fine-tuning for 2D WGA-DAPI data.
+
+src/PFT/core_prog_parts/segmentation/omnipose_finetune_3d_core.py
+  [CORE] Omnipose fine-tuning for 3D data.
+
+STARDIST
+--------------------------------------------------------------------------------
+src/PFT/core_prog_parts/segmentation/stardist_run.py
+  [CORE] General StarDist inference implementation used by the general launcher.
+
+src/PFT/core_prog_parts/segmentation/stardist_train.py
+  [CORE] General StarDist training implementation, including input/mask loading,
+  splitting, and model training.
+
+src/PFT/core_prog_parts/segmentation/stardist_run_2d_time_core.py
+  [CORE] StarDist inference for 2D time-series images.
+
+src/PFT/core_prog_parts/segmentation/stardist_run_2d_wga_dapi_core.py
+  [CORE] StarDist inference for 2D WGA-DAPI images.
+
+src/PFT/core_prog_parts/segmentation/stardist_run_3d_core.py
+  [CORE] StarDist inference for 3D images.
+
+src/PFT/core_prog_parts/segmentation/stardist_finetune_2d_time_core.py
+  [CORE] StarDist fine-tuning for 2D time-series data.
+
+src/PFT/core_prog_parts/segmentation/stardist_finetune_2d_wga_dapi_core.py
+  [CORE] StarDist fine-tuning for 2D WGA-DAPI data.
+
+src/PFT/core_prog_parts/segmentation/stardist_finetune_3d_core.py
+  [CORE] StarDist fine-tuning for 3D data.
+
+U-NET
+--------------------------------------------------------------------------------
+src/PFT/core_prog_parts/segmentation/unet_run_core.py
+  [CORE] Current U-Net inference implementation. Finds OME-Zarr inputs and model
+  paths, performs padded/tiled prediction, and supports 2D time, 2D WGA-DAPI,
+  and slice-wise 3D 2.5D output.
+
+src/PFT/core_prog_parts/segmentation/unet_train_2d_time_core.py
+  [CORE] Full 2D time-series U-Net training pipeline: pair discovery, OME-Zarr
+  conversion to network inputs, patch sampling, dataset creation, U-Net model,
+  Dice/IoU losses and metrics, training, and graph saving.
+
+src/PFT/core_prog_parts/segmentation/unet_train_2d_wga_dapi_core.py
+  [CORE] WGA-DAPI specialization that configures and calls the shared 2D U-Net
+  training implementation.
+
+src/PFT/core_prog_parts/segmentation/unet_train_3d_25d_core.py
+  [CORE] 3D 2.5D U-Net training. Builds neighboring-slice inputs, pairs 3D images
+  with masks, samples patches, and trains a slice-wise model.
+
+src/PFT/core_prog_parts/segmentation/u_train.py
+  [SPECIAL] Earlier/general U-Net training implementation containing model,
+  losses, patch creation, dataset handling, previews, metrics, and CLI logic.
+  Retained because run_unet.py imports its Dice/IoU functions.
+
+YOLO
+--------------------------------------------------------------------------------
+src/PFT/core_prog_parts/segmentation/yolo_run.py
+  [CORE] General interactive YOLO inference configuration and dataset execution.
+
+src/PFT/core_prog_parts/segmentation/yolo_train.py
+  [CORE] General interactive YOLO training configuration and model training.
+
+src/PFT/core_prog_parts/segmentation/yolo_run_2d_time_core.py
+  [CORE] YOLO inference for 2D time-series images.
+
+src/PFT/core_prog_parts/segmentation/yolo_run_2d_wga_dapi_core.py
+  [CORE] YOLO inference for 2D WGA-DAPI images.
+
+src/PFT/core_prog_parts/segmentation/yolo_run_3d_core.py
+  [CORE] Slice-wise YOLO inference for 3D images.
+
+src/PFT/core_prog_parts/segmentation/yolo_finetune_2d_time_core.py
+  [CORE] Converts masks to YOLO segments, prepares a YOLO dataset, and fine-tunes
+  a model for 2D time-series data.
+
+src/PFT/core_prog_parts/segmentation/yolo_finetune_2d_wga_dapi_core.py
+  [CORE] YOLO dataset preparation and fine-tuning for 2D WGA-DAPI data.
+
+src/PFT/core_prog_parts/segmentation/yolo_finetune_3d_core.py
+  [CORE] Slice-wise YOLO dataset preparation and fine-tuning for 3D data.
+
+
+F. QUANTITATIVE ANALYSIS, STATISTICS, AND GRAPH GENERATION
+================================================================================
+
+F1. USER-FACING STATISTICS SCRIPTS
+--------------------------------------------------------------------------------
+
+scripts/statistics/__init__.py
+  [PACKAGE] Marks the statistics command package.
+
+scripts/statistics/run_pca_mask_terminal.py
+  [PRIMARY] Interactive command for PCA-based mask/cell alignment. Selects the
+  segmentation method, dataset, samples, and alignment parameters, then calls
+  pca_maskt_core.py for standardized cell orientation and output measurements.
+
+scripts/statistics/create_results_graphs.py
+  [PRIMARY] Selects a dataset, graph type, and final-values CSV, then calls the
+  graph-generation core. Supports profile plots, boxplots, standardized maps,
+  colocalization/correlation plots, and 3D-specific outputs.
+
+scripts/statistics/create_results_statistics.py
+  [PRIMARY] Selects a dataset, analysis type, test, factors, and CSV, then calls
+  the statistics core for AUC, Welch tests, automatic comparisons, or two-way
+  ANOVA and writes result tables.
+
+scripts/statistics/create_thesis_graphs.py
+  [SPECIAL] Generates the predefined thesis figure set from expected CSV inputs,
+  applies a common thesis style, and can collect figures into a combined PDF.
+
+scripts/statistics/intensity_distribution_3d.py
+  [RUN] Loads 3D OME-Zarr volumes and metadata, creates channel intensity maps,
+  normalized composites, and 3D distribution outputs for quantitative review.
+
+F2. STATISTICS CORE MODULES
+--------------------------------------------------------------------------------
+
+src/PFT/core_prog_parts/statistics/__init__.py
+  [PACKAGE] Marks quantitative measurement, statistical testing, and graph code.
+
+src/PFT/core_prog_parts/statistics/pca_maskt_core.py
+  [CORE] Standardizes segmented cells using PCA orientation, rotation, tight
+  cropping, centering, and label handling. Discovers prediction masks, aligns
+  2D/3D samples, saves crops and aligned OME-Zarr, and writes per-sample and
+  combined final-values CSV files.
+
+src/PFT/core_prog_parts/statistics/results_graphs.py
+  [CORE] Loads and normalizes final-values CSV tables and produces publication
+  graphs: population/time boxplots, axial and radial profiles, standardized cell
+  maps, colocalization/correlation plots, 3D profiles, homogeneity plots, and
+  kymographs. Also writes graph summary CSV files.
+
+src/PFT/core_prog_parts/statistics/results_statistics.py
+  [CORE] Prepares statistical tables, derives experimental factors, calculates
+  AUC, performs Welch t-tests, automatic pairwise tests, Holm correction,
+  Cohen's d, and two-way ANOVA, then writes statistical result CSV files.
+
+src/PFT/core_prog_parts/statistics/intenisty.py
+  [CORE] Curated intensity-analysis workflow for selected images. Loads planes,
+  creates single-channel and RGB outputs, calculates FFT representations, and
+  writes intensity-analysis results. Filename spelling is historical and is
+  referenced by pyproject console commands.
+
+
+G. RECOMMENDED MAIN COMMANDS
+================================================================================
+
+Run from the repository root with the pft environment active:
+
+1. Validate local project imports:
+
+   python scripts/check_project_imports.py
+
+2. Convert CZI files and validate OME-Zarr:
+
+   python scripts/denoising/process_czi.py
+
+3. Revalidate every existing OME-Zarr in results/img:
+
+   python scripts/denoising/validate_omezarr.py
+
+4. Run the general segmentation launcher:
+
+   python scripts/segmentation/segmentation_launcher.py
+
+5. Run model-specific segmentation commands:
+
+   python scripts/segmentation/run_cellpose_terminal.py
+   python scripts/segmentation/run_omnipose_terminal.py
+   python scripts/segmentation/run_stardist_terminal.py
+   python scripts/segmentation/run_unet_terminal.py
+   python scripts/segmentation/run_yolo_terminal.py
+
+6. Train or fine-tune models:
+
+   python scripts/segmentation/train_cellpose_terminal.py
+   python scripts/segmentation/train_omnipose_terminal.py
+   python scripts/segmentation/train_stardist_terminal.py
+   python scripts/segmentation/train_unet_terminal.py
+   python scripts/segmentation/train_yolo_terminal.py
+
+7. Standardize segmented cells and calculate final values:
+
+   python scripts/statistics/run_pca_mask_terminal.py
+
+8. Generate graphs and statistical tests:
+
+   python scripts/statistics/create_results_graphs.py
+   python scripts/statistics/create_results_statistics.py
+
+
+H. EXPECTED MAIN OUTPUT LOCATIONS
+================================================================================
+
+results/img/
+  Imported image data, compact TIFF/PNG previews, OME-Zarr, metadata, detailed
+  validation reports, per-dataset validation summaries, and global validation.
+
+results/training_files/
+  Optional model-training copies/moves of OME-Zarr data created by the training
+  collection script. This directory is not the primary imported-data store.
+
+results/filters/
+  Filtered or denoised datasets and related method outputs.
+
+results/models/ or models/
+  Trained model files, depending on the specific model core and configuration.
+
+results/predictions/ or method-specific prediction directories
+  Segmentation masks, labels, overlays, and method metadata.
+
+results/final_values/
+  Quantitative per-cell/per-sample tables used by graph and statistics modules.
+
+results/graphs/
+  Generated quantitative figures and graph summary files.
+
+results/statistics/
+  Statistical result tables and test summaries.
+
+
