@@ -1,25 +1,40 @@
 from __future__ import annotations
-# Permit direct execution from a source checkout after scripts were grouped into subpackages.
+
+# Configure imports for direct execution from the repository source tree.
 import sys as _pft_sys
 from pathlib import Path as _PFTPath
 
 _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
-for _pft_parent in [_PFT_SCRIPT_FILE.parent, *_PFT_SCRIPT_FILE.parents]:
-    _pft_src = _pft_parent / "src"
-    if (_pft_src / "PFT").exists():
-        if str(_pft_src) not in _pft_sys.path:
-            _pft_sys.path.insert(0, str(_pft_src))
-        break
+
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Locate the repository root independently of script nesting depth."""
+    """Return the repository root containing both ``scripts`` and ``src/PFT``.
+
+    The lookup is based on this script's physical location and therefore does
+    not depend on the current working directory. An explicit error is raised
+    when the expected repository layout cannot be found.
+    """
     current = (start or _PFT_SCRIPT_FILE).resolve()
-    for candidate in [current, *current.parents]:
-        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "PFT").exists():
+    search_start = current if current.is_dir() else current.parent
+
+    for candidate in (search_start, *search_start.parents):
+        core_dir = candidate / "src" / "PFT" / "core_prog_parts"
+        if (candidate / "scripts").is_dir() and core_dir.is_dir():
             return candidate
-        if (candidate / ".git").exists():
-            return candidate
-    return _PFTPath.cwd()
+
+    raise RuntimeError(
+        "Cannot locate the PFT repository root. Expected both "
+        "'scripts' and 'src/PFT/core_prog_parts' in the same project folder. "
+        f"Script location: {_PFT_SCRIPT_FILE}"
+    )
+
+
+_PFT_PROJECT_ROOT = _pft_project_root()
+_PFT_SRC_DIR = _PFT_PROJECT_ROOT / "src"
+
+if str(_PFT_SRC_DIR) not in _pft_sys.path:
+    _pft_sys.path.insert(0, str(_PFT_SRC_DIR))
+
 
 
 from pathlib import Path
@@ -27,12 +42,6 @@ import sys
 import csv
 
 _THIS_FILE = Path(__file__).resolve()
-for _p in [_THIS_FILE.parent, *_THIS_FILE.parents]:
-    if (_p / "src" / "PFT").exists():
-        _SRC_DIR = _p / "src"
-        if str(_SRC_DIR) not in sys.path:
-            sys.path.insert(0, str(_SRC_DIR))
-        break
 
 import argparse
 

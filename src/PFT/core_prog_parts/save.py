@@ -1,3 +1,10 @@
+"""Save PFT microscopy outputs in a reproducible directory structure.
+
+The module writes raw and normalized TIFF files, RGB previews, metadata text
+and XML sidecars, 2D or 3D OME-Zarr images, and automatic validation reports.
+Export errors are recorded beside the affected sample and then re-raised.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,24 +16,16 @@ from PFT.core_prog_parts.image_utils import dtype_max, linear01, minmax01
 from PFT.core_prog_parts.io import CziMeta, read_czi_xml
 from PFT.core_prog_parts import visualization as visualize_2d
 
-"""
-Helper functions to save metadata, previews and OME-Zarr files for 2D and 3D datasets,
-with structured output directories and error handling for missing metadata or OME-Zarr saving issues.
-"""
 
 
 def safe_axes_label(meta: CziMeta) -> str:
     # Store header axes string.
-    """Helper function used by this module."""
+    """Return the original CZI axis string or ``unknown`` when it is unavailable."""
     return meta.axes if isinstance(meta.axes, str) and meta.axes else "unknown"
 
 
 def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
-    """
-    Write:
-      - metadata.txt (dataclass str dump)
-      - metadata.xml (raw xml)
-    """
+    """Write a human-readable metadata dump and the complete raw CZI XML sidecar."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     txt = "\n".join(
@@ -47,7 +46,7 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Create a raw-look blue RGB projection for a time-series image."""
     img2d = visualize_2d.max_project_to_2d(arr)
     b = linear01(img2d, dtype_max(arr))
     z = np.zeros_like(b)
@@ -55,17 +54,12 @@ def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
 
 
 def _rgb01_time_norm(arr: np.ndarray) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Create a normalized blue RGB projection for a time-series image."""
     return visualize_2d.rgb_time_hada_blue(arr)
 
 
 def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
-    """
-    WGA/DAPI requested mapping:
-      Channel 0 -> BLUE
-      Channel 1 -> GREEN
-    Raw look: linear scaling by dtype max.
-    """
+    """Create a linearly scaled RGB projection with DAPI in blue and WGA in green."""
     ch_ax = visualize_2d.find_channel_axis(arr)
     blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
     green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
@@ -77,12 +71,7 @@ def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
 
 
 def _rgb01_wga_dapi_norm(arr: np.ndarray) -> np.ndarray:
-    """
-    Same mapping:
-      Channel 0 -> BLUE
-      Channel 1 -> GREEN
-    Normalized look: percentile normalization per channel.
-    """
+    """Create a percentile-normalized RGB projection with DAPI in blue and WGA in green."""
     ch_ax = visualize_2d.find_channel_axis(arr)
     blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
     green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
@@ -103,18 +92,10 @@ def save_raw_and_normalized_tiffs_and_previews(
     scalebar_um: float,
     save_preview_png: bool,
 ) -> None:
-    """
-    Saves:
-      - image_raw.tif          (original dtype)
-      - image_norm16.tif       (min-max normalized to uint16)
-
-    Plus:
-      - image_raw_rgb.tif      (RGB uint16, requested channel colors)
-      - image_norm16_rgb.tif   (RGB uint16, requested channel colors)
-
-    Plus (if save_preview_png):
-      - preview_raw.png        (raw-look RGB)
-      - preview_norm.png       (normalized-look RGB)
+    """Save raw, normalized, and RGB TIFF outputs plus optional PNG previews.
+    
+    The raw TIFF preserves the source dtype. Normalized grayscale and RGB TIFFs are
+    stored as unsigned 16-bit images for consistent inspection.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -168,22 +149,12 @@ def export_2d(
     *,
     save_omezarr: bool = True,
     overwrite_omezarr: bool = True,
+    validate_omezarr: bool = True,
 ) -> Path:
-    """
-    Export 2D:
-        metadata.txt
-        metadata.xml
-
-        image_raw.tif
-        image_norm16.tif
-
-        image_raw_rgb.tif
-        image_norm16_rgb.tif
-
-        preview_raw.png
-        preview_norm.png
-
-        image.ome.zarr
+    """Export one 2D sample with metadata, TIFF images, previews, and OME-Zarr.
+    
+    When validation is active, exact pixel and metadata preservation is checked
+    automatically. The function returns the created sample output directory.
     """
     if out_base is None:
         out_base = results_img_dir()
@@ -209,18 +180,25 @@ def export_2d(
     if save_omezarr:
         try:
             from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
+            from PFT.core_prog_parts.omezarr_validation import validate_or_raise
 
-            save_ome_zarr_next_to_outputs(
+            zarr_path = save_ome_zarr_next_to_outputs(
                 out_dir=out_dir,
                 arr=arr,
                 meta=meta,
                 overwrite=overwrite_omezarr,
+                pyramid_3d=False,
+                pyramid_max_layer=0,
+                pyramid_downscale=2,
             )
+            if validate_omezarr:
+                validate_or_raise(zarr_path, arr, meta, print_terminal=True)
         except Exception as e:
             (out_dir / "omezarr_error.txt").write_text(
                 f"{type(e).__name__}: {e}\n",
                 encoding="utf-8",
             )
+            raise
 
     if visualize:
         if preview_mode == "wga_dapi":
@@ -236,7 +214,7 @@ def export_2d(
 
 
 def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | None = None) -> Path:
-    """Export processed outputs to disk."""
+    """Create a 3D sample output directory and write metadata sidecars without image export."""
     if out_base is None:
         out_base = results_img_dir()
 
@@ -249,7 +227,7 @@ def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | N
 
 
 def fmt(v: object) -> str:
-    """Helper function used by this module."""
+    """Format optional metadata values for reports, using ``-`` for missing or empty values."""
     if v is None:
         return "-"
     s = str(v).strip()
@@ -257,7 +235,7 @@ def fmt(v: object) -> str:
 
 
 def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
-    """Write the requested report or metadata file."""
+    """Write the complete raw CZI XML to ``metadata_full.xml`` or an absence marker."""
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_xml = getattr(meta, "raw_xml", None)
     if not (isinstance(raw_xml, str) and raw_xml.strip()):
@@ -270,7 +248,7 @@ def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
-    """Write the requested report or metadata file."""
+    """Write a structured 3D metadata report covering sampling, optics, channels, and SIM settings."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     vox = (
@@ -362,12 +340,14 @@ def export_3d(
     out_base: Path | None = None,
     save_omezarr: bool = True,
     overwrite_omezarr: bool = True,
+    validate_omezarr: bool = True,
+    pyramid_max_layer: int = 2,
+    pyramid_downscale: int = 2,
 ) -> Path:
-    """
-    Export 3D:
-        - image.ome.zarr
-        - metadata_report.txt
-        - metadata_full.xml
+    """Export one 3D sample as OME-Zarr with metadata reports and optional multiscale pyramid.
+    
+    Automatic validation checks the generated image before the export is reported
+    as successful. The function returns the sample output directory.
     """
     if out_base is None:
         out_base = results_img_dir()
@@ -382,17 +362,24 @@ def export_3d(
     if save_omezarr:
         try:
             from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
+            from PFT.core_prog_parts.omezarr_validation import validate_or_raise
 
-            save_ome_zarr_next_to_outputs(
+            zarr_path = save_ome_zarr_next_to_outputs(
                 out_dir=out_dir,
                 arr=arr,
                 meta=meta,
                 overwrite=overwrite_omezarr,
+                pyramid_3d=True,
+                pyramid_max_layer=pyramid_max_layer,
+                pyramid_downscale=pyramid_downscale,
             )
+            if validate_omezarr:
+                validate_or_raise(zarr_path, arr, meta, print_terminal=True)
         except Exception as e:
             (out_dir / "omezarr_error.txt").write_text(
                 f"{type(e).__name__}: {e}\n",
                 encoding="utf-8",
             )
+            raise
 
     return out_dir

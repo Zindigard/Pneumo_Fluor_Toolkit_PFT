@@ -1,3 +1,9 @@
+"""Read Zeiss CZI microscopy files and convert their metadata into structured objects.
+The module loads pixel arrays, preserves the original CZI header information,
+extracts physical sampling, channel, optical, detector, and SIM metadata from
+XML, and returns the information through the ``CziMeta`` dataclass.
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,11 +12,14 @@ from typing import Any
 import numpy as np
 import czifile
 
-"""Helper functions to read CZI files from the datasets, extract metadata and save it in a structured way for inspection."""
 
 @dataclass(frozen=True)
 class CziMeta:
-    """Metadata container. 2D users can ignore all new optional fields."""
+    """Store pixel-array properties and metadata extracted from one CZI file.
+    
+    All fields are serializable by the OME-Zarr metadata writer. Optional fields
+    remain ``None`` when the corresponding information is absent from the CZI XML.
+    """
     source_path: str
 
     # CZI header fields (as in czifile)
@@ -70,17 +79,31 @@ class CziMeta:
 
 
 
-def list_czi_files(folder: str | Path) -> list[Path]:
-    """List available inputs for this workflow."""
-    folder = Path(folder)
-    files = sorted(folder.glob("*.czi"))
+def list_czi_files(folder: str | Path, *, recursive: bool = False) -> list[Path]:
+    """Return sorted CZI files from a directory using case-insensitive suffix matching.
+    
+    When ``recursive`` is true, all nested experiment directories are included.
+    Missing directories and empty searches raise explicit filesystem errors.
+    """
+    folder = Path(folder).expanduser()
+    if not folder.exists():
+        raise FileNotFoundError(f"Raw-data folder not found: {folder}")
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Raw-data path is not a directory: {folder}")
+
+    iterator = folder.rglob("*") if recursive else folder.iterdir()
+    files = sorted(
+        (p for p in iterator if p.is_file() and p.suffix.lower() == ".czi"),
+        key=lambda p: str(p).lower(),
+    )
     if not files:
-        raise FileNotFoundError(f"No .czi files found in: {folder}")
+        scope = "recursively" if recursive else "directly"
+        raise FileNotFoundError(f"No .czi files found {scope} in: {folder}")
     return files
 
 
 def read_czi_header(path: str | Path) -> tuple[str | None, tuple[int, ...] | None]:
-    """Read only CZI header fields (axes, shape)."""
+    """Read CZI axis labels and header shape without loading the pixel array."""
     path = Path(path)
     with czifile.CziFile(str(path)) as czi:
         axes = getattr(czi, "axes", None)
@@ -89,7 +112,7 @@ def read_czi_header(path: str | Path) -> tuple[str | None, tuple[int, ...] | Non
 
 
 def read_czi_array_squeezed(path: str | Path) -> np.ndarray:
-    """Read CZI pixels into numpy and squeeze."""
+    """Load the CZI pixel array and remove singleton dimensions with ``numpy.squeeze``."""
     path = Path(path)
     with czifile.CziFile(str(path)) as czi:
         arr = czi.asarray()
@@ -97,7 +120,10 @@ def read_czi_array_squeezed(path: str | Path) -> np.ndarray:
 
 
 def read_czi_xml(path: str | Path) -> str | None:
-    """Return raw CZI metadata XML string."""
+    """Return the complete CZI metadata XML string when available.
+    
+    Returns ``None`` when metadata is empty or cannot be read.
+    """
     path = Path(path)
     try:
         with czifile.CziFile(str(path)) as czi:
@@ -111,7 +137,7 @@ def read_czi_xml(path: str | Path) -> str | None:
 
 
 def _parse_float(text: str | None) -> float | None:
-    """Internal helper used by this module."""
+    """Convert metadata text to ``float`` and return ``None`` for absent or invalid values."""
     if text is None:
         return None
     try:
@@ -121,7 +147,7 @@ def _parse_float(text: str | None) -> float | None:
 
 
 def _find_text(root: ET.Element | None, xpath: str) -> str | None:
-    """Internal helper used by this module."""
+    """Return stripped text from the first XML element matching an XPath expression."""
     if root is None:
         return None
     el = root.find(xpath)
@@ -132,16 +158,14 @@ def _find_text(root: ET.Element | None, xpath: str) -> str | None:
 
 
 def _parse_scaling_um(xml_text: str) -> tuple[float | None, float | None, float | None]:
-    """
-    Parse pixel sizes from XML. Convert to µm by * 1e6.
-    """
+    """Extract X, Y, and Z physical sampling from CZI XML and convert metres to micrometres."""
     try:
         root = ET.fromstring(xml_text)
     except Exception:
         return None, None, None
 
     def get_um(axis: str) -> float | None:
-        """Helper function used by this module."""
+        """Extract one spatial-axis sampling value from the surrounding CZI XML tree."""
         el = root.find(f".//Scaling/Items/Distance[@Id='{axis}']/Value")
         if el is None:
             el = root.find(f".//Scaling//Distance[@Id='{axis}']/Value")
@@ -157,7 +181,7 @@ def _parse_scaling_um(xml_text: str) -> tuple[float | None, float | None, float 
 
 
 def _parse_channel_names(xml_text: str) -> list[str] | None:
-    """Find channel names in XML."""
+    """Extract and de-duplicate fluorescence channel names from CZI XML."""
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -185,7 +209,7 @@ def _parse_channel_names(xml_text: str) -> list[str] | None:
 
 
 def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, list[str] | None]:
-    """Parse per-channel: label, excitation/emission, exposure, type."""
+    """Extract channel labels, excitation, emission, exposure, and channel type metadata."""
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -199,7 +223,7 @@ def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, lis
     names: list[str] = []
 
     def to_nm(v: float | None) -> float | None:
-        """Helper function used by this module."""
+        """Convert a wavelength expressed in metres to nanometres while preserving values already in nanometres."""
         if v is None:
             return None
         return v * 1e9 if v < 1e-3 else v
@@ -239,10 +263,7 @@ def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, lis
 
 
 def _parse_sim_settings_from_lsm_tags(xml_text: str) -> dict[str, str] | None:
-    """
-    Zeiss SIM settings.
-
-    """
+    """Extract selected Zeiss structured-illumination reconstruction settings from LsmTag text."""
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -286,9 +307,9 @@ def _parse_sim_settings_from_lsm_tags(xml_text: str) -> dict[str, str] | None:
 
 
 def parse_czi_3d_metadata(xml_text: str) -> dict[str, Any]:
-    """
-    Best-effort metadata fields.
-    Returns a dict that can be merged into CziMeta.
+    """Extract best-effort 3D and SIM acquisition metadata from CZI XML.
+    
+    The returned dictionary can be merged directly into matching ``CziMeta`` fields.
     """
     try:
         root = ET.fromstring(xml_text)
@@ -362,9 +383,10 @@ def parse_czi_3d_metadata(xml_text: str) -> dict[str, Any]:
     }
 
 def load_czi(path: str | Path) -> tuple[np.ndarray, CziMeta]:
-    """
-    Load array (squeezed) + parse metadata (pixel size + channel names).
-    2D remains unchanged; 3D simply gets extra optional fields filled.
+    """Load a squeezed CZI array together with complete structured metadata.
+    
+    Returns a tuple ``(array, metadata)``. Pixel statistics are computed from the
+    loaded array, while acquisition information is parsed from the raw XML.
     """
     path = Path(path)
     axes, header_shape = read_czi_header(path)
@@ -408,9 +430,7 @@ def load_czi(path: str | Path) -> tuple[np.ndarray, CziMeta]:
 
 
 def load_czi_metadata_only(path: str | Path) -> CziMeta:
-    """
-    Metadata-only loader (used by 3D export if you ever want it).
-    """
+    """Read CZI header and XML metadata without loading image pixels."""
     path = Path(path)
     axes, header_shape = read_czi_header(path)
 
