@@ -1,5 +1,5 @@
-"""Resolve raw microscopy-data directories without assuming a fixed drive letter.
-
+"""
+Resolve raw microscopy-data directories without assuming a fixed drive letter.
 The module recognizes standard PFT dataset folder names, searches parent
 folders recursively, supports graphical or terminal-based folder selection,
 and groups discovered CZI files by their relative experiment directories.

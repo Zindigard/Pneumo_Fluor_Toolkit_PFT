@@ -8,7 +8,7 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
 from PFT.core_prog_parts.io import CziMeta
 
-"""Shared plotting and savefig helpers used by visualization-heavy scripts."""
+"""Shared plotting and savefig helpers used by visualization scripts."""
 
 
 def add_scalebar(ax, meta: CziMeta | None, length_um: float = 5.0) -> None:

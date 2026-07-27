@@ -1,5 +1,5 @@
-"""Write microscopy arrays and CZI metadata as OME-NGFF OME-Zarr images.
-
+"""
+Write microscopy arrays and CZI metadata as OME-NGFF OME-Zarr images.
 The module determines canonical axis order, preserves level-0 pixel data,
 stores physical coordinate scales and complete CZI metadata, and optionally
 creates multiscale pyramids for 3D images.

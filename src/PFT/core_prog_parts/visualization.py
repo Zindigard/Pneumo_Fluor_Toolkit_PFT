@@ -1,3 +1,10 @@
+"""
+Shared visualization helpers used across 2D and 3D processing scripts.
+
+The module creates normalized microscopy previews, RGB channel composites,
+FFT displays, scale bars, and comparison figures.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,11 +17,6 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 from PFT.core_prog_parts.io import CziMeta
 from PFT.core_prog_parts.image_utils import normalize01_percentile as normalize01
 from PFT.core_prog_parts.plot_utils import add_scalebar as _add_scalebar, apply_axis_style, finalize_figure
-
-"""
-Shared visualization helpers used across 2D/3D processing scripts.
-
-"""
 
 EPS = 1e-12
 INTENSITY_RGB_CMAP = LinearSegmentedColormap.from_list(
@@ -98,18 +100,69 @@ def preview_rgb(rgb01: np.ndarray, title: str, meta: CziMeta | None = None, scal
         _add_scalebar(ax, meta, length_um=scalebar_um)
 
 
-def rgb_time_hada_blue(arr: np.ndarray, p_low: float = 1.0, p_high: float = 99.8, thr: float = 0.0) -> np.ndarray:
-    """Helper function used by this module."""
+def _normalize_preview_channel(
+    image: np.ndarray,
+    *,
+    p_low: float,
+    p_high: float,
+    thr: float,
+) -> np.ndarray:
+    """Normalize one preview channel and optionally suppress weak values.
+
+    Parameters
+    ----------
+    image:
+        Input image or projected channel.
+    p_low, p_high:
+        Lower and upper percentiles used for clipping and normalization.
+    thr:
+        Optional threshold in the normalized ``[0, 1]`` range. Values below
+        the threshold are set to zero. A value of ``0`` disables thresholding.
+    """
+    normalized = normalize01(image, p_lo=p_low, p_hi=p_high)
+    if thr > 0.0:
+        normalized = np.where(normalized >= thr, normalized, 0.0).astype(
+            np.float32, copy=False
+        )
+    return normalized
+
+
+def rgb_time_hada_blue(
+    arr: np.ndarray,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+    thr: float = 0.0,
+) -> np.ndarray:
+    """Create a blue RGB preview from a time-series or single-channel image."""
     img2d = max_project_to_2d(arr)
-    b = normalize01(img2d, p_low=p_low, p_high=p_high, thr=thr)
+    b = _normalize_preview_channel(
+        img2d, p_low=p_low, p_high=p_high, thr=thr
+    )
     return np.dstack([np.zeros_like(b), np.zeros_like(b), b])
 
 
-def rgb_wga_dapi(arr: np.ndarray, wga_ch: int = 0, dapi_ch: int = 1, p_low: float = 1.0, p_high: float = 99.8, thr: float = 0.0) -> np.ndarray:
-    """Helper function used by this module."""
+def rgb_wga_dapi(
+    arr: np.ndarray,
+    wga_ch: int = 0,
+    dapi_ch: int = 1,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+    thr: float = 0.0,
+) -> np.ndarray:
+    """Create a green WGA and blue DAPI RGB preview from a multichannel image."""
     ch_ax = find_channel_axis(arr)
-    wga = normalize01(get_channel_2d(arr, wga_ch, ch_ax), p_low=p_low, p_high=p_high, thr=thr)
-    dapi = normalize01(get_channel_2d(arr, dapi_ch, ch_ax), p_low=p_low, p_high=p_high, thr=thr)
+    wga = _normalize_preview_channel(
+        get_channel_2d(arr, wga_ch, ch_ax),
+        p_low=p_low,
+        p_high=p_high,
+        thr=thr,
+    )
+    dapi = _normalize_preview_channel(
+        get_channel_2d(arr, dapi_ch, ch_ax),
+        p_low=p_low,
+        p_high=p_high,
+        thr=thr,
+    )
     return np.dstack([np.zeros_like(wga), wga, dapi])
 
 

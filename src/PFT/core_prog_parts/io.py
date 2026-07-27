@@ -1,4 +1,5 @@
-"""Read Zeiss CZI microscopy files and convert their metadata into structured objects.
+"""
+Read Zeiss CZI microscopy files and convert their metadata into structured objects.
 The module loads pixel arrays, preserves the original CZI header information,
 extracts physical sampling, channel, optical, detector, and SIM metadata from
 XML, and returns the information through the ``CziMeta`` dataclass.

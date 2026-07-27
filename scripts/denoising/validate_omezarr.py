@@ -1,8 +1,14 @@
-"""Command-line tool for revalidating existing CZI-derived OME-Zarr outputs.
+"""
+Revalidate existing OME-Zarr images against their original CZI files.
+With no arguments, the script validates every ``*.ome.zarr`` directory below
+``<project>/results/img``. ``--root`` may select another directory tree and
+``--zarr`` may select one image. When a stored source path no longer exists,
+``--raw-root`` relocates the CZI by filename or the script requests a folder in
+interactive mode.
 
-The script scans one OME-Zarr directory or a directory tree, resolves the
-corresponding original CZI file, performs exact pixel and metadata comparison,
-and writes both per-image validation reports and a batch summary.
+Every image receives a detailed ``ome_zarr_validation.txt`` beside the
+OME-Zarr directory. Detailed checks are written only to that text file. Dataset summaries and
+a global validation summary are refreshed after the scan.
 """
 
 from __future__ import annotations
@@ -15,66 +21,57 @@ _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
 
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``.
-
-    The lookup is based on this script's physical location and therefore does
-    not depend on the current working directory. An explicit error is raised
-    when the expected repository layout cannot be found.
-    """
+    """Return the repository root containing both ``scripts`` and ``src/PFT``."""
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
-
     for candidate in (search_start, *search_start.parents):
         core_dir = candidate / "src" / "PFT" / "core_prog_parts"
         if (candidate / "scripts").is_dir() and core_dir.is_dir():
             return candidate
-
     raise RuntimeError(
-        "Cannot locate the PFT repository root. Expected both "
-        "'scripts' and 'src/PFT/core_prog_parts' in the same project folder. "
-        f"Script location: {_PFT_SCRIPT_FILE}"
+        "Cannot locate the PFT repository root. Expected both 'scripts' and "
+        f"'src/PFT/core_prog_parts'. Script location: {_PFT_SCRIPT_FILE}"
     )
 
 
 _PFT_PROJECT_ROOT = _pft_project_root()
 _PFT_SRC_DIR = _PFT_PROJECT_ROOT / "src"
-
 if str(_PFT_SRC_DIR) not in _pft_sys.path:
     _pft_sys.path.insert(0, str(_PFT_SRC_DIR))
 
 
 import argparse
-from datetime import datetime, timezone
 from pathlib import Path
 
 from PFT.core_prog_parts.data_discovery import select_directory_dialog, stdin_is_interactive
 from PFT.core_prog_parts.io import load_czi
-from PFT.core_prog_parts.omezarr_validation import validate_ome_zarr
+from PFT.core_prog_parts.omezarr_validation import (
+    ValidationSummaryRow,
+    make_validation_summary_row,
+    validate_ome_zarr,
+    write_dataset_and_global_validation_summaries,
+)
 
+
+REPO_ROOT = _pft_project_root(Path(__file__).resolve())
+DEFAULT_VALIDATION_ROOT = REPO_ROOT / "results" / "img"
 
 
 def find_omezarr_directories(root: str | Path) -> list[Path]:
-    """Return one or more ``*.ome.zarr`` directories below a validation target.
-    
-    A target that is itself an OME-Zarr directory is returned as a single item.
-    """
-    root = Path(root).expanduser()
-    if not root.exists():
-        raise FileNotFoundError(f"Validation root does not exist: {root}")
-    if root.is_dir() and root.name.lower().endswith(".ome.zarr"):
-        return [root.resolve()]
+    """Return one or more OME-Zarr directories below a validation target."""
+    target = Path(root).expanduser()
+    if not target.exists():
+        raise FileNotFoundError(f"Validation root does not exist: {target}")
+    if target.is_dir() and target.name.lower().endswith(".ome.zarr"):
+        return [target.resolve()]
     return sorted(
-        (path.resolve() for path in root.rglob("*.ome.zarr") if path.is_dir()),
+        (path.resolve() for path in target.rglob("*.ome.zarr") if path.is_dir()),
         key=lambda path: str(path).lower(),
     )
 
 
 def stored_source_path(zarr_path: Path) -> Path | None:
-    """Read the original CZI path stored in OME-Zarr root attributes.
-    
-    The function checks ``source_path`` first and then the embedded ``pft_meta``
-    metadata as a compatibility fallback.
-    """
+    """Read the original CZI path stored in OME-Zarr root attributes."""
     try:
         import zarr
     except Exception as exc:
@@ -90,7 +87,7 @@ def stored_source_path(zarr_path: Path) -> Path | None:
 
 
 def find_source_by_name(raw_root: Path, filename: str) -> list[Path]:
-    """Search a raw-data root recursively for files matching a CZI filename case-insensitively."""
+    """Search a raw-data root recursively for a CZI filename case-insensitively."""
     filename_lower = filename.lower()
     return sorted(
         (
@@ -103,7 +100,7 @@ def find_source_by_name(raw_root: Path, filename: str) -> list[Path]:
 
 
 def choose_source(candidates: list[Path], *, interactive: bool) -> Path:
-    """Select one source CZI from matching candidates, optionally using a terminal prompt."""
+    """Select one source CZI from matching candidates."""
     if not candidates:
         raise FileNotFoundError("No matching CZI source file was found.")
     if len(candidates) == 1 or not interactive:
@@ -119,8 +116,8 @@ def choose_source(candidates: list[Path], *, interactive: bool) -> Path:
 
 
 def request_raw_root() -> Path:
-    """Request the parent raw-data directory through a file dialog or terminal input."""
-    selected = select_directory_dialog("Select the parent folder containing the original CZI data")
+    """Request the parent raw-data directory through a dialog or terminal input."""
+    selected = select_directory_dialog("Select the parent folder containing original CZI data")
     if selected is None:
         value = input("Enter the parent raw-data folder: ").strip().strip('"')
         if not value:
@@ -137,11 +134,7 @@ def resolve_source(
     raw_root: Path | None,
     interactive: bool,
 ) -> tuple[Path, Path | None]:
-    """Resolve the original CZI file for an OME-Zarr image.
-    
-    The stored absolute path is used when valid. Otherwise, the function relocates
-    the source by filename below ``raw_root`` and returns the active raw-data root.
-    """
+    """Resolve the original CZI path and return the active relocation root."""
     stored = stored_source_path(zarr_path)
     if stored is not None and stored.is_file():
         return stored.resolve(), raw_root
@@ -149,7 +142,7 @@ def resolve_source(
     filename = stored.name if stored is not None and stored.name else f"{zarr_path.parent.name}.czi"
     active_root = raw_root
     if active_root is None and interactive:
-        print(f"Original source is unavailable for: {zarr_path}")
+        print(f"Original source unavailable for: {zarr_path}")
         print(f"Stored source path: {stored if stored is not None else '<missing>'}")
         active_root = request_raw_root()
 
@@ -163,35 +156,44 @@ def resolve_source(
     return choose_source(candidates, interactive=interactive), active_root
 
 
-def write_summary(root: Path, rows: list[tuple[Path, str, str]]) -> Path:
-    """Write a batch validation summary containing status, OME-Zarr path, and source or error text."""
-    summary_path = root / "ome_zarr_validation_summary.txt" if root.is_dir() else root.parent / "ome_zarr_validation_summary.txt"
-    lines = [
-        "PFT OME-Zarr batch validation summary",
-        "=" * 100,
-        f"Generated (UTC): {datetime.now(timezone.utc).isoformat()}",
-        f"OME-Zarr directories checked: {len(rows)}",
-        "",
-        f"{'STATUS':<8} | OME-ZARR | SOURCE/ERROR",
-        "-" * 100,
-    ]
-    for zarr_path, status, source_or_error in rows:
-        lines.append(f"{status:<8} | {zarr_path} | {source_or_error}")
-    lines.append("")
-    summary_path.write_text("\n".join(lines), encoding="utf-8")
-    return summary_path
+def summary_root_for_target(scan_target: Path) -> Path:
+    """Choose the directory under which dataset and global summaries are stored."""
+    resolved = scan_target.resolve()
+    default_root = DEFAULT_VALIDATION_ROOT.resolve()
+    if resolved == default_root or resolved.is_relative_to(default_root):
+        return default_root
+    if resolved.name.lower().endswith(".ome.zarr"):
+        return resolved.parent
+    return resolved
+
+
+def dataset_and_sample(zarr_path: Path, summary_root: Path) -> tuple[str, str]:
+    """Derive compact dataset and sample identifiers from an OME-Zarr path."""
+    sample_dir = zarr_path.parent.resolve()
+    try:
+        relative = sample_dir.relative_to(summary_root.resolve())
+        dataset = relative.parts[0] if relative.parts else "unknown"
+        sample = "/".join(relative.parts[1:]) if len(relative.parts) > 1 else sample_dir.name
+    except ValueError:
+        dataset = sample_dir.parent.name or "unknown"
+        sample = sample_dir.name
+    return dataset, sample
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Construct command-line arguments for single-image or recursive OME-Zarr validation."""
+    """Construct arguments for default-all, custom-root, or single-image validation."""
     parser = argparse.ArgumentParser(
-        description="Validate existing OME-Zarr files against their original CZI data."
+        description=(
+            "Validate OME-Zarr images against original CZI files. With no source "
+            "argument, all existing images below results/img are validated."
+        )
     )
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group(required=False)
     source.add_argument("--root", type=str, help="Recursively scan for *.ome.zarr directories.")
     source.add_argument("--zarr", type=str, help="Validate one OME-Zarr directory.")
     parser.add_argument(
-        "--raw-root", "--raw_root",
+        "--raw-root",
+        "--raw_root",
         dest="raw_root",
         type=str,
         default=None,
@@ -203,9 +205,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Execute batch revalidation and save the final summary report."""
+    """Validate all selected OME-Zarr images and refresh compact summaries."""
     args = build_parser().parse_args()
-    scan_target = Path(args.zarr or args.root).expanduser().resolve()
+    scan_target = Path(args.zarr or args.root or DEFAULT_VALIDATION_ROOT).expanduser().resolve()
     zarr_paths = find_omezarr_directories(scan_target)
     if not zarr_paths:
         raise FileNotFoundError(f"No *.ome.zarr directories found below: {scan_target}")
@@ -215,9 +217,16 @@ def main() -> None:
     if raw_root is not None and not raw_root.is_dir():
         raise FileNotFoundError(f"--raw-root does not exist: {raw_root}")
 
-    rows: list[tuple[Path, str, str]] = []
+    summary_root = summary_root_for_target(scan_target)
+    extra_rows: list[ValidationSummaryRow] = []
+    passed = 0
+    failed = 0
+    errors = 0
+
+    print(f"Validating {len(zarr_paths)} existing OME-Zarr images below: {scan_target}")
     for index, zarr_path in enumerate(zarr_paths, start=1):
-        print(f"\n[{index}/{len(zarr_paths)}] Validating {zarr_path}")
+        print(f"  [{index}/{len(zarr_paths)}] {zarr_path.parent.name}")
+        dataset, sample = dataset_and_sample(zarr_path, summary_root)
         try:
             source_path, raw_root = resolve_source(
                 zarr_path,
@@ -225,24 +234,40 @@ def main() -> None:
                 interactive=interactive,
             )
             arr, meta = load_czi(source_path)
-            result = validate_ome_zarr(zarr_path, arr, meta, print_terminal=True)
-            status = "PASS" if result.passed else "FAIL"
-            rows.append((zarr_path, status, str(source_path)))
-            if not result.passed and args.stop_on_error:
-                break
+            result = validate_ome_zarr(zarr_path, arr, meta, print_terminal=False)
+            if result.passed:
+                passed += 1
+            else:
+                failed += 1
+                if args.stop_on_error:
+                    break
         except Exception as exc:
-            message = f"{type(exc).__name__}: {exc}"
-            print(f"ERROR: {message}")
-            rows.append((zarr_path, "ERROR", message))
+            errors += 1
+            extra_rows.append(make_validation_summary_row(
+                dataset=dataset,
+                sample=sample,
+                status="ERROR",
+                zarr_path=zarr_path,
+                detail=f"{type(exc).__name__}: {exc}",
+            ))
             if args.stop_on_error:
                 break
 
-    summary_root = scan_target if scan_target.is_dir() and not scan_target.name.lower().endswith(".ome.zarr") else scan_target.parent
-    summary_path = write_summary(summary_root, rows)
-    passed = sum(status == "PASS" for _, status, _ in rows)
-    failed = len(rows) - passed
-    print(f"\nValidation complete. PASS: {passed} | FAIL/ERROR: {failed}")
-    print(f"Batch summary saved to: {summary_path}")
+    dataset_paths, global_path = write_dataset_and_global_validation_summaries(
+        summary_root,
+        extra_rows=extra_rows,
+    )
+
+    print("\nPFT OME-Zarr validation summary")
+    print("=" * 72)
+    print(f"OME-Zarr images selected: {len(zarr_paths)}")
+    print(f"PASS: {passed}")
+    print(f"FAIL: {failed}")
+    print(f"ERROR: {errors}")
+    for dataset, path in sorted(dataset_paths.items()):
+        print(f"Dataset summary [{dataset}]: {path}")
+    print(f"Global summary: {global_path}")
+    print("Detailed checks are stored only in each sample's ome_zarr_validation.txt.")
 
 
 if __name__ == "__main__":

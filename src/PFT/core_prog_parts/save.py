@@ -1,8 +1,13 @@
-"""Save PFT microscopy outputs in a reproducible directory structure.
+"""
+Save microscopy exports and validation reports below ``results/img``.
+For 2D CZI data, the module writes only the normalized grayscale TIFF, the
+normalized RGB TIFF, raw-look and normalized PNG previews, metadata sidecars,
+and the validated OME-Zarr image. Raw TIFF duplicates are intentionally not
+created because the lossless source data are preserved in OME-Zarr level 0.
 
-The module writes raw and normalized TIFF files, RGB previews, metadata text
-and XML sidecars, 2D or 3D OME-Zarr images, and automatic validation reports.
-Export errors are recorded beside the affected sample and then re-raised.
+For 3D data, the module writes metadata reports and a validated multiscale
+OME-Zarr image. Detailed validation output is stored in
+``ome_zarr_validation.txt`` beside each image and is not printed in full.
 """
 
 from __future__ import annotations
@@ -82,7 +87,7 @@ def _rgb01_wga_dapi_norm(arr: np.ndarray) -> np.ndarray:
     return np.dstack([r, g, b])
 
 
-def save_raw_and_normalized_tiffs_and_previews(
+def save_normalized_tiffs_and_previews(
     arr: np.ndarray,
     out_dir: Path,
     *,
@@ -92,14 +97,22 @@ def save_raw_and_normalized_tiffs_and_previews(
     scalebar_um: float,
     save_preview_png: bool,
 ) -> None:
-    """Save raw, normalized, and RGB TIFF outputs plus optional PNG previews.
-    
-    The raw TIFF preserves the source dtype. Normalized grayscale and RGB TIFFs are
-    stored as unsigned 16-bit images for consistent inspection.
+    """Save normalized grayscale and RGB TIFFs plus two PNG previews.
+
+    ``image_norm16.tif`` preserves all normalized channels as unsigned 16-bit
+    data. ``image_norm16_rgb.tif`` stores the normalized RGB display composite.
+    ``preview_raw.png`` provides a linear raw-look display and
+    ``preview_norm.png`` provides the normalized display. The original raw array
+    is not duplicated as TIFF because it is stored losslessly in OME-Zarr.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tifffile.imwrite(out_dir / "image_raw.tif", arr)
+    # Remove raw TIFF files created by older versions so rerunning the export
+    # leaves only the requested normalized TIFF products.
+    for obsolete_name in ("image_raw.tif", "image_raw_rgb.tif"):
+        obsolete_path = out_dir / obsolete_name
+        if obsolete_path.exists():
+            obsolete_path.unlink()
 
     a01 = minmax01(arr)  # min-max per-array
     a16 = np.round(a01 * 65535.0).astype(np.uint16) if a01.size else np.zeros_like(arr, dtype=np.uint16)
@@ -112,10 +125,7 @@ def save_raw_and_normalized_tiffs_and_previews(
         rgb_raw01 = _rgb01_time_raw(arr)
         rgb_norm01 = _rgb01_time_norm(arr)
 
-    rgb_raw16 = np.round(rgb_raw01 * 65535.0).astype(np.uint16)
     rgb_norm16 = np.round(rgb_norm01 * 65535.0).astype(np.uint16)
-
-    tifffile.imwrite(out_dir / "image_raw_rgb.tif", rgb_raw16)
     tifffile.imwrite(out_dir / "image_norm16_rgb.tif", rgb_norm16)
 
     if save_preview_png:
@@ -167,7 +177,7 @@ def export_2d(
 
     title = f"{dataset_name} | {Path(meta.source_path).name}"
 
-    save_raw_and_normalized_tiffs_and_previews(
+    save_normalized_tiffs_and_previews(
         arr=arr,
         out_dir=out_dir,
         preview_mode=preview_mode,
@@ -192,7 +202,7 @@ def export_2d(
                 pyramid_downscale=2,
             )
             if validate_omezarr:
-                validate_or_raise(zarr_path, arr, meta, print_terminal=True)
+                validate_or_raise(zarr_path, arr, meta, print_terminal=False)
         except Exception as e:
             (out_dir / "omezarr_error.txt").write_text(
                 f"{type(e).__name__}: {e}\n",
@@ -374,7 +384,7 @@ def export_3d(
                 pyramid_downscale=pyramid_downscale,
             )
             if validate_omezarr:
-                validate_or_raise(zarr_path, arr, meta, print_terminal=True)
+                validate_or_raise(zarr_path, arr, meta, print_terminal=False)
         except Exception as e:
             (out_dir / "omezarr_error.txt").write_text(
                 f"{type(e).__name__}: {e}\n",

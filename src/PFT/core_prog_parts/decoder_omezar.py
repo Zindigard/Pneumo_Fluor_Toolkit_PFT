@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Tuple, Optional, Sequence
 import numpy as np
-"Loads and interprets OME-Zarr image data"
+"Loads and interprets OME-Zarr image data into arrays and metadata dictionaries. Used when we are working with networks."
 
 def infer_axes_from_ndim(ndim: int | None) -> str:
     """Fallback axes inference if multiscales axes are missing."""

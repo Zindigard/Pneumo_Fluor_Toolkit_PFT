@@ -1,9 +1,12 @@
-"""Validate that an OME-Zarr export preserves the source CZI information.
+"""
+Validate OME-Zarr exports and create compact dataset-level summaries.
 
-Validation includes exact level-0 pixel identity, array shape and dtype, axis
-order, physical scales, pyramid geometry, channel metadata, every ``CziMeta``
-field, raw XML sidecars, and SHA-256 data digests. A text report is written
-beside each OME-Zarr image.
+Each OME-Zarr image receives a detailed ``ome_zarr_validation.txt`` report that
+contains exact level-0 pixel, dtype, shape, axis, scale, pyramid, channel, XML,
+and complete ``CziMeta`` comparisons.
+
+The module also scans per-image reports and writes one validation summary in
+each dataset directory plus a global summary under ``results/img``.
 """
 
 from __future__ import annotations
@@ -26,6 +29,8 @@ from PFT.core_prog_parts.omezarr_utils import (
 
 
 REPORT_FILENAME = "ome_zarr_validation.txt"
+DATASET_SUMMARY_FILENAME = "ome_zarr_validation_summary.txt"
+GLOBAL_SUMMARY_FILENAME = "ome_zarr_validation_global_summary.txt"
 
 
 class OMEZarrValidationError(RuntimeError):
@@ -56,6 +61,30 @@ class ValidationResult:
     def failed_checks(self) -> tuple[ValidationCheck, ...]:
         """Return all checks that failed in their original evaluation order."""
         return tuple(check for check in self.checks if not check.passed)
+
+    @property
+    def checks_passed(self) -> int:
+        """Return the number of successful validation checks."""
+        return sum(check.passed for check in self.checks)
+
+    @property
+    def checks_failed(self) -> int:
+        """Return the number of failed validation checks."""
+        return len(self.checks) - self.checks_passed
+
+
+@dataclass(frozen=True)
+class ValidationSummaryRow:
+    """Represent one image in dataset-level and global validation summaries."""
+
+    dataset: str
+    sample: str
+    status: str
+    checks_passed: int
+    checks_failed: int
+    source_path: str
+    zarr_path: str
+    detail: str = ""
 
 
 def _json_normalize(value: Any) -> Any:
@@ -386,9 +415,220 @@ def _write_report(
     result.report_path.parent.mkdir(parents=True, exist_ok=True)
     result.report_path.write_text(text, encoding="utf-8")
     if print_terminal:
-        print("\n" + text)
-        print(f"Validation report saved to: {result.report_path}\n")
+        status = "PASS" if result.passed else "FAIL"
+        print(
+            f"Validation {status}: {result.zarr_path} | "
+            f"checks passed={result.checks_passed}, failed={result.checks_failed} | "
+            f"report={result.report_path}"
+        )
 
+
+
+def make_validation_summary_row(
+    *,
+    dataset: str,
+    sample: str,
+    status: str,
+    source_path: str | Path = "",
+    zarr_path: str | Path = "",
+    checks_passed: int = 0,
+    checks_failed: int = 0,
+    detail: str = "",
+) -> ValidationSummaryRow:
+    """Create a normalized summary row for successful, failed, or skipped work."""
+    normalized_status = status.strip().upper()
+    if normalized_status not in {"PASS", "FAIL", "ERROR", "SKIPPED"}:
+        raise ValueError(f"Unsupported validation status: {status!r}")
+    return ValidationSummaryRow(
+        dataset=str(dataset),
+        sample=str(sample),
+        status=normalized_status,
+        checks_passed=int(checks_passed),
+        checks_failed=int(checks_failed),
+        source_path=str(source_path),
+        zarr_path=str(zarr_path),
+        detail=str(detail),
+    )
+
+
+def summary_row_from_result(
+    result: ValidationResult,
+    source_meta: CziMeta,
+    *,
+    dataset: str,
+    sample: str,
+) -> ValidationSummaryRow:
+    """Convert an in-memory validation result into one compact summary row."""
+    return make_validation_summary_row(
+        dataset=dataset,
+        sample=sample,
+        status="PASS" if result.passed else "FAIL",
+        source_path=getattr(source_meta, "source_path", ""),
+        zarr_path=result.zarr_path,
+        checks_passed=result.checks_passed,
+        checks_failed=result.checks_failed,
+        detail="all required checks passed" if result.passed else "one or more checks failed",
+    )
+
+
+def _report_header_value(lines: list[str], label: str) -> str:
+    """Extract a value from a ``Label: value`` line in a detailed report."""
+    prefix = f"{label}:"
+    for line in lines:
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
+    return ""
+
+
+def summary_row_from_report(
+    report_path: str | Path,
+    *,
+    results_img_root: str | Path,
+) -> ValidationSummaryRow:
+    """Parse one detailed report into a dataset/global summary row."""
+    report = Path(report_path).expanduser().resolve()
+    root = Path(results_img_root).expanduser().resolve()
+    lines = report.read_text(encoding="utf-8").splitlines()
+
+    try:
+        relative_sample = report.parent.relative_to(root)
+        dataset = relative_sample.parts[0] if relative_sample.parts else "unknown"
+        sample_parts = relative_sample.parts[1:]
+        sample = "/".join(sample_parts) if sample_parts else report.parent.name
+    except ValueError:
+        dataset = report.parent.parent.name or "unknown"
+        sample = report.parent.name
+
+    status = _report_header_value(lines, "Status").upper() or "ERROR"
+    if status not in {"PASS", "FAIL", "ERROR", "SKIPPED"}:
+        status = "ERROR"
+    try:
+        checks_passed = int(_report_header_value(lines, "Checks passed") or 0)
+    except ValueError:
+        checks_passed = 0
+    try:
+        checks_failed = int(_report_header_value(lines, "Checks failed") or 0)
+    except ValueError:
+        checks_failed = 0
+
+    return make_validation_summary_row(
+        dataset=dataset,
+        sample=sample,
+        status=status,
+        source_path=_report_header_value(lines, "Source CZI"),
+        zarr_path=_report_header_value(lines, "OME-Zarr"),
+        checks_passed=checks_passed,
+        checks_failed=checks_failed,
+        detail="detailed report available",
+    )
+
+
+def scan_validation_reports(results_img_root: str | Path) -> list[ValidationSummaryRow]:
+    """Read every per-image validation report below a ``results/img`` directory."""
+    root = Path(results_img_root).expanduser().resolve()
+    if not root.is_dir():
+        return []
+    rows: list[ValidationSummaryRow] = []
+    for report in sorted(root.rglob(REPORT_FILENAME), key=lambda path: str(path).lower()):
+        try:
+            rows.append(summary_row_from_report(report, results_img_root=root))
+        except Exception as exc:
+            relative = report.parent.relative_to(root) if report.parent.is_relative_to(root) else Path(report.parent.name)
+            dataset = relative.parts[0] if relative.parts else "unknown"
+            sample = "/".join(relative.parts[1:]) if len(relative.parts) > 1 else report.parent.name
+            rows.append(make_validation_summary_row(
+                dataset=dataset,
+                sample=sample,
+                status="ERROR",
+                zarr_path=report.parent / "image.ome.zarr",
+                detail=f"Could not parse validation report: {type(exc).__name__}: {exc}",
+            ))
+    return rows
+
+
+def _deduplicate_summary_rows(rows: Iterable[ValidationSummaryRow]) -> list[ValidationSummaryRow]:
+    """Remove duplicate summary rows while retaining the latest supplied row."""
+    indexed: dict[tuple[str, str, str, str], ValidationSummaryRow] = {}
+    for row in rows:
+        key = (row.dataset, row.sample, row.source_path, row.zarr_path)
+        indexed[key] = row
+    return sorted(
+        indexed.values(),
+        key=lambda row: (row.dataset.lower(), row.sample.lower(), row.source_path.lower()),
+    )
+
+
+def write_validation_summary(
+    rows: Iterable[ValidationSummaryRow],
+    output_path: str | Path,
+    *,
+    title: str,
+) -> Path:
+    """Write a compact validation summary without reproducing per-check details."""
+    normalized = _deduplicate_summary_rows(rows)
+    output = Path(output_path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    counts = {status: sum(row.status == status for row in normalized) for status in ("PASS", "FAIL", "ERROR", "SKIPPED")}
+    total_checks_passed = sum(row.checks_passed for row in normalized)
+    total_checks_failed = sum(row.checks_failed for row in normalized)
+    lines = [
+        title,
+        "=" * 120,
+        f"Generated (UTC): {datetime.now(timezone.utc).isoformat()}",
+        f"Images represented: {len(normalized)}",
+        f"PASS: {counts['PASS']}",
+        f"FAIL: {counts['FAIL']}",
+        f"ERROR: {counts['ERROR']}",
+        f"SKIPPED: {counts['SKIPPED']}",
+        f"Validation checks passed: {total_checks_passed}",
+        f"Validation checks failed: {total_checks_failed}",
+        "",
+        f"{'STATUS':<8} | {'DATASET':<16} | {'SAMPLE':<40} | {'PASSED':>6} | {'FAILED':>6} | SOURCE CZI | OME-ZARR | DETAIL",
+        "-" * 120,
+    ]
+    for row in normalized:
+        lines.append(
+            f"{row.status:<8} | {row.dataset:<16} | {row.sample:<40} | "
+            f"{row.checks_passed:>6} | {row.checks_failed:>6} | "
+            f"{row.source_path} | {row.zarr_path} | {row.detail}"
+        )
+    lines.extend([
+        "",
+        "Detailed per-check results remain in each sample's ome_zarr_validation.txt file.",
+        "",
+    ])
+    output.write_text("\n".join(lines), encoding="utf-8")
+    return output
+
+
+def write_dataset_and_global_validation_summaries(
+    results_img_root: str | Path,
+    *,
+    extra_rows: Iterable[ValidationSummaryRow] = (),
+) -> tuple[dict[str, Path], Path]:
+    """Refresh every dataset summary and the global summary below ``results/img``."""
+    root = Path(results_img_root).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    rows = _deduplicate_summary_rows([*scan_validation_reports(root), *list(extra_rows)])
+
+    dataset_paths: dict[str, Path] = {}
+    datasets = sorted({row.dataset for row in rows if row.dataset}, key=str.lower)
+    for dataset in datasets:
+        dataset_rows = [row for row in rows if row.dataset == dataset]
+        dataset_path = root / dataset / DATASET_SUMMARY_FILENAME
+        dataset_paths[dataset] = write_validation_summary(
+            dataset_rows,
+            dataset_path,
+            title=f"PFT OME-Zarr validation summary: {dataset}",
+        )
+
+    global_path = write_validation_summary(
+        rows,
+        root / GLOBAL_SUMMARY_FILENAME,
+        title="PFT global OME-Zarr processing and validation summary",
+    )
+    return dataset_paths, global_path
 
 def validate_or_raise(
     zarr_path: str | Path,

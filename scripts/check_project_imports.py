@@ -1,4 +1,5 @@
-"""Validate the repository layout and all local PFT imports.
+"""
+Validate the repository layout and all local PFT imports.
 
 This script checks that ``scripts`` and ``src/PFT/core_prog_parts`` share the
 same repository root. It then verifies every local ``PFT...`` import used by

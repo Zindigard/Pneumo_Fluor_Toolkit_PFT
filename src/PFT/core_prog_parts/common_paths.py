@@ -33,7 +33,7 @@ def ensure_dir(path: Path) -> Path:
 
 
 def normalize_dataset_name(dataset: str) -> str:
-    """Map dataset aliases to canonical dataset names."""
+    """Map dataset aliases to dataset names."""
     ds = dataset.strip().lower()
     return _DATASET_ALIASES.get(ds, ds)
 

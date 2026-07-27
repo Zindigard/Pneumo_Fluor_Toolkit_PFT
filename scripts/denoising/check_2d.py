@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 # Configure imports for direct execution from the repository source tree.
 import sys as _pft_sys
 from pathlib import Path as _PFTPath
