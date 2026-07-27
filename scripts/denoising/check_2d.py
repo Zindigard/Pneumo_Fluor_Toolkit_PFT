@@ -1,6 +1,6 @@
-"""Quantify 2D microscopy noise and Noise2Void restoration quality from OME-Zarr.
+"""
+Quantify 2D microscopy noise and Noise2Void restoration quality from OME-Zarr.
 
-This is the primary quantitative 2D noise-checking script for the PFT project.
 It operates on the highest-resolution, non-normalized OME-Zarr pixels and uses
 manually prepared binary foreground masks for the thesis-defined region-based
 signal-to-noise ratio (ROI SNR).
@@ -20,26 +20,9 @@ Two modes are provided:
     the raw and denoised images. The script reports raw ROI SNR, N2V ROI SNR,
     delta SNR, and raw-to-N2V SSIM.
 
-The ROI SNR is implemented exactly as described in the thesis Methods chapter:
-
-    SNR_ROI = (mean_signal - mean_background) / (std_background + epsilon)
-
-where the background standard deviation uses the sample definition (``ddof=1``).
-No automatic thresholding is used to create masks because the thesis specifies
-hand-labelled ground-truth foreground regions. Missing or incompatible masks are
-reported as errors rather than silently replaced by an estimated mask.
-
-Default mask location:
-
-    results/training_files/U-net/<dataset>/<sample>/mask.tif
-
-Common binary masks may be reused for all frames and channels of one sample.
-Channel-specific masks are also supported, for example ``mask_c0.tif``,
-``mask_c1.tif``, ``mask_dapi.tif``, and ``mask_wga.tif``.
 
 Outputs are written to ``results/noise_analysis/2d/<mode>`` as detailed CSV
-files, dataset-level CSV summaries for later statistical comparison, a compact
-TXT summary for human reading, and an error report.
+files, a compact TXT summary, and an error report.
 """
 
 from __future__ import annotations
@@ -264,60 +247,6 @@ class N2VPairRecord:
     raw_fft_peak_score: float
     n2v_fft_peak_score: float
     provenance: str
-
-
-@dataclass(frozen=True)
-class OriginalDatasetSummaryRecord:
-    """Dataset-level original-image metrics saved for later comparisons."""
-
-    dataset: str
-    image_count: int
-    roi_snr_mean: float
-    roi_snr_standard_deviation: float
-    signal_mean: float
-    background_mean: float
-    background_standard_deviation: float
-    robust_noise_sigma_mean: float
-    robust_noise_sigma_standard_deviation: float
-    fano_factor_mean: float
-    fano_factor_maximum: float
-    neighbor_correlation_mean: float
-    neighbor_correlation_maximum: float
-    row_adjacent_correlation_mean: float
-    column_adjacent_correlation_mean: float
-    fft_peak_score_mean: float
-    fft_peak_score_maximum: float
-    fft_directionality_mean: float
-
-
-@dataclass(frozen=True)
-class N2VDatasetSummaryRecord:
-    """Dataset/variant raw-to-N2V summary saved for later comparisons."""
-
-    dataset: str
-    variant: str
-    preferred_thesis_group: bool
-    pair_count: int
-    raw_roi_snr_mean: float
-    raw_roi_snr_standard_deviation: float
-    n2v_roi_snr_mean: float
-    n2v_roi_snr_standard_deviation: float
-    delta_roi_snr_mean: float
-    delta_roi_snr_standard_deviation: float
-    ssim_raw_n2v_mean: float
-    ssim_raw_n2v_standard_deviation: float
-    raw_robust_noise_sigma_mean: float
-    n2v_robust_noise_sigma_mean: float
-    delta_robust_noise_sigma_mean: float
-    raw_neighbor_correlation_mean: float
-    n2v_neighbor_correlation_mean: float
-    delta_neighbor_correlation_mean: float
-    raw_fano_factor_mean: float
-    n2v_fano_factor_mean: float
-    delta_fano_factor_mean: float
-    raw_fft_peak_score_mean: float
-    n2v_fft_peak_score_mean: float
-    delta_fft_peak_score_mean: float
 
 
 def _utc_now() -> str:
@@ -1118,175 +1047,18 @@ def _ssim(raw: np.ndarray, denoised: np.ndarray) -> float:
     return float(structural_similarity(raw_float, denoised_float, **kwargs))
 
 
-def _write_dataclass_csv(
-    path: Path,
-    rows: Sequence[Any],
-    *,
-    row_type: type[Any] | None = None,
-) -> None:
-    """Write dataclass instances to CSV and retain headers for empty results."""
+def _write_dataclass_csv(path: Path, rows: Sequence[Any]) -> None:
+    """Write a sequence of dataclass instances to CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if rows:
-        record_type = type(rows[0])
-    elif row_type is not None:
-        record_type = row_type
-    else:
+    if not rows:
         path.write_text("", encoding="utf-8")
         return
-
-    field_names = [field.name for field in fields(record_type)]
+    field_names = [field.name for field in fields(rows[0])]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=field_names)
         writer.writeheader()
         for row in rows:
             writer.writerow(asdict(row))
-
-
-def build_original_dataset_summaries(
-    records: Sequence[ImageRecord],
-    datasets: Sequence[str],
-) -> list[OriginalDatasetSummaryRecord]:
-    """Aggregate original-image records into one comparison-ready row per dataset."""
-    summaries: list[OriginalDatasetSummaryRecord] = []
-    for dataset in datasets:
-        subset = [record for record in records if record.dataset == dataset]
-        if not subset:
-            continue
-        summaries.append(
-            OriginalDatasetSummaryRecord(
-                dataset=dataset,
-                image_count=len(subset),
-                roi_snr_mean=_mean(record.roi_snr_mean for record in subset),
-                roi_snr_standard_deviation=_std(record.roi_snr_mean for record in subset),
-                signal_mean=_mean(record.signal_mean for record in subset),
-                background_mean=_mean(record.background_mean for record in subset),
-                background_standard_deviation=_mean(
-                    record.background_standard_deviation for record in subset
-                ),
-                robust_noise_sigma_mean=_mean(
-                    record.robust_noise_sigma for record in subset
-                ),
-                robust_noise_sigma_standard_deviation=_std(
-                    record.robust_noise_sigma for record in subset
-                ),
-                fano_factor_mean=_mean(record.fano_factor for record in subset),
-                fano_factor_maximum=_maximum(record.fano_factor for record in subset),
-                neighbor_correlation_mean=_mean(
-                    record.neighbor_correlation for record in subset
-                ),
-                neighbor_correlation_maximum=_maximum(
-                    record.neighbor_correlation for record in subset
-                ),
-                row_adjacent_correlation_mean=_mean(
-                    record.row_adjacent_correlation for record in subset
-                ),
-                column_adjacent_correlation_mean=_mean(
-                    record.column_adjacent_correlation for record in subset
-                ),
-                fft_peak_score_mean=_mean(record.fft_peak_score for record in subset),
-                fft_peak_score_maximum=_maximum(
-                    record.fft_peak_score for record in subset
-                ),
-                fft_directionality_mean=_mean(
-                    record.fft_directionality for record in subset
-                ),
-            )
-        )
-    return summaries
-
-
-def _summarize_n2v_group(
-    records: Sequence[N2VPairRecord],
-    *,
-    preferred: bool,
-) -> N2VDatasetSummaryRecord:
-    """Aggregate one dataset/variant N2V group into a comparison-ready row."""
-    if not records:
-        raise ValueError("Cannot summarize an empty N2V record group.")
-    dataset = records[0].dataset
-    variant = records[0].variant
-    return N2VDatasetSummaryRecord(
-        dataset=dataset,
-        variant=variant,
-        preferred_thesis_group=preferred,
-        pair_count=len(records),
-        raw_roi_snr_mean=_mean(record.raw_roi_snr for record in records),
-        raw_roi_snr_standard_deviation=_std(
-            record.raw_roi_snr for record in records
-        ),
-        n2v_roi_snr_mean=_mean(record.n2v_roi_snr for record in records),
-        n2v_roi_snr_standard_deviation=_std(
-            record.n2v_roi_snr for record in records
-        ),
-        delta_roi_snr_mean=_mean(record.delta_roi_snr for record in records),
-        delta_roi_snr_standard_deviation=_std(
-            record.delta_roi_snr for record in records
-        ),
-        ssim_raw_n2v_mean=_mean(record.ssim_raw_n2v for record in records),
-        ssim_raw_n2v_standard_deviation=_std(
-            record.ssim_raw_n2v for record in records
-        ),
-        raw_robust_noise_sigma_mean=_mean(
-            record.raw_robust_noise_sigma for record in records
-        ),
-        n2v_robust_noise_sigma_mean=_mean(
-            record.n2v_robust_noise_sigma for record in records
-        ),
-        delta_robust_noise_sigma_mean=_mean(
-            record.n2v_robust_noise_sigma - record.raw_robust_noise_sigma
-            for record in records
-        ),
-        raw_neighbor_correlation_mean=_mean(
-            record.raw_neighbor_correlation for record in records
-        ),
-        n2v_neighbor_correlation_mean=_mean(
-            record.n2v_neighbor_correlation for record in records
-        ),
-        delta_neighbor_correlation_mean=_mean(
-            record.n2v_neighbor_correlation - record.raw_neighbor_correlation
-            for record in records
-        ),
-        raw_fano_factor_mean=_mean(record.raw_fano_factor for record in records),
-        n2v_fano_factor_mean=_mean(record.n2v_fano_factor for record in records),
-        delta_fano_factor_mean=_mean(
-            record.n2v_fano_factor - record.raw_fano_factor for record in records
-        ),
-        raw_fft_peak_score_mean=_mean(
-            record.raw_fft_peak_score for record in records
-        ),
-        n2v_fft_peak_score_mean=_mean(
-            record.n2v_fft_peak_score for record in records
-        ),
-        delta_fft_peak_score_mean=_mean(
-            record.n2v_fft_peak_score - record.raw_fft_peak_score
-            for record in records
-        ),
-    )
-
-
-def build_n2v_dataset_summaries(
-    records: Sequence[N2VPairRecord],
-    datasets: Sequence[str],
-) -> tuple[list[N2VDatasetSummaryRecord], list[N2VDatasetSummaryRecord]]:
-    """Return preferred-dataset and all-variant N2V summary tables."""
-    preferred_rows: list[N2VDatasetSummaryRecord] = []
-    for dataset in datasets:
-        group = _preferred_n2v_group(records, dataset)
-        if group:
-            preferred_rows.append(_summarize_n2v_group(group, preferred=True))
-
-    all_variant_rows: list[N2VDatasetSummaryRecord] = []
-    for dataset, variant in sorted({(row.dataset, row.variant) for row in records}):
-        group = [
-            row for row in records if row.dataset == dataset and row.variant == variant
-        ]
-        preferred_variant = any(
-            item.dataset == dataset and item.variant == variant for item in preferred_rows
-        )
-        all_variant_rows.append(
-            _summarize_n2v_group(group, preferred=preferred_variant)
-        )
-    return preferred_rows, all_variant_rows
 
 
 def _dataset_summary_lines(records: Sequence[ImageRecord], dataset: str) -> list[str]:
@@ -1529,24 +1301,8 @@ def run_original_mode(
         except Exception as exc:
             errors.append(f"{path} | {type(exc).__name__}: {exc}")
 
-    original_dataset_summaries = build_original_dataset_summaries(
-        image_records, datasets
-    )
-    _write_dataclass_csv(
-        output_dir / "original_per_image_metrics.csv",
-        image_records,
-        row_type=ImageRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "original_per_plane_metrics.csv",
-        plane_records,
-        row_type=PlaneRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "original_dataset_summary.csv",
-        original_dataset_summaries,
-        row_type=OriginalDatasetSummaryRecord,
-    )
+    _write_dataclass_csv(output_dir / "original_per_image_metrics.csv", image_records)
+    _write_dataclass_csv(output_dir / "original_per_plane_metrics.csv", plane_records)
     summary = write_original_summary(
         image_records,
         errors,
@@ -1704,34 +1460,9 @@ def run_n2v_mode(
         except Exception as exc:
             errors.append(f"{n2v_path} | {type(exc).__name__}: {exc}")
 
-    preferred_summaries, all_variant_summaries = build_n2v_dataset_summaries(
-        pair_records, datasets
-    )
-    _write_dataclass_csv(
-        output_dir / "n2v_per_image_metrics.csv",
-        n2v_image_records,
-        row_type=ImageRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "n2v_per_plane_metrics.csv",
-        n2v_plane_records,
-        row_type=PlaneRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "n2v_raw_pair_comparison.csv",
-        pair_records,
-        row_type=N2VPairRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "n2v_dataset_comparison_summary.csv",
-        preferred_summaries,
-        row_type=N2VDatasetSummaryRecord,
-    )
-    _write_dataclass_csv(
-        output_dir / "n2v_dataset_variant_summary.csv",
-        all_variant_summaries,
-        row_type=N2VDatasetSummaryRecord,
-    )
+    _write_dataclass_csv(output_dir / "n2v_per_image_metrics.csv", n2v_image_records)
+    _write_dataclass_csv(output_dir / "n2v_per_plane_metrics.csv", n2v_plane_records)
+    _write_dataclass_csv(output_dir / "n2v_raw_pair_comparison.csv", pair_records)
     summary = write_n2v_summary(
         pair_records,
         errors,
