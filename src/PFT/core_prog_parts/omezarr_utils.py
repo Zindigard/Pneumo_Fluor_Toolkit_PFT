@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 import math
 import numpy as np
 
@@ -209,12 +209,17 @@ def save_ome_zarr(
     pyramid_3d: bool = True,
     pyramid_max_layer: int = 2,
     pyramid_downscale: int = 2,
+    coordinate_scale: Sequence[float] | None = None,
+    extra_attrs: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write an array and optional CZI metadata as an OME-NGFF image.
     
     The function creates level-0 data, optional 3D multiscale levels, coordinate
     transformations, channel and source attributes, and PFT-specific audit fields.
-    It returns the generated OME-Zarr directory.
+    ``coordinate_scale`` can preserve physical sampling when no ``CziMeta``
+    instance is available, as in derived N2V outputs. ``extra_attrs`` adds
+    JSON-compatible processing provenance without changing the numeric array.
+    The generated OME-Zarr directory is returned.
     """
     out_zarr_dir = Path(out_zarr_dir)
     arr = np.asarray(arr)
@@ -251,8 +256,17 @@ def save_ome_zarr(
 
     use_pyramid = bool(pyramid_3d and "z" in axes and pyramid_max_layer >= 1)
     coordinate_transformations = None
-    if meta is not None:
+    base_scale: list[float] | None = None
+    if coordinate_scale is not None:
+        base_scale = [float(value) for value in coordinate_scale]
+        if len(base_scale) != len(axes):
+            raise ValueError(
+                f"coordinate_scale length {len(base_scale)} does not match axes {axes!r}."
+            )
+    elif meta is not None:
         base_scale = _scale_vector_from_meta_um(axes, meta)
+
+    if base_scale is not None:
         level_count = pyramid_max_layer + 1 if use_pyramid else 1
         coordinate_transformations = [
             [
@@ -284,6 +298,12 @@ def save_ome_zarr(
         root.attrs["pft_meta"] = metadata_as_json_dict(meta)
         root.attrs["source_path"] = str(getattr(meta, "source_path", ""))
         root.attrs["channel_names"] = _json_safe(getattr(meta, "channel_names", None))
+
+    if extra_attrs is not None:
+        for key, value in extra_attrs.items():
+            if str(key) == "multiscales":
+                raise ValueError("extra_attrs must not replace generated OME-NGFF multiscales metadata.")
+            root.attrs[str(key)] = _json_safe(value)
 
     root.attrs["pft_axes"] = axes
     root.attrs["pft_level0_shape"] = list(arr.shape)

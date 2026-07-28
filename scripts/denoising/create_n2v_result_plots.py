@@ -1,0 +1,350 @@
+"""
+Create thesis-ready plots for the two-dimensional Noise2Void evaluation.
+
+The command combines two result sources:
+
+1. ``models/<model_name>/pft_training/training_history.csv`` for training and
+   validation loss curves; and
+2. ``results/noise_analysis/2d/n2v_raw_pair_comparison.csv`` produced by
+   ``check_2d.py --mode n2v`` for paired raw/N2V image metrics.
+
+
+Generated outputs include per-model training curves, paired raw-to-N2V SNR
+plots, delta-SNR distributions, SSIM distributions, a descriptive-statistics
+CSV, and an optional paired Wilcoxon test when SciPy is available.
+
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from pathlib import Path
+import re
+import sys
+from typing import Any, Sequence
+
+import matplotlib
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+SCRIPT_FILE = Path(__file__).resolve()
+
+
+def find_project_root() -> Path:
+    """Locate the PFT repository root from the script location."""
+
+    for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
+            return candidate
+    raise RuntimeError("Cannot locate the PFT repository root.")
+
+
+PROJECT_ROOT = find_project_root()
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from PFT.core_prog_parts.denoising.n2v_workflow import MODEL_SPECS, utc_now_iso  # noqa: E402
+
+
+DATASET_LABELS = {
+    "2d_time": "2D time-lapse HADA",
+    "2d_wga_dapi": "2D WGA-DAPI",
+}
+
+
+def safe_name(value: str) -> str:
+    """Convert a dataset/variant label to a filesystem-safe lowercase name."""
+
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def read_numeric_csv(path: Path) -> list[dict[str, str]]:
+    """Read a UTF-8 CSV file and return rows as dictionaries."""
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Required CSV file not found: {path}")
+    with path.open("r", newline="", encoding="utf-8-sig") as handle:
+        return list(csv.DictReader(handle))
+
+
+def float_value(row: dict[str, str], key: str) -> float:
+    """Convert one CSV field to a finite float."""
+
+    value = float(row[key])
+    if not np.isfinite(value):
+        raise ValueError(f"Non-finite value in column {key}: {row[key]!r}")
+    return value
+
+
+def save_training_curve(history_csv: Path, output_dir: Path, model_name: str) -> Path:
+    """Create one PNG and PDF loss curve from a saved model history."""
+
+    rows = read_numeric_csv(history_csv)
+    epochs = np.asarray([int(float(row["epoch"])) for row in rows], dtype=int)
+    loss = np.asarray([float_value(row, "loss") for row in rows], dtype=float) if "loss" in rows[0] else None
+    validation = (
+        np.asarray([float_value(row, "val_loss") for row in rows], dtype=float)
+        if "val_loss" in rows[0] and all(row.get("val_loss", "") != "" for row in rows)
+        else None
+    )
+
+    figure = plt.figure(figsize=(8, 5), constrained_layout=True)
+    axis = figure.add_subplot(1, 1, 1)
+    if loss is not None:
+        axis.plot(epochs, loss, marker="o", markersize=3, label="Training loss")
+    if validation is not None:
+        axis.plot(epochs, validation, marker="o", markersize=3, label="Validation loss")
+        best = int(np.argmin(validation))
+        axis.scatter([epochs[best]], [validation[best]], zorder=5)
+        axis.annotate(
+            f"Best epoch: {epochs[best]}",
+            (epochs[best], validation[best]),
+            xytext=(8, 8),
+            textcoords="offset points",
+        )
+    axis.set_xlabel("Epoch")
+    axis.set_ylabel("Loss")
+    axis.set_title(model_name)
+    axis.grid(True, alpha=0.3)
+    if axis.lines:
+        axis.legend()
+
+    stem = f"training_curve_{safe_name(model_name)}"
+    png = output_dir / f"{stem}.png"
+    figure.savefig(png, dpi=300)
+    figure.savefig(output_dir / f"{stem}.pdf")
+    plt.close(figure)
+    return png
+
+
+def grouped_comparison_rows(rows: Sequence[dict[str, str]]) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Group comparison records by 2D dataset and N2V output variant."""
+
+    groups: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for row in rows:
+        dataset = row.get("dataset", "")
+        if dataset not in DATASET_LABELS:
+            continue
+        variant = row.get("variant", "unknown")
+        groups.setdefault((dataset, variant), []).append(row)
+    return groups
+
+
+def save_paired_snr_plot(rows: Sequence[dict[str, str]], output_dir: Path, dataset: str, variant: str) -> Path:
+    """Plot each sample's raw and N2V SNR as a connected pair."""
+
+    ordered = sorted(rows, key=lambda row: row.get("sample", ""))
+    raw = np.asarray([float_value(row, "raw_roi_snr") for row in ordered])
+    denoised = np.asarray([float_value(row, "n2v_roi_snr") for row in ordered])
+
+    figure = plt.figure(figsize=(7, 5), constrained_layout=True)
+    axis = figure.add_subplot(1, 1, 1)
+    for raw_value, denoised_value in zip(raw, denoised):
+        axis.plot([0, 1], [raw_value, denoised_value], marker="o", alpha=0.65)
+    axis.set_xticks([0, 1], ["Raw", "N2V"])
+    axis.set_ylabel("ROI signal-to-noise ratio")
+    axis.set_title(f"{DATASET_LABELS[dataset]}: {variant}")
+    axis.grid(True, axis="y", alpha=0.3)
+
+    stem = f"paired_snr_{safe_name(dataset)}_{safe_name(variant)}"
+    png = output_dir / f"{stem}.png"
+    figure.savefig(png, dpi=300)
+    figure.savefig(output_dir / f"{stem}.pdf")
+    plt.close(figure)
+    return png
+
+
+def save_distribution_plot(
+    values: np.ndarray,
+    *,
+    output_dir: Path,
+    dataset: str,
+    variant: str,
+    metric_name: str,
+    y_label: str,
+    zero_reference: bool,
+) -> Path:
+    """Create a box-and-point distribution plot for one N2V metric."""
+
+    figure = plt.figure(figsize=(5.5, 5), constrained_layout=True)
+    axis = figure.add_subplot(1, 1, 1)
+    axis.boxplot(values, positions=[1], widths=0.35, showmeans=True)
+    rng = np.random.default_rng(0)
+    x = 1.0 + rng.uniform(-0.07, 0.07, size=len(values))
+    axis.scatter(x, values, alpha=0.75)
+    if zero_reference:
+        axis.axhline(0.0, linestyle="--", linewidth=1)
+    axis.set_xticks([1], [variant])
+    axis.set_ylabel(y_label)
+    axis.set_title(DATASET_LABELS[dataset])
+    axis.grid(True, axis="y", alpha=0.3)
+
+    stem = f"{safe_name(metric_name)}_{safe_name(dataset)}_{safe_name(variant)}"
+    png = output_dir / f"{stem}.png"
+    figure.savefig(png, dpi=300)
+    figure.savefig(output_dir / f"{stem}.pdf")
+    plt.close(figure)
+    return png
+
+
+def paired_wilcoxon(raw: np.ndarray, denoised: np.ndarray) -> tuple[float | None, float | None, str]:
+    """Return a paired Wilcoxon statistic and p-value when SciPy is available."""
+
+    if len(raw) < 2:
+        return None, None, "not calculated: fewer than two pairs"
+    if np.allclose(raw, denoised):
+        return 0.0, 1.0, "all paired differences are zero"
+    try:
+        from scipy.stats import wilcoxon
+    except Exception:
+        return None, None, "not calculated: scipy is unavailable"
+    result = wilcoxon(denoised, raw, alternative="two-sided", zero_method="wilcox")
+    return float(result.statistic), float(result.pvalue), "two-sided paired Wilcoxon signed-rank test"
+
+
+def descriptive_record(dataset: str, variant: str, rows: Sequence[dict[str, str]]) -> dict[str, Any]:
+    """Calculate descriptive metrics and an optional paired significance test."""
+
+    raw = np.asarray([float_value(row, "raw_roi_snr") for row in rows], dtype=float)
+    denoised = np.asarray([float_value(row, "n2v_roi_snr") for row in rows], dtype=float)
+    delta = np.asarray([float_value(row, "delta_roi_snr") for row in rows], dtype=float)
+    ssim = np.asarray([float_value(row, "ssim_raw_n2v") for row in rows], dtype=float)
+    statistic, p_value, test_note = paired_wilcoxon(raw, denoised)
+    return {
+        "dataset": dataset,
+        "dataset_label": DATASET_LABELS[dataset],
+        "variant": variant,
+        "n": int(len(rows)),
+        "raw_snr_mean": float(np.mean(raw)),
+        "raw_snr_standard_deviation": float(np.std(raw, ddof=1)) if len(raw) > 1 else 0.0,
+        "n2v_snr_mean": float(np.mean(denoised)),
+        "n2v_snr_standard_deviation": float(np.std(denoised, ddof=1)) if len(denoised) > 1 else 0.0,
+        "delta_snr_mean": float(np.mean(delta)),
+        "delta_snr_standard_deviation": float(np.std(delta, ddof=1)) if len(delta) > 1 else 0.0,
+        "delta_snr_median": float(np.median(delta)),
+        "ssim_mean": float(np.mean(ssim)),
+        "ssim_standard_deviation": float(np.std(ssim, ddof=1)) if len(ssim) > 1 else 0.0,
+        "wilcoxon_statistic": statistic,
+        "wilcoxon_p_value": p_value,
+        "wilcoxon_note": test_note,
+    }
+
+
+def write_summary(records: Sequence[dict[str, Any]], output_dir: Path, figures: Sequence[Path]) -> Path:
+    """Write descriptive statistics and a manifest of generated figure files."""
+
+    csv_path = output_dir / "n2v_thesis_plot_statistics.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(records[0]))
+        writer.writeheader()
+        writer.writerows(records)
+    (output_dir / "n2v_thesis_plot_statistics.json").write_text(
+        json.dumps(list(records), indent=2), encoding="utf-8"
+    )
+    lines = [
+        "PFT 2D Noise2Void thesis-plot report",
+        "=" * 72,
+        f"Generated (UTC): {utc_now_iso()}",
+        "Datasets: 2D time-lapse HADA and 2D WGA-DAPI only",
+        f"Statistic groups: {len(records)}",
+        f"Figures generated: {len(figures)}",
+        "",
+    ]
+    for record in records:
+        lines.append(
+            f"{record['dataset']} | {record['variant']} | n={record['n']} | "
+            f"raw SNR={record['raw_snr_mean']:.6g} | N2V SNR={record['n2v_snr_mean']:.6g} | "
+            f"delta={record['delta_snr_mean']:.6g} | SSIM={record['ssim_mean']:.6g} | "
+            f"p={record['wilcoxon_p_value'] if record['wilcoxon_p_value'] is not None else '-'}"
+        )
+    lines.extend(["", "Generated figures", "-----------------"])
+    lines.extend(str(path) for path in figures)
+    report = output_dir / "N2V_THESIS_PLOTS_REPORT.txt"
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create command-line arguments for input CSV and output directory selection."""
+
+    parser = argparse.ArgumentParser(
+        description="Create 2D N2V training and raw-versus-denoised result plots for the thesis.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--comparison-csv",
+        type=Path,
+        default=PROJECT_ROOT / "results" / "noise_analysis" / "2d" / "n2v_raw_pair_comparison.csv",
+        help="Paired raw/N2V metrics generated by check_2d.py --mode n2v.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "results" / "N2V" / "thesis_plots",
+        help="Directory for PNG, PDF, CSV, JSON, and TXT outputs.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Create available training curves and all 2D comparison plots."""
+
+    args = build_parser().parse_args(argv)
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figures: list[Path] = []
+
+    for spec in MODEL_SPECS.values():
+        history = PROJECT_ROOT / "models" / spec.model_name / "pft_training" / "training_history.csv"
+        if history.is_file():
+            figures.append(save_training_curve(history, output_dir, spec.model_name))
+        else:
+            print(f"[WARN] Training history not found for {spec.model_name}: {history}")
+
+    comparison_rows = read_numeric_csv(args.comparison_csv.resolve())
+    groups = grouped_comparison_rows(comparison_rows)
+    if not groups:
+        raise SystemExit("The comparison CSV contains no supported 2D N2V records.")
+
+    statistics: list[dict[str, Any]] = []
+    for (dataset, variant), rows in sorted(groups.items()):
+        figures.append(save_paired_snr_plot(rows, output_dir, dataset, variant))
+        delta = np.asarray([float_value(row, "delta_roi_snr") for row in rows], dtype=float)
+        ssim = np.asarray([float_value(row, "ssim_raw_n2v") for row in rows], dtype=float)
+        figures.append(
+            save_distribution_plot(
+                delta,
+                output_dir=output_dir,
+                dataset=dataset,
+                variant=variant,
+                metric_name="delta_snr",
+                y_label="N2V SNR minus raw SNR",
+                zero_reference=True,
+            )
+        )
+        figures.append(
+            save_distribution_plot(
+                ssim,
+                output_dir=output_dir,
+                dataset=dataset,
+                variant=variant,
+                metric_name="ssim",
+                y_label="SSIM between raw and N2V",
+                zero_reference=False,
+            )
+        )
+        statistics.append(descriptive_record(dataset, variant, rows))
+
+    report = write_summary(statistics, output_dir, figures)
+    print(f"N2V thesis plots: {output_dir}")
+    print(f"Report: {report}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

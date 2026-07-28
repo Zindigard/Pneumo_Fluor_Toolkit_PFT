@@ -1,0 +1,425 @@
+"""
+Validate N2V OME-Zarr outputs, source metadata identity, and raw-range storage.
+
+The checker pairs every standard N2V output with its original image under
+``results/img``.  It confirms that the complete original root attributes were
+stored unchanged, the metadata SHA-256 hash matches, CZI/PFT metadata and
+physical coordinate scales were preserved, and all N2V processing properties
+were recorded.
+
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+from dataclasses import asdict, dataclass
+import json
+from pathlib import Path
+import sys
+from typing import Any, Mapping, Sequence
+
+import numpy as np
+
+
+SCRIPT_FILE = Path(__file__).resolve()
+
+
+def find_project_root() -> Path:
+    """Locate the repository root containing ``scripts`` and ``src/PFT``."""
+
+    for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
+            return candidate
+    raise RuntimeError("Cannot locate the PFT repository root.")
+
+
+PROJECT_ROOT = find_project_root()
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from PFT.core_prog_parts.denoising.n2v_workflow import (  # noqa: E402
+    MODEL_SPECS,
+    N2VModelSpec,
+    get_model_spec,
+    level_zero_path,
+    metadata_sha256,
+    n2v_results_root,
+    source_array_properties,
+    utc_now_iso,
+)
+
+
+@dataclass(frozen=True)
+class OutputRecord:
+    """Store metadata and numeric validation results for one N2V output."""
+
+    status: str
+    model_key: str
+    dataset: str
+    sample: str
+    variant: str
+    source_zarr: str
+    output_zarr: str
+    source_frame_index: str
+    source_channels: str
+    source_axes: str
+    output_axes: str
+    source_shape: str
+    output_shape: str
+    source_dtype: str
+    output_dtype: str
+    source_metadata_identical: bool
+    physical_scales_identical: bool
+    input_normalization: str
+    output_normalization: str
+    output_is_display_normalized: str
+    output_minimum: float | None
+    output_maximum: float | None
+    issues: str
+
+
+def discover_outputs(specs: Sequence[N2VModelSpec]) -> list[tuple[N2VModelSpec, Path]]:
+    """Discover standard output stores for selected model specifications."""
+
+    outputs: list[tuple[N2VModelSpec, Path]] = []
+    root = n2v_results_root(PROJECT_ROOT)
+    for spec in specs:
+        dataset_root = root / spec.dataset
+        if not dataset_root.is_dir():
+            continue
+        for path in sorted(dataset_root.glob(f"*/{spec.variant}/denoised/image.ome.zarr")):
+            if path.is_dir():
+                outputs.append((spec, path.resolve()))
+    return outputs
+
+
+def _axis_size(axes: str, shape: Sequence[int], axis: str) -> int:
+    """Return an axis length, treating an absent channel/time axis as one."""
+
+    return int(shape[axes.index(axis)]) if axis in axes else 1
+
+
+def sample_array_values(zarr_path: Path, max_side: int = 512) -> np.ndarray:
+    """Read a bounded level-0 sample for finite-value and range checks."""
+
+    try:
+        import zarr
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise ImportError("The N2V output checker requires zarr.") from exc
+
+    group = zarr.open_group(str(zarr_path), mode="r")
+    attrs = dict(group.attrs)
+    array = group[level_zero_path(attrs)]
+    properties = source_array_properties(zarr_path)
+    axes = str(properties["axes"])
+    shape = tuple(int(value) for value in properties["shape"])
+    index: list[Any] = []
+    for axis, size in zip(axes, shape):
+        if axis in ("y", "x"):
+            step = max(1, int(np.ceil(int(size) / max_side)))
+            index.append(slice(None, None, step))
+        else:
+            index.append(slice(None))
+    return np.asarray(array[tuple(index)], dtype=np.float64).ravel()
+
+
+def _normalization_value(attrs: Mapping[str, Any], key: str) -> str:
+    """Return a normalized lowercase provenance value or an empty string."""
+
+    value = attrs.get(key, "")
+    return str(value).strip().lower()
+
+
+def _same_float(a: float, b: float, tolerance: float = 1e-9) -> bool:
+    """Compare physical scales with strict absolute and relative tolerance."""
+
+    return bool(np.isclose(float(a), float(b), rtol=tolerance, atol=tolerance))
+
+
+def validate_output(spec: N2VModelSpec, output_zarr: Path) -> OutputRecord:
+    """Validate one N2V output against its current original OME-Zarr source."""
+
+    failures: list[str] = []
+    warnings: list[str] = []
+    sample = output_zarr.parents[2].name
+    expected_source = PROJECT_ROOT / "results" / "img" / spec.dataset / sample / "image.ome.zarr"
+    source_path = expected_source
+    source_properties: dict[str, Any] = {}
+    output_properties: dict[str, Any] = {}
+    source_metadata_identical = False
+    physical_scales_identical = False
+    sampled = np.empty(0, dtype=np.float64)
+    frame_value: Any = ""
+    channels_value: Any = []
+
+    try:
+        output_properties = source_array_properties(output_zarr)
+        attrs = output_properties.get("attrs", {})
+        if not isinstance(attrs, Mapping):
+            raise TypeError("output root attributes are not a mapping")
+
+        source_attr = attrs.get("pft_n2v_source_zarr")
+        if source_attr:
+            candidate = Path(str(source_attr)).expanduser()
+            source_path = candidate if candidate.is_absolute() else (PROJECT_ROOT / candidate)
+        source_path = source_path.resolve()
+        if not source_path.is_dir():
+            failures.append(f"source OME-Zarr is missing: {source_path}")
+        else:
+            source_properties = source_array_properties(source_path)
+
+        required = (
+            "pft_n2v_dataset",
+            "pft_n2v_sample",
+            "pft_n2v_variant",
+            "pft_n2v_model_key",
+            "pft_n2v_model_name",
+            "pft_n2v_source_zarr",
+            "pft_n2v_source_frame_index",
+            "pft_n2v_source_channels",
+            "pft_n2v_source_axes",
+            "pft_n2v_source_shape",
+            "pft_n2v_source_dtype",
+            "pft_n2v_source_attrs",
+            "pft_n2v_source_attrs_sha256",
+            "pft_n2v_input_normalization",
+            "pft_n2v_output_normalization",
+            "pft_n2v_output_is_display_normalized",
+            "pft_n2v_output_axes",
+            "pft_n2v_output_shape",
+            "pft_n2v_output_dtype",
+            "pft_n2v_generated_utc",
+        )
+        missing = [key for key in required if key not in attrs]
+        if missing:
+            failures.append(f"missing required provenance attributes: {missing}")
+
+        if str(attrs.get("pft_n2v_model_key", "")) != spec.key:
+            failures.append("stored model key does not match output directory variant")
+        if str(attrs.get("pft_n2v_model_name", "")) != spec.model_name:
+            failures.append("stored model name does not match authoritative model registry")
+        if str(attrs.get("pft_n2v_dataset", "")) != spec.dataset:
+            failures.append("stored dataset does not match output path")
+        if str(attrs.get("pft_n2v_sample", "")) != sample:
+            failures.append("stored sample does not match output path")
+        if str(attrs.get("pft_n2v_variant", "")) != spec.variant:
+            failures.append("stored variant does not match output path")
+
+        frame_value = attrs.get("pft_n2v_source_frame_index", "")
+        try:
+            frame_index = int(frame_value)
+        except (TypeError, ValueError):
+            frame_index = -1
+            failures.append("source frame index is not an integer")
+        channels_value = attrs.get("pft_n2v_source_channels", [])
+        try:
+            stored_channels = [int(value) for value in channels_value]
+        except Exception:
+            stored_channels = []
+            failures.append("source channel list is invalid")
+        if stored_channels != list(spec.channels):
+            failures.append(f"stored channels {stored_channels} do not match expected {list(spec.channels)}")
+
+        if source_properties:
+            source_attrs = source_properties.get("attrs", {})
+            stored_source_attrs = attrs.get("pft_n2v_source_attrs")
+            source_metadata_identical = stored_source_attrs == source_attrs
+            if not source_metadata_identical:
+                failures.append("stored complete source attributes differ from the current original attributes")
+            expected_hash = metadata_sha256(source_attrs)
+            if str(attrs.get("pft_n2v_source_attrs_sha256", "")) != expected_hash:
+                failures.append("stored source metadata SHA-256 does not match the current original")
+            if attrs.get("pft_meta") != source_attrs.get("pft_meta"):
+                failures.append("top-level pft_meta is not identical to the original pft_meta")
+            if str(attrs.get("source_path", "")) != str(source_attrs.get("source_path", "")):
+                failures.append("top-level original CZI source_path is not preserved")
+            if str(attrs.get("pft_n2v_source_dtype", "")) != str(source_properties.get("dtype", "")):
+                failures.append("stored source dtype differs from original level-0 dtype")
+            if attrs.get("pft_n2v_source_shape") != source_properties.get("shape"):
+                failures.append("stored source shape differs from original level-0 shape")
+            if str(attrs.get("pft_n2v_source_axes", "")) != str(source_properties.get("axes", "")):
+                failures.append("stored source axes differ from original axes")
+
+            source_axes = str(source_properties["axes"])
+            source_shape = tuple(int(value) for value in source_properties["shape"])
+            if not 0 <= frame_index < _axis_size(source_axes, source_shape, "t"):
+                failures.append(
+                    f"source frame index {frame_index} outside 0..{_axis_size(source_axes, source_shape, 't') - 1}"
+                )
+            source_channel_count = _axis_size(source_axes, source_shape, "c")
+            invalid_channels = [value for value in stored_channels if value < 0 or value >= source_channel_count]
+            if invalid_channels:
+                failures.append(f"source channels outside 0..{source_channel_count - 1}: {invalid_channels}")
+
+            output_axes = str(output_properties["axes"])
+            output_shape = tuple(int(value) for value in output_properties["shape"])
+            for axis in ("y", "x"):
+                if _axis_size(source_axes, source_shape, axis) != _axis_size(output_axes, output_shape, axis):
+                    failures.append(f"source/output {axis.upper()} size mismatch")
+            expected_output_channels = len(spec.channels)
+            if _axis_size(output_axes, output_shape, "c") != expected_output_channels:
+                failures.append(
+                    f"output channel count {_axis_size(output_axes, output_shape, 'c')} != {expected_output_channels}"
+                )
+
+            source_scales = source_properties.get("scale_by_axis", {})
+            output_scales = output_properties.get("scale_by_axis", {})
+            shared_axes = set(source_scales).intersection(output_scales)
+            physical_scales_identical = all(
+                _same_float(source_scales[axis], output_scales[axis]) for axis in shared_axes
+            )
+            if not physical_scales_identical:
+                failures.append("physical coordinate scales differ from the original on shared axes")
+
+        actual_dtype = str(output_properties.get("dtype", ""))
+        if np.dtype(actual_dtype) != np.dtype(np.float32):
+            failures.append(f"output dtype must be float32, got {actual_dtype}")
+        if str(attrs.get("pft_n2v_output_dtype", "")) != actual_dtype:
+            failures.append("stored output dtype does not match the level-0 array dtype")
+        if str(attrs.get("pft_n2v_output_axes", "")) != str(output_properties.get("axes", "")):
+            failures.append("stored output axes do not match generated OME-NGFF axes")
+        if attrs.get("pft_n2v_output_shape") != output_properties.get("shape"):
+            failures.append("stored output shape does not match generated level-0 shape")
+
+        input_normalization = _normalization_value(attrs, "pft_n2v_input_normalization")
+        output_normalization = _normalization_value(attrs, "pft_n2v_output_normalization")
+        if input_normalization != "none":
+            failures.append(f"input normalization is {input_normalization!r}, expected 'none'")
+        if output_normalization != "none":
+            failures.append(f"output normalization is {output_normalization!r}, expected 'none'")
+        if attrs.get("pft_n2v_output_is_display_normalized") is not False:
+            failures.append("output_is_display_normalized must be false")
+
+        sampled = sample_array_values(output_zarr)
+        if sampled.size == 0:
+            failures.append("output contains no sampled values")
+        elif not np.all(np.isfinite(sampled)):
+            failures.append("output contains NaN or infinity")
+        else:
+            stored_minimum = attrs.get("pft_n2v_output_minimum")
+            stored_maximum = attrs.get("pft_n2v_output_maximum")
+            if stored_minimum is None or stored_maximum is None:
+                warnings.append("full-array output minimum/maximum properties are missing")
+            if np.min(sampled) >= 0.0 and np.max(sampled) <= 1.0:
+                source_dtype = str(source_properties.get("dtype", ""))
+                if source_dtype and np.issubdtype(np.dtype(source_dtype), np.integer):
+                    warnings.append(
+                        "sampled N2V values are confined to [0,1] although the source dtype is integer; inspect the output range"
+                    )
+
+        unexpected_normalized = [
+            path.name
+            for path in output_zarr.parent.iterdir()
+            if path != output_zarr and ("norm" in path.name.lower() or "preview" in path.name.lower())
+        ]
+        if unexpected_normalized:
+            warnings.append(f"normalized/preview products found inside denoised folder: {unexpected_normalized}")
+    except Exception as exc:
+        failures.append(f"{type(exc).__name__}: {exc}")
+
+    status = "FAIL" if failures else ("WARN" if warnings else "PASS")
+    issues = "; ".join([*(f"FAIL: {item}" for item in failures), *(f"WARN: {item}" for item in warnings)])
+    attrs = output_properties.get("attrs", {}) if isinstance(output_properties, Mapping) else {}
+    return OutputRecord(
+        status=status,
+        model_key=spec.key,
+        dataset=spec.dataset,
+        sample=sample,
+        variant=spec.variant,
+        source_zarr=str(source_path),
+        output_zarr=str(output_zarr),
+        source_frame_index=str(frame_value),
+        source_channels=",".join(str(value) for value in channels_value) if isinstance(channels_value, (list, tuple)) else str(channels_value),
+        source_axes=str(source_properties.get("axes", "")),
+        output_axes=str(output_properties.get("axes", "")),
+        source_shape=str(tuple(source_properties.get("shape", []))),
+        output_shape=str(tuple(output_properties.get("shape", []))),
+        source_dtype=str(source_properties.get("dtype", "")),
+        output_dtype=str(output_properties.get("dtype", "")),
+        source_metadata_identical=source_metadata_identical,
+        physical_scales_identical=physical_scales_identical,
+        input_normalization=str(attrs.get("pft_n2v_input_normalization", "")) if isinstance(attrs, Mapping) else "",
+        output_normalization=str(attrs.get("pft_n2v_output_normalization", "")) if isinstance(attrs, Mapping) else "",
+        output_is_display_normalized=str(attrs.get("pft_n2v_output_is_display_normalized", "")) if isinstance(attrs, Mapping) else "",
+        output_minimum=float(np.min(sampled)) if sampled.size else None,
+        output_maximum=float(np.max(sampled)) if sampled.size else None,
+        issues=issues,
+    )
+
+
+def save_report(records: Sequence[OutputRecord], model_label: str) -> Path:
+    """Write TXT, CSV, and JSON reports for validated N2V outputs."""
+
+    report_dir = n2v_results_root(PROJECT_ROOT) / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"n2v_output_metadata_{model_label}"
+    rows = [asdict(record) for record in records]
+    with (report_dir / f"{stem}.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    (report_dir / f"{stem}.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
+
+    passed = sum(record.status == "PASS" for record in records)
+    warned = sum(record.status == "WARN" for record in records)
+    failed = sum(record.status == "FAIL" for record in records)
+    overall = "FAIL" if failed else ("WARN" if warned else "PASS")
+    lines = [
+        "PFT 2D N2V output metadata and data-property report",
+        "=" * 72,
+        f"Generated (UTC): {utc_now_iso()}",
+        f"Model selection: {model_label}",
+        f"Overall status: {overall}",
+        f"Outputs discovered: {len(records)}",
+        f"PASS: {passed}",
+        f"WARN: {warned}",
+        f"FAIL: {failed}",
+        "",
+        "Required interpretation",
+        "-----------------------",
+        "PASS means complete source metadata, physical scales, N2V provenance,",
+        "float32 numeric output, and explicit no-normalization properties agree.",
+        "",
+    ]
+    for record in records:
+        lines.append(
+            f"{record.status} | {record.dataset} | {record.sample} | {record.variant} | "
+            f"source meta identical={record.source_metadata_identical} | "
+            f"scales identical={record.physical_scales_identical}"
+            + (f" | {record.issues}" if record.issues else "")
+        )
+    txt_path = report_dir / f"{stem}.txt"
+    txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return txt_path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create the command-line parser for all-model or one-model checks."""
+
+    parser = argparse.ArgumentParser(
+        description="Check N2V output metadata identity, physical scales, provenance, and raw-range storage.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--model", choices=tuple(MODEL_SPECS), help="Restrict checks to one model. Omit to check all models.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate discovered outputs and return nonzero when blocking failures exist."""
+
+    args = build_parser().parse_args(argv)
+    specs = [get_model_spec(args.model)] if args.model else [get_model_spec(key) for key in MODEL_SPECS]
+    outputs = discover_outputs(specs)
+    if not outputs:
+        raise SystemExit("No standard N2V output image.ome.zarr stores were discovered.")
+    records = [validate_output(spec, path) for spec, path in outputs]
+    label = args.model or "all"
+    report = save_report(records, label)
+    print(f"N2V output report: {report}")
+    return 1 if any(record.status == "FAIL" for record in records) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
