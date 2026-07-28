@@ -503,18 +503,52 @@ def add_scalebar(
     image_shape_yx: tuple[int, int],
     bar_um: float,
 ) -> None:
-    """Draw a white scale bar when valid X pixel spacing is available."""
+    """Draw a high-contrast scale bar on a displayed microscopy image.
+
+    Parameters
+    ----------
+    axis:
+        Matplotlib axis containing the displayed image.
+    pixel_size_um_x:
+        Physical pixel size along the X axis in micrometres per pixel.
+    image_shape_yx:
+        Displayed image shape as ``(height, width)`` in pixels.
+    bar_um:
+        Scale-bar length in micrometres. The N2V workflow uses 2 µm by
+        default through ``--scale-bar-um 2.0``.
+
+    Notes
+    -----
+    A black outline is applied to the white bar and label so that the scale bar
+    remains visible on both bright and dark fluorescence regions.
+    """
     if pixel_size_um_x is None or pixel_size_um_x <= 0 or bar_um <= 0:
         return
+
+    import matplotlib.patheffects as path_effects
+
     height, width = image_shape_yx
     bar_pixels = max(2, int(round(bar_um / pixel_size_um_x)))
     bar_pixels = min(bar_pixels, max(2, width // 2))
-    margin = max(10, int(round(min(height, width) * 0.03)))
+
+    margin = max(10, int(round(min(height, width) * 0.035)))
     y = height - margin
     x1 = width - margin
     x0 = x1 - bar_pixels
-    axis.plot([x0, x1], [y, y], color="white", linewidth=4, solid_capstyle="butt")
-    axis.text(
+
+    line = axis.plot(
+        [x0, x1],
+        [y, y],
+        color="white",
+        linewidth=4,
+        solid_capstyle="butt",
+        zorder=20,
+    )[0]
+    line.set_path_effects(
+        [path_effects.Stroke(linewidth=6, foreground="black"), path_effects.Normal()]
+    )
+
+    label = axis.text(
         (x0 + x1) / 2,
         y - max(6, margin // 3),
         f"{bar_um:g} µm",
@@ -522,6 +556,11 @@ def add_scalebar(
         ha="center",
         va="bottom",
         fontsize=9,
+        fontweight="bold",
+        zorder=21,
+    )
+    label.set_path_effects(
+        [path_effects.Stroke(linewidth=3, foreground="black"), path_effects.Normal()]
     )
 
 
@@ -559,6 +598,48 @@ def save_gray_array(gray01: np.ndarray, path: Path) -> None:
         raise ValueError(f"Unsupported image suffix: {path.suffix}")
 
 
+def save_single_panel(
+    panel_rgb: np.ndarray,
+    *,
+    output_base: Path,
+    formats: Sequence[str],
+    title: str,
+    pixel_size_um_x: float | None,
+    scale_bar_um: float,
+    show_scalebar: bool,
+    dpi: int,
+) -> list[Path]:
+    """Save one display-ready RGB panel with an optional scale bar.
+
+    This function is used for the separately exported RAW and N2V images so
+    that they contain the same physical scale annotation as the combined
+    comparison figure.
+    """
+    plt = _matplotlib_pyplot(gui=False)
+    figure, axis = plt.subplots(1, 1, figsize=(5, 5), constrained_layout=True)
+    axis.imshow(panel_rgb)
+    axis.set_title(title)
+    axis.axis("off")
+
+    if show_scalebar:
+        add_scalebar(
+            axis,
+            pixel_size_um_x=pixel_size_um_x,
+            image_shape_yx=(panel_rgb.shape[0], panel_rgb.shape[1]),
+            bar_um=scale_bar_um,
+        )
+
+    output_paths: list[Path] = []
+    for suffix in formats:
+        path = output_base.with_suffix(".tiff" if suffix == "tiff" else ".png")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(path, dpi=dpi)
+        output_paths.append(path)
+
+    plt.close(figure)
+    return output_paths
+
+
 def save_three_panel(
     raw_rgb: np.ndarray,
     processed_rgb: np.ndarray,
@@ -574,16 +655,23 @@ def save_three_panel(
     show_scalebar: bool,
     dpi: int,
 ) -> list[Path]:
-    """Save a three-panel raw/processed/red-difference comparison figure."""
+    """Save a three-panel RAW, processed, and difference comparison figure.
+
+    Scale bars are drawn on both biological-image panels, RAW and processed.
+    The numerical difference panel is left without a scale bar because it is a
+    derived intensity-change visualization rather than a separate acquisition.
+    """
     plt = _matplotlib_pyplot(gui=False)
     figure, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
     panels = (raw_rgb, processed_rgb, difference_rgb)
     titles = (raw_title, processed_title, difference_title)
+
     for index, (axis, panel, title) in enumerate(zip(axes, panels, titles)):
         axis.imshow(panel)
         axis.set_title(title)
         axis.axis("off")
-        if show_scalebar and index < 2:
+
+        if show_scalebar and index in (0, 1):
             add_scalebar(
                 axis,
                 pixel_size_um_x=pixel_size_um_x,
@@ -597,6 +685,7 @@ def save_three_panel(
         path.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(path, dpi=dpi)
         output_paths.append(path)
+
     plt.close(figure)
     return output_paths
 
@@ -939,31 +1028,78 @@ def compare_pair(
         )
 
     if save_individuals:
-        for suffix in formats:
-            extension = ".tiff" if suffix == "tiff" else ".png"
-            raw_output = output_dir / f"raw_display{extension}"
-            processed_output = output_dir / f"processed_display{extension}"
-            difference_output = output_dir / f"difference_red{extension}"
-            save_rgb_array(raw_rgb, raw_output)
-            save_rgb_array(processed_rgb, processed_output)
-            save_rgb_array(difference_rgb, difference_output)
-            for path, kind in (
-                (raw_output, "raw_display"),
-                (processed_output, "processed_display"),
-                (difference_output, "difference_red"),
-            ):
-                records.append(
-                    ManifestRecord(
-                        output_path=str(path),
-                        output_kind=kind,
-                        notes=f"Difference display vmax={difference_vmax:.8g}",
-                        **common,
-                    )
+        raw_paths = save_single_panel(
+            raw_rgb,
+            output_base=output_dir / "raw_display",
+            formats=formats,
+            title=raw_label,
+            pixel_size_um_x=raw_image.scale_by_axis.get("x"),
+            scale_bar_um=scale_bar_um,
+            show_scalebar=show_scalebar,
+            dpi=dpi,
+        )
+        processed_paths = save_single_panel(
+            processed_rgb,
+            output_base=output_dir / "processed_display",
+            formats=formats,
+            title=processed_label,
+            pixel_size_um_x=raw_image.scale_by_axis.get("x"),
+            scale_bar_um=scale_bar_um,
+            show_scalebar=show_scalebar,
+            dpi=dpi,
+        )
+        difference_paths = save_single_panel(
+            difference_rgb,
+            output_base=output_dir / "difference_red",
+            formats=formats,
+            title=f"Absolute difference (red, p{diff_percentile:g} scale)",
+            pixel_size_um_x=raw_image.scale_by_axis.get("x"),
+            scale_bar_um=scale_bar_um,
+            show_scalebar=False,
+            dpi=dpi,
+        )
+
+        for path in raw_paths:
+            records.append(
+                ManifestRecord(
+                    output_path=str(path),
+                    output_kind="raw_display",
+                    notes=(
+                        f"Display image with {scale_bar_um:g} µm scale bar; "
+                        f"difference display vmax={difference_vmax:.8g}"
+                    ),
+                    **common,
                 )
-        tifffile.imwrite(output_dir / "difference_numeric_float32.tiff", difference.astype(np.float32))
+            )
+
+        for path in processed_paths:
+            records.append(
+                ManifestRecord(
+                    output_path=str(path),
+                    output_kind="processed_display",
+                    notes=(
+                        f"Display image with {scale_bar_um:g} µm scale bar; "
+                        f"difference display vmax={difference_vmax:.8g}"
+                    ),
+                    **common,
+                )
+            )
+
+        for path in difference_paths:
+            records.append(
+                ManifestRecord(
+                    output_path=str(path),
+                    output_kind="difference_red",
+                    notes=f"Difference display vmax={difference_vmax:.8g}",
+                    **common,
+                )
+            )
+
+        numeric_difference_path = output_dir / "difference_numeric_float32.tiff"
+        tifffile.imwrite(numeric_difference_path, difference.astype(np.float32))
         records.append(
             ManifestRecord(
-                output_path=str(output_dir / "difference_numeric_float32.tiff"),
+                output_path=str(numeric_difference_path),
                 output_kind="difference_numeric_float32",
                 notes="Unnormalized mean absolute difference across selected channels.",
                 **common,
@@ -1508,7 +1644,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="gray",
         help="Display colour for single-channel images (default: gray).",
     )
-    parser.add_argument("--scale-bar-um", type=float, default=2.0, help="Scale-bar length in micrometres.")
+    parser.add_argument(
+        "--scale-bar-um",
+        type=float,
+        default=2.0,
+        help="Scale-bar length in micrometres (default: 2.0 µm).",
+    )
     parser.add_argument("--no-scalebar", action="store_true", help="Do not draw scale bars.")
     parser.add_argument("--dpi", type=int, default=300, help="Figure resolution (default: 300 dpi).")
     parser.add_argument("--save-individuals", action="store_true", help="Also save separate raw, processed and difference images.")

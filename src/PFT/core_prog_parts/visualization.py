@@ -8,15 +8,17 @@ FFT displays, scale bars, and comparison figures.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
-from PFT.core_prog_parts.io import CziMeta
+if TYPE_CHECKING:
+    from PFT.core_prog_parts.io import CziMeta
 from PFT.core_prog_parts.image_utils import normalize01_percentile as normalize01
-from PFT.core_prog_parts.plot_utils import add_scalebar as _add_scalebar, apply_axis_style, finalize_figure
 
 EPS = 1e-12
 INTENSITY_RGB_CMAP = LinearSegmentedColormap.from_list(
@@ -66,7 +68,9 @@ def make_black_figure(figsize: tuple[float, float] | None = None):
 
 
 def make_black_axis(figsize: tuple[float, float] | None = None):
-    """Create and return the requested display or object."""
+    """Create and return a black Matplotlib axis."""
+    from PFT.core_prog_parts.plot_utils import apply_axis_style
+
     fig = make_black_figure(figsize=figsize)
     ax = fig.add_subplot(111)
     apply_axis_style(ax, facecolor="black")
@@ -82,22 +86,26 @@ def save_rgb_preview_png(
     dpi: int = 200,
 ) -> None:
     """Save generated outputs to disk."""
+    from PFT.core_prog_parts.plot_utils import add_scalebar, finalize_figure
+
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = make_black_axis()
     ax.imshow(rgb01, vmin=0.0, vmax=1.0)
     ax.set_title(title, color="white")
     if meta is not None:
-        _add_scalebar(ax, meta, length_um=scalebar_um)
+        add_scalebar(ax, meta, length_um=scalebar_um)
     finalize_figure(fig, out_png, dpi=dpi, facecolor=fig.get_facecolor(), pad_inches=0.05)
 
 
 def preview_rgb(rgb01: np.ndarray, title: str, meta: CziMeta | None = None, scalebar_um: float = 4.0) -> None:
-    """Helper function used by this module."""
+    """Display an RGB preview, optionally with a scale bar."""
+    from PFT.core_prog_parts.plot_utils import add_scalebar
+
     fig, ax = make_black_axis()
     ax.imshow(rgb01, vmin=0.0, vmax=1.0)
     ax.set_title(title, color="white")
     if meta is not None:
-        _add_scalebar(ax, meta, length_um=scalebar_um)
+        add_scalebar(ax, meta, length_um=scalebar_um)
 
 
 def _normalize_preview_channel(
@@ -201,6 +209,120 @@ def imshow_percentile(ax, img: np.ndarray, cmap: str = "gray", p_low: float = 1.
     if vmax <= vmin:
         vmax = vmin + 1e-6
     ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax)
+
+
+def shared_display_limits(
+    reference: np.ndarray,
+    *,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+) -> tuple[float, float]:
+    """Return robust display limits derived only from the original image.
+
+    This function is intended for visualization. It does not modify the
+    quantitative image and must not be used to rescale OME-Zarr output.
+    """
+    if not (0.0 <= p_low < p_high <= 100.0):
+        raise ValueError("Display percentiles must satisfy 0 <= p_low < p_high <= 100")
+    values = np.asarray(reference, dtype=np.float64)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    low, high = np.percentile(finite, (p_low, p_high))
+    low = float(low)
+    high = float(high)
+    if high <= low:
+        low = float(np.min(finite))
+        high = float(np.max(finite))
+    if high <= low:
+        high = low + 1.0
+    return low, high
+
+
+def normalize_display_with_limits(
+    image: np.ndarray,
+    limits: tuple[float, float],
+) -> np.ndarray:
+    """Map an image to ``[0, 1]`` for display using fixed shared limits."""
+    low, high = (float(limits[0]), float(limits[1]))
+    if high <= low:
+        raise ValueError("Display upper limit must be larger than the lower limit")
+    values = np.asarray(image, dtype=np.float32)
+    normalized = (values - low) / (high - low)
+    return np.clip(normalized, 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def normalize_original_filtered_pair(
+    original: np.ndarray,
+    filtered: np.ndarray,
+    *,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+) -> tuple[np.ndarray, np.ndarray, tuple[float, float]]:
+    """Normalize original and filtered planes with one original-derived scale.
+
+    The two inputs must have the same shape. Shared normalization ensures that
+    apparent contrast changes reflect filtering rather than independent display
+    stretching. The returned arrays are display products only.
+    """
+    original_array = np.asarray(original)
+    filtered_array = np.asarray(filtered)
+    if original_array.shape != filtered_array.shape:
+        raise ValueError(
+            f"Original and filtered shapes differ: {original_array.shape} vs "
+            f"{filtered_array.shape}"
+        )
+    limits = shared_display_limits(original_array, p_low=p_low, p_high=p_high)
+    return (
+        normalize_display_with_limits(original_array, limits),
+        normalize_display_with_limits(filtered_array, limits),
+        limits,
+    )
+
+
+def save_normalized_before_after_plot(
+    original: np.ndarray,
+    filtered: np.ndarray,
+    out_png: Path,
+    *,
+    title: str = "Original versus filtered",
+    original_label: str = "Original",
+    filtered_label: str = "Filtered",
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+    cmap: str = "gray",
+    dpi: int = 200,
+    footer: str | None = None,
+) -> tuple[float, float]:
+    """Save a two-panel, shared-normalization comparison plot.
+
+    Both panels use percentile limits calculated from ``original``. The plot is
+    a display-only product. Source and filtered quantitative arrays are not
+    modified or saved by this function. The applied raw-intensity limits are
+    returned for provenance.
+    """
+    original_display, filtered_display, limits = normalize_original_filtered_pair(
+        original,
+        filtered,
+        p_low=p_low,
+        p_high=p_high,
+    )
+    figure, axes = plt.subplots(1, 2, figsize=(12, 5.5), constrained_layout=True)
+    for axis, image, panel_title in (
+        (axes[0], original_display, original_label),
+        (axes[1], filtered_display, filtered_label),
+    ):
+        axis.imshow(image, cmap=cmap, vmin=0.0, vmax=1.0, interpolation="nearest")
+        axis.set_title(panel_title)
+        axis.axis("off")
+    figure.suptitle(title)
+    if footer:
+        figure.text(0.5, 0.01, footer, ha="center", va="bottom", fontsize=9)
+    out_png = Path(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out_png, dpi=dpi, bbox_inches="tight")
+    plt.close(figure)
+    return limits
 
 
 def plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, out_png: Path, *, original_label: str = "Original", filtered_label: str = "Filtered", facecolor: str = "black") -> None:

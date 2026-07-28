@@ -1,3 +1,9 @@
+"""Interactive tuning of the optional directional notch filter.
+
+The script visualizes mean FFTs and lets the user select angular stop bands.
+It is retained for comparison experiments and is not the default 2D filter.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +27,6 @@ from PFT.core_prog_parts.denoising.notch_filter import _ensure_cyx, _to_numpy
 
 EPS = 1e-12
 
-"Interactive tool to apply notch filters in the frequency domain to OME-Zarr images, with visualization and saving of results."
 
 
 CURATED_TEST_STEMS: dict[str, list[str]] = {

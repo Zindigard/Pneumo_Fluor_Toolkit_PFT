@@ -1,3 +1,11 @@
+"""Optional free-hand Fourier-mask filtering for 2D OME-Zarr images.
+
+A free-hand filter multiplies the centered 2D Fourier transform by a user-
+supplied keep mask. The method remains callable for comparison and manual
+tuning, but it is not the production filter. The production 2D workflow uses
+``apply_local_threshold_2d`` from ``local_threshold_filter.py``.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,16 +28,27 @@ from PFT.core_prog_parts.denoising.notch_filter import (
 
 @dataclass
 class FreehandMaskParams:
+    """Store a multiplicative Fourier-domain keep mask.
+
+    Values must be finite and lie in [0, 1]. A value of one preserves a
+    frequency coefficient; zero removes it; intermediate values attenuate it.
     """
-    Free-hand filter = user-defined frequency mask applied to FFT.
-    
-    """
+
     mask_keep: np.ndarray
 
 
-def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
-    """Internal helper used by this module."""
-    x = img2d.astype(np.float32, copy=False)
+def apply_freehand_filter_2d(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
+    """Apply a supplied Fourier keep mask to one 2D image plane."""
+    x = np.asarray(img2d, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"Expected a 2D image plane, received shape={x.shape}")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Free-hand filter input contains NaN or infinite values")
+    mask_keep = np.asarray(mask_keep, dtype=np.float32)
+    if not np.all(np.isfinite(mask_keep)):
+        raise ValueError("mask_keep contains NaN or infinite values")
+    if np.any(mask_keep < 0.0) or np.any(mask_keep > 1.0):
+        raise ValueError("mask_keep values must be in [0, 1]")
     mu = float(np.mean(x))
     x0 = x - mu
     F = np.fft.fftshift(np.fft.fft2(x0))
@@ -41,8 +60,13 @@ def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarra
     return out
 
 
+def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
+    """Backward-compatible wrapper for ``apply_freehand_filter_2d``."""
+    return apply_freehand_filter_2d(img2d, mask_keep)
+
+
 def results_filters_dir() -> Path:
-    """Helper function used by this module."""
+    """Return the common directory used for optional filter outputs."""
     return _repo_root() / "results" / "Filters"
 
 
@@ -55,11 +79,11 @@ def run_freehand_on_dataset(
     image_index: int | None = None,
     out_subdir_name: str | None = None,
 ) -> Path:
-    """
-    Apply freehand mask (or dry-run) to ONE selected image from dataset,
-    save result as OME-Zarr 
+    """Apply an optional Fourier keep mask to one selected OME-Zarr image.
 
-    Returns output directory.
+    Channel selection is dataset-aware: ``2d_time`` uses its blue channel and
+    ``2d_wga_dapi`` can process blue and green. ``apply=False`` preserves the
+    input values. The function returns the created output directory.
     """
     zarrs = list_omezarr_images(dataset)
     if not zarrs:

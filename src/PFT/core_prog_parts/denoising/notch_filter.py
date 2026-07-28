@@ -1,3 +1,11 @@
+"""
+Optional directional notch filtering for 2D OME-Zarr images.
+
+The filter attenuates angular wedges in the centered Fourier plane and is
+retained for comparison with directional line-noise removal. It is not the
+default 2D filter; the production workflow uses local-threshold filtering.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +19,6 @@ from PFT.core_prog_parts.common_paths import dataset_img_dir, find_project_root,
 from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
-"Implements notch filtering in the frequency domain to suppress artifacts, with flexible parameterization and application to OME-Zarr images."
 
 def _repo_root() -> Path:
     """Internal helper used by this module."""
@@ -58,6 +65,18 @@ class NotchParams:
     depth: float = 1.0
     smooth: bool = True
 
+    def validate(self) -> None:
+        """Raise ``ValueError`` when the notch definition is invalid."""
+        if not self.angles_deg:
+            raise ValueError("angles_deg must contain at least one angle")
+        if self.half_width_deg <= 0.0 or self.half_width_deg > 90.0:
+            raise ValueError("half_width_deg must be in (0, 90]")
+        if self.r_min < 0:
+            raise ValueError("r_min must be >= 0")
+        if self.r_max is not None and self.r_max <= self.r_min:
+            raise ValueError("r_max must be greater than r_min")
+        if not 0.0 <= self.depth <= 1.0:
+            raise ValueError("depth must be in [0, 1]")
 
 
 def _to_numpy(a) -> np.ndarray:
@@ -99,8 +118,8 @@ def _fft2_logmag(img2d: np.ndarray) -> np.ndarray:
 
 def _angle_grid(h: int, w: int) -> np.ndarray:
     """Internal helper used by this module."""
-    cy = (h - 1) / 2.0
-    cx = (w - 1) / 2.0
+    cy = float(h // 2)
+    cx = float(w // 2)
     yy, xx = np.indices((h, w), dtype=np.float32)
     ang = np.degrees(np.arctan2(yy - cy, xx - cx))  # [-180..180]
     return ang
@@ -108,20 +127,24 @@ def _angle_grid(h: int, w: int) -> np.ndarray:
 
 def _radius_grid(h: int, w: int) -> np.ndarray:
     """Internal helper used by this module."""
-    cy = (h - 1) / 2.0
-    cx = (w - 1) / 2.0
+    cy = float(h // 2)
+    cx = float(w // 2)
     yy, xx = np.indices((h, w), dtype=np.float32)
     rr = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
     return rr
 
 
 def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
+    """Build the multiplicative Fourier transfer function for a notch filter.
+
+    The returned array equals one outside the selected angular and radial
+    regions. Inside each selected wedge it is attenuated according to ``depth``
+    and ``smooth``.
     """
-    Build multiplicative mask H in frequency domain, where:
-      H ~ 1 outside stop wedges
-      H ~ (1 - depth) inside stop wedges (or near that if smooth=True)
-    """
+    p.validate()
     h, w = shape_hw
+    if h < 2 or w < 2:
+        raise ValueError(f"Notch filtering requires a 2D image larger than 1 pixel, received {shape_hw}")
     ang = _angle_grid(h, w)
     rr = _radius_grid(h, w)
 
@@ -153,9 +176,10 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
             # weight goes from 1 outside to (1 - depth) at center
             sigma = max(float(p.half_width_deg) / 2.0, 1e-3)
             wgt = np.exp(-(d ** 2) / (2.0 * sigma ** 2)).astype(np.float32)
-            # only apply in valid radii; outside valid radii keep 1
+            # Limit the Gaussian to the requested angular neighborhood.
+            # Outside the wedge, the transfer function remains exactly one.
             atten = 1.0 - float(p.depth) * wgt
-            H = np.minimum(H, np.where(valid_r, atten, 1.0))
+            H = np.minimum(H, np.where(in_wedge, atten, 1.0))
         else:
             H[in_wedge] = np.minimum(H[in_wedge], 1.0 - float(p.depth))
 
@@ -163,10 +187,16 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
 
 
 def apply_notch_filter_2d(img2d: np.ndarray, p: NotchParams) -> tuple[np.ndarray, np.ndarray]:
+    """Apply directional Fourier attenuation to one ``(Y, X)`` image plane.
+
+    Returns the filtered ``float32`` image and the transfer function used.
     """
-    Returns (filtered_image, H_mask_used). Works on one (Y,X) plane.
-    """
-    x = img2d.astype(np.float32, copy=False)
+    p.validate()
+    x = np.asarray(img2d, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"Expected a 2D image plane, received shape={x.shape}")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Notch-filter input contains NaN or infinite values")
     mu = float(np.mean(x))
     x0 = x - mu
 
@@ -188,11 +218,10 @@ def run_notch_on_dataset(
     image_index: int | None = None,
     out_subdir_name: str | None = None,
 ) -> Path:
-    """
-    Apply notch filter (or dry-run) to ONE selected image from dataset,
-    and save result as OME-Zarr 
+    """Apply the optional notch filter to one selected OME-Zarr image.
 
-    Returns output directory path.
+    ``apply=False`` performs dataset discovery and output preparation without
+    changing pixel values. The function returns the output directory.
     """
     zarrs = list_omezarr_images(dataset)
     if not zarrs:

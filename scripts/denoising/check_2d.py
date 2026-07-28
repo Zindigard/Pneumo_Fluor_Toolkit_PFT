@@ -1,10 +1,6 @@
 """
 Quantify 2D microscopy noise and Noise2Void restoration quality from OME-Zarr.
 
-It operates on the highest-resolution, non-normalized OME-Zarr pixels and uses
-manually prepared binary foreground masks for the thesis-defined region-based
-signal-to-noise ratio (ROI SNR).
-
 Two modes are provided:
 
 ``original``
@@ -20,14 +16,23 @@ Two modes are provided:
     the raw and denoised images. The script reports raw ROI SNR, N2V ROI SNR,
     delta SNR, and raw-to-N2V SSIM.
 
+The ROI SNR is implemented exactly as described in the thesis Methods chapter:
+
+    SNR_ROI = (mean_signal - mean_background) / (std_background + epsilon)
+
+
+Required default mask location:
+
+    results/training_files/U-net/<dataset>/<sample>/mask.tif
+
 
 Outputs are written to ``results/noise_analysis/2d/<mode>`` as detailed CSV
-files, a compact TXT summary, and an error report.
+files, dataset-level CSV summaries for later statistical comparison, a compact
+TXT summary for human reading, and an error report.
 """
 
 from __future__ import annotations
 
-# Configure imports for direct execution from the repository source tree.
 import sys as _pft_sys
 from pathlib import Path as _PFTPath
 
@@ -58,14 +63,12 @@ if str(_PFT_SRC_DIR) not in _pft_sys.path:
 import argparse
 import csv
 import json
-import re
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
-import imageio.v3 as iio
 import numpy as np
 import tifffile
 
@@ -95,17 +98,9 @@ DEFAULT_MASK_ROOT = RESULTS_ROOT / "training_files" / "U-net"
 DEFAULT_OUTPUT_ROOT = RESULTS_ROOT / "noise_analysis" / "2d"
 DATASETS = ("2d_time", "2d_wga_dapi")
 
-COMMON_MASK_NAMES = (
-    "mask.tif",
-    "mask.tiff",
-    "masks.tif",
-    "masks.tiff",
-    "labels.tif",
-    "labels.tiff",
-    "label.tif",
-    "label.tiff",
-    "mask.png",
-)
+PRIMARY_MASK_NAME = "mask.tif"
+
+
 
 
 @dataclass(frozen=True)
@@ -247,6 +242,60 @@ class N2VPairRecord:
     raw_fft_peak_score: float
     n2v_fft_peak_score: float
     provenance: str
+
+
+@dataclass(frozen=True)
+class OriginalDatasetSummaryRecord:
+    """Dataset-level original-image metrics saved for later comparisons."""
+
+    dataset: str
+    image_count: int
+    roi_snr_mean: float
+    roi_snr_standard_deviation: float
+    signal_mean: float
+    background_mean: float
+    background_standard_deviation: float
+    robust_noise_sigma_mean: float
+    robust_noise_sigma_standard_deviation: float
+    fano_factor_mean: float
+    fano_factor_maximum: float
+    neighbor_correlation_mean: float
+    neighbor_correlation_maximum: float
+    row_adjacent_correlation_mean: float
+    column_adjacent_correlation_mean: float
+    fft_peak_score_mean: float
+    fft_peak_score_maximum: float
+    fft_directionality_mean: float
+
+
+@dataclass(frozen=True)
+class N2VDatasetSummaryRecord:
+    """Dataset/variant raw-to-N2V summary saved for later comparisons."""
+
+    dataset: str
+    variant: str
+    preferred_thesis_group: bool
+    pair_count: int
+    raw_roi_snr_mean: float
+    raw_roi_snr_standard_deviation: float
+    n2v_roi_snr_mean: float
+    n2v_roi_snr_standard_deviation: float
+    delta_roi_snr_mean: float
+    delta_roi_snr_standard_deviation: float
+    ssim_raw_n2v_mean: float
+    ssim_raw_n2v_standard_deviation: float
+    raw_robust_noise_sigma_mean: float
+    n2v_robust_noise_sigma_mean: float
+    delta_robust_noise_sigma_mean: float
+    raw_neighbor_correlation_mean: float
+    n2v_neighbor_correlation_mean: float
+    delta_neighbor_correlation_mean: float
+    raw_fano_factor_mean: float
+    n2v_fano_factor_mean: float
+    delta_fano_factor_mean: float
+    raw_fft_peak_score_mean: float
+    n2v_fft_peak_score_mean: float
+    delta_fft_peak_score_mean: float
 
 
 def _utc_now() -> str:
@@ -417,73 +466,13 @@ def iter_2d_planes(
         )
 
 
-def _sanitize_name(value: str) -> str:
-    """Convert a channel name into a conservative filename component."""
-    normalized = re.sub(r"[^A-Za-z0-9]+", "_", value.strip().lower()).strip("_")
-    return normalized or "channel"
-
-
-def _candidate_mask_names(selection: PlaneSelection) -> list[tuple[str, str]]:
-    """Return mask filename candidates from most specific to least specific."""
-    names: list[tuple[str, str]] = []
-    suffixes = (".tif", ".tiff", ".png")
-
-    if selection.time_index is not None and selection.channel_index is not None:
-        for suffix in suffixes:
-            names.extend(
-                [
-                    (f"mask_t{selection.time_index}_c{selection.channel_index}{suffix}", "frame-channel mask"),
-                    (f"mask_frame{selection.time_index}_channel{selection.channel_index}{suffix}", "frame-channel mask"),
-                ]
-            )
-
-    if selection.channel_index is not None:
-        channel_alias = _sanitize_name(selection.channel_name)
-        semantic_aliases: list[str] = []
-        if selection.channel_index == 0:
-            semantic_aliases.append("dapi")
-        if selection.channel_index == 1:
-            semantic_aliases.append("wga")
-        for suffix in suffixes:
-            names.extend(
-                [
-                    (f"mask_c{selection.channel_index}{suffix}", "channel-specific mask"),
-                    (f"mask_ch{selection.channel_index}{suffix}", "channel-specific mask"),
-                    (f"mask_channel{selection.channel_index}{suffix}", "channel-specific mask"),
-                    (f"mask_{channel_alias}{suffix}", "channel-name mask"),
-                ]
-            )
-            names.extend((f"mask_{alias}{suffix}", "semantic channel mask") for alias in semantic_aliases)
-
-    if selection.time_index is not None:
-        for suffix in suffixes:
-            names.extend(
-                [
-                    (f"mask_t{selection.time_index}{suffix}", "frame-specific mask"),
-                    (f"mask_frame{selection.time_index}{suffix}", "frame-specific mask"),
-                ]
-            )
-
-    names.extend((name, "common sample mask") for name in COMMON_MASK_NAMES)
-
-    unique: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for name, rule in names:
-        lower = name.lower()
-        if lower not in seen:
-            seen.add(lower)
-            unique.append((name, rule))
-    return unique
 
 
 def _read_mask_file(path: Path) -> np.ndarray:
-    """Read a TIFF or PNG mask and return its array without binarization."""
-    suffix = path.suffix.lower()
-    if suffix in (".tif", ".tiff"):
-        return np.asarray(tifffile.imread(path))
-    if suffix == ".png":
-        return np.asarray(iio.imread(path))
-    raise ValueError(f"Unsupported mask format: {path}")
+    """Read the numerical TIFF mask without altering its stored values."""
+    if path.suffix.lower() not in (".tif", ".tiff"):
+        raise ValueError(f"The numerical U-Net mask must be TIFF: {path}")
+    return np.asarray(tifffile.imread(path))
 
 
 def _select_mask_plane(
@@ -546,6 +535,44 @@ def _select_mask_plane(
     )
 
 
+def _validate_binary_mask(mask: np.ndarray, path: Path) -> np.ndarray:
+    """Validate a numerical U-Net mask and return it as a Boolean array.
+
+    The standard PFT masks are stored as ``mask.tif`` with values ``0`` and
+    ``1``. This strict check prevents display images such as ``mask_vis.tif``
+    or RGB overlays from being used accidentally in the ROI-SNR calculation.
+    """
+    array = np.asarray(mask)
+    if array.ndim != 2:
+        raise ValueError(f"Selected mask is not 2D: {path}, shape={array.shape}")
+    if not np.issubdtype(array.dtype, np.number) and array.dtype != np.bool_:
+        raise ValueError(f"Mask must be numeric or Boolean: {path}, dtype={array.dtype}")
+
+    finite = np.isfinite(array) if np.issubdtype(array.dtype, np.number) else np.ones(array.shape, dtype=bool)
+    if not np.all(finite):
+        raise ValueError(f"Mask contains non-finite values: {path}")
+
+    values = np.unique(array)
+    allowed = np.isin(values, (0, 1))
+    if not np.all(allowed):
+        rendered = ", ".join(str(value) for value in values[:12])
+        if values.size > 12:
+            rendered += ", ..."
+        raise ValueError(
+            f"Mask must contain only 0 and 1: {path}. Found values: {rendered}. "
+            "Use the numerical U-Net mask.tif, not mask_vis or an overlay image."
+        )
+
+    binary = array.astype(bool, copy=False)
+    foreground = int(np.count_nonzero(binary))
+    background = int(binary.size - foreground)
+    if foreground == 0:
+        raise ValueError(f"Mask contains no foreground pixels (value 1): {path}")
+    if background < 2:
+        raise ValueError(f"Mask must contain at least two background pixels (value 0): {path}")
+    return binary
+
+
 def resolve_mask(
     *,
     mask_root: Path,
@@ -554,29 +581,39 @@ def resolve_mask(
     selection: PlaneSelection,
     image: OmezarrImage,
 ) -> MaskSelection:
-    """Locate and select the hand-labelled foreground mask for one plane."""
+    """Load the U-Net ``mask.tif`` paired with one OME-Zarr sample.
+
+    The primary and expected path is
+    ``<mask_root>/<dataset>/<sample>/mask.tif``. The exact sample-relative path
+    used by the original OME-Zarr collection is preserved, including nested
+    directories. The numerical mask is required to contain only ``0`` and
+    ``1``. A common two-dimensional mask is reused for all selected frames and
+    channels.
+    """
     sample_dir = mask_root / dataset / Path(sample)
     if not sample_dir.is_dir():
         raise FileNotFoundError(
-            f"Mask directory not found: {sample_dir}. Expected a hand-labelled mask for {sample}."
+            f"Mask directory not found: {sample_dir}. Expected the U-Net mask for {sample}."
         )
 
-    available = {path.name.lower(): path for path in sample_dir.iterdir() if path.is_file()}
-    for candidate, rule in _candidate_mask_names(selection):
-        path = available.get(candidate.lower())
-        if path is None:
-            continue
+    primary_path = sample_dir / PRIMARY_MASK_NAME
+    if primary_path.is_file():
         selected = _select_mask_plane(
-            _read_mask_file(path), selection=selection, image=image, mask_path=path
+            _read_mask_file(primary_path),
+            selection=selection,
+            image=image,
+            mask_path=primary_path,
         )
-        binary = np.asarray(selected) > 0
-        if binary.ndim != 2:
-            raise ValueError(f"Selected mask is not 2D: {path}, shape={binary.shape}")
-        return MaskSelection(mask=binary, path=path.resolve(), selection_rule=rule)
+        return MaskSelection(
+            mask=_validate_binary_mask(selected, primary_path),
+            path=primary_path.resolve(),
+            selection_rule="exact U-Net sample mask.tif",
+        )
 
-    expected = ", ".join(name for name, _ in _candidate_mask_names(selection)[:8])
     raise FileNotFoundError(
-        f"No supported mask file was found in {sample_dir}. Example accepted names: {expected}"
+        f"Required numerical mask not found: {primary_path}. "
+        "Expected mask.tif with values 0 and 1. Do not use mask_vis.tif, "
+        "overlay_yellow_outline.tif, or image.tif."
     )
 
 
@@ -1047,18 +1084,175 @@ def _ssim(raw: np.ndarray, denoised: np.ndarray) -> float:
     return float(structural_similarity(raw_float, denoised_float, **kwargs))
 
 
-def _write_dataclass_csv(path: Path, rows: Sequence[Any]) -> None:
-    """Write a sequence of dataclass instances to CSV."""
+def _write_dataclass_csv(
+    path: Path,
+    rows: Sequence[Any],
+    *,
+    row_type: type[Any] | None = None,
+) -> None:
+    """Write dataclass instances to CSV and retain headers for empty results."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
+    if rows:
+        record_type = type(rows[0])
+    elif row_type is not None:
+        record_type = row_type
+    else:
         path.write_text("", encoding="utf-8")
         return
-    field_names = [field.name for field in fields(rows[0])]
+
+    field_names = [field.name for field in fields(record_type)]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=field_names)
         writer.writeheader()
         for row in rows:
             writer.writerow(asdict(row))
+
+
+def build_original_dataset_summaries(
+    records: Sequence[ImageRecord],
+    datasets: Sequence[str],
+) -> list[OriginalDatasetSummaryRecord]:
+    """Aggregate original-image records into one comparison-ready row per dataset."""
+    summaries: list[OriginalDatasetSummaryRecord] = []
+    for dataset in datasets:
+        subset = [record for record in records if record.dataset == dataset]
+        if not subset:
+            continue
+        summaries.append(
+            OriginalDatasetSummaryRecord(
+                dataset=dataset,
+                image_count=len(subset),
+                roi_snr_mean=_mean(record.roi_snr_mean for record in subset),
+                roi_snr_standard_deviation=_std(record.roi_snr_mean for record in subset),
+                signal_mean=_mean(record.signal_mean for record in subset),
+                background_mean=_mean(record.background_mean for record in subset),
+                background_standard_deviation=_mean(
+                    record.background_standard_deviation for record in subset
+                ),
+                robust_noise_sigma_mean=_mean(
+                    record.robust_noise_sigma for record in subset
+                ),
+                robust_noise_sigma_standard_deviation=_std(
+                    record.robust_noise_sigma for record in subset
+                ),
+                fano_factor_mean=_mean(record.fano_factor for record in subset),
+                fano_factor_maximum=_maximum(record.fano_factor for record in subset),
+                neighbor_correlation_mean=_mean(
+                    record.neighbor_correlation for record in subset
+                ),
+                neighbor_correlation_maximum=_maximum(
+                    record.neighbor_correlation for record in subset
+                ),
+                row_adjacent_correlation_mean=_mean(
+                    record.row_adjacent_correlation for record in subset
+                ),
+                column_adjacent_correlation_mean=_mean(
+                    record.column_adjacent_correlation for record in subset
+                ),
+                fft_peak_score_mean=_mean(record.fft_peak_score for record in subset),
+                fft_peak_score_maximum=_maximum(
+                    record.fft_peak_score for record in subset
+                ),
+                fft_directionality_mean=_mean(
+                    record.fft_directionality for record in subset
+                ),
+            )
+        )
+    return summaries
+
+
+def _summarize_n2v_group(
+    records: Sequence[N2VPairRecord],
+    *,
+    preferred: bool,
+) -> N2VDatasetSummaryRecord:
+    """Aggregate one dataset/variant N2V group into a comparison-ready row."""
+    if not records:
+        raise ValueError("Cannot summarize an empty N2V record group.")
+    dataset = records[0].dataset
+    variant = records[0].variant
+    return N2VDatasetSummaryRecord(
+        dataset=dataset,
+        variant=variant,
+        preferred_thesis_group=preferred,
+        pair_count=len(records),
+        raw_roi_snr_mean=_mean(record.raw_roi_snr for record in records),
+        raw_roi_snr_standard_deviation=_std(
+            record.raw_roi_snr for record in records
+        ),
+        n2v_roi_snr_mean=_mean(record.n2v_roi_snr for record in records),
+        n2v_roi_snr_standard_deviation=_std(
+            record.n2v_roi_snr for record in records
+        ),
+        delta_roi_snr_mean=_mean(record.delta_roi_snr for record in records),
+        delta_roi_snr_standard_deviation=_std(
+            record.delta_roi_snr for record in records
+        ),
+        ssim_raw_n2v_mean=_mean(record.ssim_raw_n2v for record in records),
+        ssim_raw_n2v_standard_deviation=_std(
+            record.ssim_raw_n2v for record in records
+        ),
+        raw_robust_noise_sigma_mean=_mean(
+            record.raw_robust_noise_sigma for record in records
+        ),
+        n2v_robust_noise_sigma_mean=_mean(
+            record.n2v_robust_noise_sigma for record in records
+        ),
+        delta_robust_noise_sigma_mean=_mean(
+            record.n2v_robust_noise_sigma - record.raw_robust_noise_sigma
+            for record in records
+        ),
+        raw_neighbor_correlation_mean=_mean(
+            record.raw_neighbor_correlation for record in records
+        ),
+        n2v_neighbor_correlation_mean=_mean(
+            record.n2v_neighbor_correlation for record in records
+        ),
+        delta_neighbor_correlation_mean=_mean(
+            record.n2v_neighbor_correlation - record.raw_neighbor_correlation
+            for record in records
+        ),
+        raw_fano_factor_mean=_mean(record.raw_fano_factor for record in records),
+        n2v_fano_factor_mean=_mean(record.n2v_fano_factor for record in records),
+        delta_fano_factor_mean=_mean(
+            record.n2v_fano_factor - record.raw_fano_factor for record in records
+        ),
+        raw_fft_peak_score_mean=_mean(
+            record.raw_fft_peak_score for record in records
+        ),
+        n2v_fft_peak_score_mean=_mean(
+            record.n2v_fft_peak_score for record in records
+        ),
+        delta_fft_peak_score_mean=_mean(
+            record.n2v_fft_peak_score - record.raw_fft_peak_score
+            for record in records
+        ),
+    )
+
+
+def build_n2v_dataset_summaries(
+    records: Sequence[N2VPairRecord],
+    datasets: Sequence[str],
+) -> tuple[list[N2VDatasetSummaryRecord], list[N2VDatasetSummaryRecord]]:
+    """Return preferred-dataset and all-variant N2V summary tables."""
+    preferred_rows: list[N2VDatasetSummaryRecord] = []
+    for dataset in datasets:
+        group = _preferred_n2v_group(records, dataset)
+        if group:
+            preferred_rows.append(_summarize_n2v_group(group, preferred=True))
+
+    all_variant_rows: list[N2VDatasetSummaryRecord] = []
+    for dataset, variant in sorted({(row.dataset, row.variant) for row in records}):
+        group = [
+            row for row in records if row.dataset == dataset and row.variant == variant
+        ]
+        preferred_variant = any(
+            item.dataset == dataset and item.variant == variant for item in preferred_rows
+        )
+        all_variant_rows.append(
+            _summarize_n2v_group(group, preferred=preferred_variant)
+        )
+    return preferred_rows, all_variant_rows
 
 
 def _dataset_summary_lines(records: Sequence[ImageRecord], dataset: str) -> list[str]:
@@ -1108,8 +1302,8 @@ def write_original_summary(
         "",
         "Thesis-defined ROI SNR",
         "----------------------",
-        "Signal region: hand-labelled foreground mask (mask > 0).",
-        "Background region: pixels outside the foreground mask.",
+        "Signal region: U-Net mask.tif pixels equal to 1.",
+        "Background region: U-Net mask.tif pixels equal to 0.",
         "Background SD: sample standard deviation (ddof=1).",
         "ROI SNR = (mean signal - mean background) / (background SD + epsilon).",
         "The same mask must be used for raw and denoised versions.",
@@ -1216,7 +1410,7 @@ def write_n2v_summary(
         f"Mask root: {mask_root}",
         f"SNR epsilon: {epsilon}",
         "",
-        "The same hand-labelled foreground mask was applied unchanged to the",
+        "The same binary U-Net mask.tif was applied unchanged to the",
         "raw and N2V-denoised version of each evaluated plane. Raw source frame",
         "and channel selection was read from N2V provenance attributes when present.",
         "",
@@ -1301,8 +1495,24 @@ def run_original_mode(
         except Exception as exc:
             errors.append(f"{path} | {type(exc).__name__}: {exc}")
 
-    _write_dataclass_csv(output_dir / "original_per_image_metrics.csv", image_records)
-    _write_dataclass_csv(output_dir / "original_per_plane_metrics.csv", plane_records)
+    original_dataset_summaries = build_original_dataset_summaries(
+        image_records, datasets
+    )
+    _write_dataclass_csv(
+        output_dir / "original_per_image_metrics.csv",
+        image_records,
+        row_type=ImageRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "original_per_plane_metrics.csv",
+        plane_records,
+        row_type=PlaneRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "original_dataset_summary.csv",
+        original_dataset_summaries,
+        row_type=OriginalDatasetSummaryRecord,
+    )
     summary = write_original_summary(
         image_records,
         errors,
@@ -1460,9 +1670,34 @@ def run_n2v_mode(
         except Exception as exc:
             errors.append(f"{n2v_path} | {type(exc).__name__}: {exc}")
 
-    _write_dataclass_csv(output_dir / "n2v_per_image_metrics.csv", n2v_image_records)
-    _write_dataclass_csv(output_dir / "n2v_per_plane_metrics.csv", n2v_plane_records)
-    _write_dataclass_csv(output_dir / "n2v_raw_pair_comparison.csv", pair_records)
+    preferred_summaries, all_variant_summaries = build_n2v_dataset_summaries(
+        pair_records, datasets
+    )
+    _write_dataclass_csv(
+        output_dir / "n2v_per_image_metrics.csv",
+        n2v_image_records,
+        row_type=ImageRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "n2v_per_plane_metrics.csv",
+        n2v_plane_records,
+        row_type=PlaneRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "n2v_raw_pair_comparison.csv",
+        pair_records,
+        row_type=N2VPairRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "n2v_dataset_comparison_summary.csv",
+        preferred_summaries,
+        row_type=N2VDatasetSummaryRecord,
+    )
+    _write_dataclass_csv(
+        output_dir / "n2v_dataset_variant_summary.csv",
+        all_variant_summaries,
+        row_type=N2VDatasetSummaryRecord,
+    )
     summary = write_n2v_summary(
         pair_records,
         errors,
@@ -1520,7 +1755,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_MASK_ROOT,
         help=(
-            "Root containing hand-labelled masks as <dataset>/<sample>/mask.tif "
+            "Root containing U-Net masks as <dataset>/<sample>/mask.tif. "
+            "Masks must use 0=background and 1=foreground "
             "(default: results/training_files/U-net)."
         ),
     )

@@ -1,450 +1,529 @@
+"""
+Calculate raw and post-local-threshold structured-noise parameters for 2D data.
+
+The script reads source OME-Zarr images from both supported 2D datasets. Each
+plane is measured twice: once as raw data and once after applying the production
+local-threshold filter in memory. Separate CSV files are written for each
+dataset.
+
+The thesis-specific CSV reports:
+
+* neighbour correlation, mean and maximum;
+* Fano factor, mean and maximum;
+* FFT peak score, mean and maximum.
+
+The local-threshold output used for the second measurement is not normalized.
+Retained pixels preserve their original intensity values, and rejected pixels
+are zero.
+"""
+
 from __future__ import annotations
 
-# Configure imports for direct execution from the repository source tree.
-import sys as _pft_sys
-from pathlib import Path as _PFTPath
-
-_PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
-
-
-def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``.
-
-    The lookup is based on this script's physical location and therefore does
-    not depend on the current working directory. An explicit error is raised
-    when the expected repository layout cannot be found.
-    """
-    current = (start or _PFT_SCRIPT_FILE).resolve()
-    search_start = current if current.is_dir() else current.parent
-
-    for candidate in (search_start, *search_start.parents):
-        core_dir = candidate / "src" / "PFT" / "core_prog_parts"
-        if (candidate / "scripts").is_dir() and core_dir.is_dir():
-            return candidate
-
-    raise RuntimeError(
-        "Cannot locate the PFT repository root. Expected both "
-        "'scripts' and 'src/PFT/core_prog_parts' in the same project folder. "
-        f"Script location: {_PFT_SCRIPT_FILE}"
-    )
-
-
-_PFT_PROJECT_ROOT = _pft_project_root()
-_PFT_SRC_DIR = _PFT_PROJECT_ROOT / "src"
-
-if str(_PFT_SRC_DIR) not in _pft_sys.path:
-    _pft_sys.path.insert(0, str(_PFT_SRC_DIR))
-
-
-
-from pathlib import Path
-import sys
-
-_THIS_FILE = Path(__file__).resolve()
-
-from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import argparse
 import csv
-from dataclasses import dataclass
+import json
+import sys
+from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+
 import numpy as np
-try:
-    import tifffile as tiff
-except ImportError as e:
-    raise SystemExit("Missing dependency: tifffile. Install with: pip install tifffile") from e
 
-try:
-    from PIL import Image
-except ImportError as e:
-    raise SystemExit("Missing dependency: pillow. Install with: pip install pillow") from e
-
-"Explores frequency patterns in 2D images"
-EPS = 1e-12
+_SCRIPT_PATH = Path(__file__).resolve()
 
 
-def _save_png(path: Path, img_u8: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if img_u8.ndim == 2:
-        Image.fromarray(img_u8, mode="L").save(path)
-    elif img_u8.ndim == 3 and img_u8.shape[-1] == 3:
-        Image.fromarray(img_u8, mode="RGB").save(path)
-    else:
-        Image.fromarray(img_u8[..., 0], mode="L").save(path)
-
-
-def _fft_vis_2d(x2d: np.ndarray, eps: float = 1e-8) -> np.ndarray:
-    x = x2d.astype(np.float32, copy=False)
-    x = x - float(np.mean(x))
-
-    F = np.fft.fft2(x)
-    F = np.fft.fftshift(F)
-    mag = np.abs(F)
-
-    vis = np.log1p(mag + eps)
-    lo = np.percentile(vis, 1.0)
-    hi = np.percentile(vis, 99.5)
-    if hi <= lo:
-        hi = lo + 1.0
-    vis = (vis - lo) / (hi - lo)
-    vis = np.clip(vis, 0.0, 1.0)
-    return (vis * 255.0).astype(np.uint8)
-
-
-def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
-    a = a.astype(np.float64, copy=False).ravel()
-    b = b.astype(np.float64, copy=False).ravel()
-    a = a - a.mean()
-    b = b - b.mean()
-    denom = np.sqrt(np.sum(a * a) * np.sum(b * b)) + EPS
-    return float(np.sum(a * b) / denom)
-
-
-def _mean_adjacent_corr_rows(x: np.ndarray) -> float:
-    if x.shape[0] < 2:
-        return 0.0
-    corrs = [_pearson_corr(x[i, :], x[i + 1, :]) for i in range(x.shape[0] - 1)]
-    return float(np.mean(corrs)) if corrs else 0.0
-
-
-def _mean_adjacent_corr_cols(x: np.ndarray) -> float:
-    if x.shape[1] < 2:
-        return 0.0
-    corrs = [_pearson_corr(x[:, j], x[:, j + 1]) for j in range(x.shape[1] - 1)]
-    return float(np.mean(corrs)) if corrs else 0.0
-
-
-def _neighbor_corr(x: np.ndarray) -> float:
-    vals = []
-    if x.shape[1] >= 2:
-        vals.append(_pearson_corr(x[:, :-1], x[:, 1:]))
-    if x.shape[0] >= 2:
-        vals.append(_pearson_corr(x[:-1, :], x[1:, :]))
-    return float(np.mean(vals)) if vals else 0.0
-
-
-def _fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
-    x = x.astype(np.float32, copy=False)
-    x = x - float(np.mean(x))
-
-    F = np.fft.fft2(x)
-    F = np.fft.fftshift(F)
-    mag = np.abs(F).astype(np.float64)
-
-    h, w = mag.shape
-    cy, cx = h // 2, w // 2
-
-    mask = np.ones_like(mag, dtype=bool)
-    y0 = max(0, cy - dc_halfwidth)
-    y1 = min(h, cy + dc_halfwidth + 1)
-    x0 = max(0, cx - dc_halfwidth)
-    x1 = min(w, cx + dc_halfwidth + 1)
-    mask[y0:y1, x0:x1] = False
-
-    mag2 = mag[mask]
-    if mag2.size == 0:
-        return 0.0
-
-    peak = float(np.max(mag2))
-    baseline = float(np.median(mag2)) + EPS
-    return peak / baseline
-
-
-def _fft_directionality(x: np.ndarray, dc_halfwidth: int = 8) -> tuple[float, float]:
-    """
-    Returns:
-      (dir_score, dir_angle_deg)
-
-    dir_score: anisotropy of FFT power second moment in [0,1]
-    dir_angle_deg: dominant frequency direction angle in degrees, in [-90, 90)
-                   (angle in frequency plane; stripes in image are perpendicular)
-    """
-    x = x.astype(np.float32, copy=False)
-    x = x - float(np.mean(x))
-
-    F = np.fft.fft2(x)
-    F = np.fft.fftshift(F)
-    P = (np.abs(F) ** 2).astype(np.float64)
-
-    h, w = P.shape
-    cy, cx = h // 2, w // 2
-
-    mask = np.ones_like(P, dtype=bool)
-    y0 = max(0, cy - dc_halfwidth)
-    y1 = min(h, cy + dc_halfwidth + 1)
-    x0 = max(0, cx - dc_halfwidth)
-    x1 = min(w, cx + dc_halfwidth + 1)
-    mask[y0:y1, x0:x1] = False
-
-    Pm = P * mask
-    s = float(Pm.sum())
-    if s <= 0:
-        return 0.0, 0.0
-
-    yy, xx = np.indices((h, w))
-    u = (xx - cx).astype(np.float64)
-    v = (yy - cy).astype(np.float64)
-
-    Mxx = float((Pm * (u * u)).sum() / s)
-    Myy = float((Pm * (v * v)).sum() / s)
-    Mxy = float((Pm * (u * v)).sum() / s)
-
-    tr = Mxx + Myy
-    det = Mxx * Myy - Mxy * Mxy
-    disc = max(tr * tr - 4.0 * det, 0.0)
-    sqrt_disc = float(np.sqrt(disc))
-    lam1 = 0.5 * (tr + sqrt_disc)
-    lam2 = 0.5 * (tr - sqrt_disc)
-
-    denom = lam1 + lam2 + EPS
-    dir_score = float((lam1 - lam2) / denom)
-    dir_score = float(np.clip(dir_score, 0.0, 1.0))
-
-    theta = 0.5 * np.arctan2(2.0 * Mxy, (Mxx - Myy))
-    dir_angle_deg = float(np.degrees(theta))
-
-    if dir_angle_deg >= 90.0:
-        dir_angle_deg -= 180.0
-    if dir_angle_deg < -90.0:
-        dir_angle_deg += 180.0
-
-    return dir_score, dir_angle_deg
-
-
-def _to_2d_float(img: np.ndarray) -> np.ndarray:
-    arr = np.asarray(img)
-    if arr.ndim == 2:
-        return arr.astype(np.float32, copy=False)
-
-    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
-        rgb = arr[..., :3].astype(np.float32, copy=False)
-        return (0.2989 * rgb[..., 0] + 0.5870 * rgb[..., 1] + 0.1140 * rgb[..., 2]).astype(np.float32)
-
-    x = arr.astype(np.float32, copy=False)
-    while x.ndim > 2:
-        x = x.mean(axis=0)
-    return x.astype(np.float32, copy=False)
-
-
-@dataclass
-class MetricsRow:
-    dataset: str
-    file: str
-    channel: str
-    height: int
-    width: int
-    mean: float
-    var: float
-    std: float
-    fano: float
-    neighbor_corr: float
-    row_adj_corr: float
-    col_adj_corr: float
-    fft_peak_score: float
-    fft_dir_score: float
-    fft_dir_angle_deg: float
-
-
-def compute_metrics(x2d: np.ndarray) -> dict[str, float]:
-    x = x2d.astype(np.float64, copy=False)
-
-    mean = float(np.mean(x))
-    var = float(np.var(x))
-    std = float(np.sqrt(var))
-    fano = float(var / (mean + EPS)) if abs(mean) > 1e-12 else 0.0
-
-    dir_score, dir_angle = _fft_directionality(x)
-
-    return {
-        "mean": mean,
-        "var": var,
-        "std": std,
-        "fano": fano,
-        "neighbor_corr": _neighbor_corr(x),
-        "row_adj_corr": _mean_adjacent_corr_rows(x),
-        "col_adj_corr": _mean_adjacent_corr_cols(x),
-        "fft_peak_score": _fft_peak_score(x),
-        "fft_dir_score": dir_score,
-        "fft_dir_angle_deg": dir_angle,
-    }
-
-
-def iter_tiffs(root: Path, name_patterns: tuple[str, ...]) -> list[Path]:
-    files: list[Path] = []
-    for pat in name_patterns:
-        files.extend(root.rglob(pat))
-    return sorted(set(files))
-
-
-def process_file(
-    dataset_name: str,
-    tif_path: Path,
-    out_root_for_dataset: Path,
-    base_root: Path,
-    rows: list[MetricsRow],
-) -> bool:
-    try:
-        img = tiff.imread(str(tif_path))
-    except Exception as e:
-        print(f"[SKIP] Could not read: {tif_path} ({e})")
-        return False
-
-    rel = tif_path.relative_to(base_root)
-    out_path = (out_root_for_dataset / rel).with_suffix("")
-    out_png_base = out_path.parent / out_path.name
-
-    arr = np.asarray(img)
-
-    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
-        rgb = arr[..., :3].astype(np.float32, copy=False)
-
-        fft_rgb = np.zeros_like(rgb, dtype=np.uint8)
-        for c in range(3):
-            fft_rgb[..., c] = _fft_vis_2d(rgb[..., c])
-        _save_png(out_png_base.parent / f"{out_png_base.name}_fft.png", fft_rgb)
-
-        ch_names = ["R", "G", "B"]
-        h, w = int(rgb.shape[0]), int(rgb.shape[1])
-        for c, ch in enumerate(ch_names):
-            m = compute_metrics(rgb[..., c])
-            rows.append(
-                MetricsRow(
-                    dataset=dataset_name,
-                    file=str(tif_path),
-                    channel=ch,
-                    height=h,
-                    width=w,
-                    **m,
-                )
-            )
-
-        print(f"[OK] [{dataset_name}] {tif_path} -> FFT PNG + metrics (R/G/B)")
-        return True
-
-    x2d = _to_2d_float(arr)
-    fft_u8 = _fft_vis_2d(x2d)
-    _save_png(out_png_base.parent / f"{out_png_base.name}_fft.png", fft_u8)
-
-    m = compute_metrics(x2d)
-    h, w = int(x2d.shape[0]), int(x2d.shape[1])
-    rows.append(
-        MetricsRow(
-            dataset=dataset_name,
-            file=str(tif_path),
-            channel="gray",
-            height=h,
-            width=w,
-            **m,
-        )
+def _find_project_root() -> Path:
+    """Locate the repository root independently of the current directory."""
+    for candidate in (_SCRIPT_PATH.parent, *_SCRIPT_PATH.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
+            return candidate
+    raise RuntimeError(
+        "Cannot locate the PFT repository root. Expected sibling 'scripts' and "
+        "'src/PFT' directories."
     )
 
-    print(f"[OK] [{dataset_name}] {tif_path} -> FFT PNG + metrics")
-    return True
+
+PROJECT_ROOT = _find_project_root()
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
+from PFT.core_prog_parts.denoising.denoiser import (
+    PASSTHROUGH_IMAGE_STEMS,
+    PASSTHROUGH_REASON,
+    is_passthrough_image,
+)
+from PFT.core_prog_parts.denoising.fft_diagnostics_2d import (
+    FFTDiagnosticConfig,
+    channel_label,
+    compute_fft_diagnostics,
+    fft_log_magnitude_uint8,
+    iter_2d_planes,
+)
+from PFT.core_prog_parts.denoising.local_threshold_filter import (
+    LocalThresholdParams,
+    apply_local_threshold_2d,
+    validate_intensity_preservation,
+)
+from PFT.core_prog_parts.denoising.notch_filter import _to_numpy, list_omezarr_images
+
+DATASETS = ("2d_time", "2d_wga_dapi")
+STAGES = ("raw", "local_threshold")
 
 
-def write_csv(csv_path: Path, rows: Iterable[MetricsRow]) -> None:
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "dataset",
-        "file",
-        "channel",
-        "height",
-        "width",
-        "mean",
-        "var",
-        "std",
-        "fano",
-        "neighbor_corr",
-        "row_adj_corr",
-        "col_adj_corr",
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write dictionaries as UTF-8 CSV using the union of all column names."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        path.write_text("status\nno_rows\n", encoding="utf-8")
+        return
+
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row:
+            if key not in seen:
+                seen.add(key)
+                fieldnames.append(key)
+
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _save_preview(path: Path, image_u8: np.ndarray) -> None:
+    """Save a display-only grayscale FFT preview."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("FFT preview export requires Pillow") from exc
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(image_u8, mode="L").save(path)
+
+
+def _numeric(values: Iterable[Any]) -> np.ndarray:
+    """Return finite numeric values as a one-dimensional array."""
+    numbers: list[float] = []
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            numbers.append(number)
+    return np.asarray(numbers, dtype=np.float64)
+
+
+def _selected_channel(dataset: str, channel_index: int) -> bool:
+    """Return whether a channel belongs to the supported biological dataset."""
+    if dataset == "2d_time":
+        return channel_index == 0
+    if dataset == "2d_wga_dapi":
+        return channel_index in {0, 1}
+    return False
+
+
+def _summarize_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate detailed rows by processing stage and channel."""
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row["processing_stage"]), str(row["channel"]))].append(row)
+
+    metrics = (
+        "neighbour_correlation",
+        "row_adjacent_correlation",
+        "column_adjacent_correlation",
+        "fano_factor",
         "fft_peak_score",
-        "fft_dir_score",
-        "fft_dir_angle_deg",
-    ]
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for r in rows:
-            w.writerow(r.__dict__)
+        "fft_peak_to_median",
+        "fft_peak_to_p95",
+        "fft_peak_period_px",
+        "fft_directionality_score",
+        "low_frequency_power_fraction",
+        "mid_frequency_power_fraction",
+        "high_frequency_power_fraction",
+        "horizontal_axis_power_fraction",
+        "vertical_axis_power_fraction",
+        "intensity_mean",
+        "intensity_std",
+        "intensity_p99_2",
+    )
+
+    summaries: list[dict[str, Any]] = []
+    for (stage, channel), stage_rows in sorted(grouped.items()):
+        flags = [bool(row["structured_noise_flag"]) for row in stage_rows]
+        summary: dict[str, Any] = {
+            "dataset": dataset,
+            "processing_stage": stage,
+            "channel": channel,
+            "n_planes": len(stage_rows),
+            "n_images": len({row["image"] for row in stage_rows}),
+            "structured_noise_flag_count": int(sum(flags)),
+            "structured_noise_flag_fraction": float(np.mean(flags)) if flags else 0.0,
+        }
+        for metric in metrics:
+            values = _numeric(row.get(metric) for row in stage_rows)
+            if values.size:
+                summary[f"{metric}_mean"] = float(np.mean(values))
+                summary[f"{metric}_median"] = float(np.median(values))
+                summary[f"{metric}_maximum"] = float(np.max(values))
+        summaries.append(summary)
+    return summaries
+
+
+def _thesis_summary_rows(
+    dataset: str,
+    detailed_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Create compact rows matching the structured-noise thesis table."""
+    output: list[dict[str, Any]] = []
+    channels = sorted({str(row["channel"]) for row in detailed_rows})
+    scopes = [("all_channels", None), *((channel, channel) for channel in channels)]
+
+    for scope_name, selected_channel in scopes:
+        for stage in STAGES:
+            subset = [
+                row
+                for row in detailed_rows
+                if row["processing_stage"] == stage
+                and (
+                    selected_channel is None
+                    or str(row["channel"]) == selected_channel
+                )
+            ]
+            if not subset:
+                continue
+
+            neighbour = _numeric(row["neighbour_correlation"] for row in subset)
+            fano = _numeric(row["fano_factor"] for row in subset)
+            fft_score = _numeric(row["fft_peak_score"] for row in subset)
+            output.append(
+                {
+                    "dataset": dataset,
+                    "scope": scope_name,
+                    "processing_stage": stage,
+                    "n_images": len({row["image"] for row in subset}),
+                    "n_planes": len(subset),
+                    "neighbour_correlation_mean": float(np.mean(neighbour)),
+                    "neighbour_correlation_maximum": float(np.max(neighbour)),
+                    "fano_factor_mean": float(np.mean(fano)),
+                    "fano_factor_maximum": float(np.max(fano)),
+                    "fft_peak_score_mean": float(np.mean(fft_score)),
+                    "fft_peak_score_maximum": float(np.max(fft_score)),
+                }
+            )
+    return output
+
+
+def _stage_rows(
+    *,
+    dataset: str,
+    image_name: str,
+    source_path: Path,
+    axes: str,
+    channel_index: int,
+    frame_index: int,
+    raw_plane: np.ndarray,
+    threshold_params: LocalThresholdParams,
+    fft_config: FFTDiagnosticConfig,
+    level: int,
+) -> tuple[list[dict[str, Any]], np.ndarray]:
+    """Calculate raw and actual post-filter-pipeline metrics for one plane."""
+    passthrough = is_passthrough_image(dataset, image_name)
+    if passthrough:
+        filtered = np.array(raw_plane, copy=True)
+        keep_mask = np.ones(raw_plane.shape, dtype=bool)
+        threshold_info = {
+            "frac_final": 1.0,
+            "high_threshold_raw": float("nan"),
+            "n_high": int(raw_plane.size),
+            "n_final": int(raw_plane.size),
+        }
+        pipeline_operation = "passthrough_unfiltered"
+    else:
+        filtered, keep_mask, threshold_info = apply_local_threshold_2d(
+            raw_plane,
+            threshold_params,
+        )
+        pipeline_operation = "local_threshold"
+
+    integrity = validate_intensity_preservation(raw_plane, filtered, keep_mask)
+    if integrity["status"] != "PASS":
+        raise AssertionError(
+            f"In-memory intensity preservation failed for {dataset}/{image_name}, "
+            f"channel={channel_index}, frame={frame_index}: {integrity}"
+        )
+
+    channel = channel_label(dataset, channel_index)
+    common = {
+        "dataset": dataset,
+        "image": image_name,
+        "source_omezarr": str(source_path),
+        "ome_zarr_level": level,
+        "axes": axes,
+        "channel_index": channel_index,
+        "channel": channel,
+        "frame_index": frame_index,
+        "local_threshold_label": threshold_params.label,
+        "local_threshold_high_percentile": threshold_params.high_percentile,
+        "local_threshold_frac3_keep": threshold_params.frac3_keep,
+        "local_threshold_support3_frac": threshold_params.support3_frac,
+        "local_threshold_kernel3": threshold_params.kernel3,
+        "local_threshold_kernel10": threshold_params.kernel10,
+        "local_threshold_frac10_keep": threshold_params.frac10_keep,
+    }
+
+    raw_metrics = compute_fft_diagnostics(raw_plane, fft_config)
+    filtered_metrics = compute_fft_diagnostics(filtered, fft_config)
+    raw_row = {
+        **common,
+        "processing_stage": "raw",
+        "pipeline_operation": "raw",
+        "filter_applied": False,
+        "passthrough_reason": "",
+        "retained_pixel_fraction": 1.0,
+        "intensity_preservation_status": "not_applicable",
+        **raw_metrics,
+    }
+    filtered_row = {
+        **common,
+        "processing_stage": "local_threshold",
+        "pipeline_operation": pipeline_operation,
+        "filter_applied": not passthrough,
+        "passthrough_reason": PASSTHROUGH_REASON if passthrough else "",
+        "retained_pixel_fraction": threshold_info["frac_final"],
+        "threshold_raw_intensity": threshold_info["high_threshold_raw"],
+        "n_high_candidates": threshold_info["n_high"],
+        "n_retained_pixels": threshold_info["n_final"],
+        "intensity_preservation_status": integrity["status"],
+        "kept_mismatch_count": integrity["kept_mismatch_count"],
+        "rejected_nonzero_count": integrity["rejected_nonzero_count"],
+        "max_abs_kept_error": integrity["max_abs_kept_error"],
+        **filtered_metrics,
+    }
+    return [raw_row, filtered_row], filtered
+
+def _process_dataset(
+    dataset: str,
+    output_root: Path,
+    fft_config: FFTDiagnosticConfig,
+    threshold_params: LocalThresholdParams,
+    *,
+    level: int,
+    max_images: int | None,
+    max_frames: int | None,
+    save_previews: bool,
+) -> tuple[Path, Path, Path, int]:
+    """Measure one dataset and write detailed, summary, and thesis CSV files."""
+    zarr_paths = list_omezarr_images(dataset)
+    if max_images is not None:
+        zarr_paths = zarr_paths[:max_images]
+    if not zarr_paths:
+        raise FileNotFoundError(
+            f"No OME-Zarr images found for {dataset}. Expected "
+            f"results/img/{dataset}/<sample>/image.ome.zarr"
+        )
+
+    dataset_dir = output_root / dataset
+    detailed_rows: list[dict[str, Any]] = []
+
+    for image_number, zarr_path in enumerate(zarr_paths, start=1):
+        array, axes = load_ome_zarr(zarr_path, level=level, as_numpy=False)
+        array_np = _to_numpy(array)
+
+        for channel_index, frame_index, raw_plane in iter_2d_planes(
+            array_np,
+            axes,
+            max_frames=max_frames,
+        ):
+            if not _selected_channel(dataset, channel_index):
+                continue
+            rows, filtered_plane = _stage_rows(
+                dataset=dataset,
+                image_name=zarr_path.parent.name,
+                source_path=zarr_path,
+                axes=axes,
+                channel_index=channel_index,
+                frame_index=frame_index,
+                raw_plane=raw_plane,
+                threshold_params=threshold_params,
+                fft_config=fft_config,
+                level=level,
+            )
+            detailed_rows.extend(rows)
+
+            if save_previews and frame_index == 0:
+                channel = channel_label(dataset, channel_index)
+                preview_dir = dataset_dir / "previews" / zarr_path.parent.name
+                _save_preview(
+                    preview_dir / f"fft_raw_{channel}.png",
+                    fft_log_magnitude_uint8(raw_plane),
+                )
+                _save_preview(
+                    preview_dir / f"fft_local_threshold_{channel}.png",
+                    fft_log_magnitude_uint8(filtered_plane),
+                )
+
+        print(
+            f"[{dataset}] {image_number:03d}/{len(zarr_paths):03d} "
+            f"{zarr_path.parent.name}"
+        )
+
+    detailed_csv = dataset_dir / f"fft_metrics_{dataset}.csv"
+    summary_csv = dataset_dir / f"fft_summary_{dataset}.csv"
+    thesis_csv = dataset_dir / f"thesis_structured_noise_{dataset}.csv"
+    _write_csv(detailed_csv, detailed_rows)
+    _write_csv(summary_csv, _summarize_rows(dataset, detailed_rows))
+    _write_csv(thesis_csv, _thesis_summary_rows(dataset, detailed_rows))
+
+    parameters_path = dataset_dir / f"fft_parameters_{dataset}.json"
+    parameters_path.write_text(
+        json.dumps(
+            {
+                "dataset": dataset,
+                "purpose": "raw versus local-threshold structured-noise comparison",
+                "thesis_parameter_definitions": {
+                    "neighbour_correlation": (
+                        "mean horizontal/vertical adjacent-pixel Pearson correlation"
+                    ),
+                    "fano_factor": "full-plane variance divided by full-plane mean intensity",
+                    "fft_peak_score": (
+                        "maximum non-DC Fourier power divided by median non-DC Fourier power"
+                    ),
+                },
+                "fft_diagnostic_config": fft_config.__dict__,
+                "local_threshold_parameters": threshold_params.__dict__,
+                "passthrough_image_stems": {
+                    key: sorted(value)
+                    for key, value in PASSTHROUGH_IMAGE_STEMS.items()
+                },
+                "passthrough_reason": PASSTHROUGH_REASON,
+                "normalization_applied": False,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return detailed_csv, summary_csv, thesis_csv, len(detailed_rows)
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse dataset, FFT, and local-threshold parameters."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Calculate thesis structured-noise parameters before and after "
+            "intensity-preserving local-threshold filtering."
+        )
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=("all", *DATASETS),
+        default="all",
+        help="Dataset to analyze. Default: both 2D datasets.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=PROJECT_ROOT / "results" / "fft",
+        help="Root directory for separate per-dataset CSV files.",
+    )
+    parser.add_argument("--level", type=int, default=0, help="OME-Zarr pyramid level.")
+    parser.add_argument("--max-images", type=int, default=None)
+    parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--dc-radius", type=int, default=8)
+    parser.add_argument("--peak-ratio-threshold", type=float, default=8.0)
+    parser.add_argument("--directionality-threshold", type=float, default=0.15)
+    parser.add_argument("--high-percentile", type=float, default=99.2)
+    parser.add_argument("--frac3", type=float, default=0.40)
+    parser.add_argument("--support3", type=float, default=0.70)
+    parser.add_argument("--kernel3", type=int, default=3)
+    parser.add_argument("--kernel10", type=int, default=10)
+    parser.add_argument("--frac10", type=float, default=0.40)
+    parser.add_argument(
+        "--no-previews",
+        action="store_true",
+        help="Do not save display-only FFT PNG previews.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Batch 2D FFT diagnostic + metrics CSV (incl. directionality) for TIFF images across multiple datasets."
+    """Run raw and post-threshold diagnostics for the selected datasets."""
+    args = _parse_args()
+    fft_config = FFTDiagnosticConfig(
+        dc_radius_px=args.dc_radius,
+        peak_ratio_threshold=args.peak_ratio_threshold,
+        directionality_threshold=args.directionality_threshold,
     )
-    ap.add_argument(
-        "--input-roots",
-        nargs="+",
-        type=Path,
-        default=[
-            Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\2d_time"),
-            Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\2d_wga_dapi"),
-        ],
-        help="One or more dataset roots to scan.",
+    fft_config.validate()
+    threshold_params = LocalThresholdParams(
+        high_percentile=args.high_percentile,
+        frac3_keep=args.frac3,
+        support3_frac=args.support3,
+        kernel3=args.kernel3,
+        kernel10=args.kernel10,
+        frac10_keep=args.frac10,
     )
-    ap.add_argument(
-        "--output-root",
-        type=Path,
-        default=Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\fft"),
-        help="Where FFT PNGs and CSV will be written (default: results/fft).",
-    )
-    ap.add_argument(
-        "--patterns",
-        nargs="+",
-        default=["image_norm16_rgb*.tif", "image_norm16_rgb*.tiff", "image_raw_rgb*.tif", "image_raw_rgb*.tiff"],
-        help="Filename patterns to include.",
-    )
-    ap.add_argument(
-        "--csv-name",
-        type=str,
-        default="fft_metrics.csv",
-        help="CSV filename (written under output-root).",
-    )
-    args = ap.parse_args()
+    threshold_params.validate()
 
-    out_root: Path = args.output_root
-    patterns = tuple(args.patterns)
-    csv_path = out_root / args.csv_name
+    datasets = DATASETS if args.dataset == "all" else (args.dataset,)
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    run_rows: list[dict[str, Any]] = []
+    failures: list[str] = []
 
-    rows: list[MetricsRow] = []
-    total_found = 0
-    total_ok = 0
-
-    for in_root in args.input_roots:
-        if not in_root.exists():
-            print(f"[WARN] Input root does not exist, skipping: {in_root}")
+    for dataset in datasets:
+        try:
+            detailed_csv, summary_csv, thesis_csv, n_rows = _process_dataset(
+                dataset,
+                args.output_root,
+                fft_config,
+                threshold_params,
+                level=args.level,
+                max_images=args.max_images,
+                max_frames=args.max_frames,
+                save_previews=not args.no_previews,
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            failures.append(f"{dataset}: {message}")
+            run_rows.append(
+                {
+                    "dataset": dataset,
+                    "status": "FAIL",
+                    "n_detailed_rows": 0,
+                    "detailed_csv": "",
+                    "summary_csv": "",
+                    "thesis_csv": "",
+                    "error": message,
+                }
+            )
+            print(f"[FAIL] {dataset}: {message}")
             continue
 
-        dataset_name = in_root.name  
-        out_root_for_dataset = out_root / dataset_name
+        run_rows.append(
+            {
+                "dataset": dataset,
+                "status": "PASS",
+                "n_detailed_rows": n_rows,
+                "detailed_csv": str(detailed_csv),
+                "summary_csv": str(summary_csv),
+                "thesis_csv": str(thesis_csv),
+                "error": "",
+            }
+        )
+        print(f"Detailed CSV: {detailed_csv}")
+        print(f"Summary CSV : {summary_csv}")
+        print(f"Thesis CSV  : {thesis_csv}")
 
-        tiffs = iter_tiffs(in_root, patterns)
-        total_found += len(tiffs)
-
-        print(f"\n=== DATASET: {dataset_name} ===")
-        print(f"Input root:  {in_root}")
-        print(f"Output root: {out_root_for_dataset}")
-        print(f"Found {len(tiffs)} TIFF(s) matching patterns: {patterns}")
-
-        ok = 0
-        for p in tiffs:
-            ok += int(
-                process_file(
-                    dataset_name=dataset_name,
-                    tif_path=p,
-                    out_root_for_dataset=out_root_for_dataset,
-                    base_root=in_root,
-                    rows=rows,
-                )
-            )
-        total_ok += ok
-
-    write_csv(csv_path, rows)
-    print("\n=== SUMMARY ===")
-    print(f"Total TIFFs found: {total_found}")
-    print(f"Total processed : {total_ok}")
-    print(f"CSV written     : {csv_path}")
-    print(f"Rows in CSV     : {len(rows)} (includes per-channel rows for RGB images)")
+    run_csv = args.output_root / "fft_run_summary.csv"
+    _write_csv(run_csv, run_rows)
+    print(f"Run summary : {run_csv}")
+    if failures:
+        raise SystemExit("Structured-noise diagnostics failed for: " + "; ".join(failures))
 
 
 if __name__ == "__main__":

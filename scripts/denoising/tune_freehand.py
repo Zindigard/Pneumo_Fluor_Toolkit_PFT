@@ -1,3 +1,9 @@
+"""
+Interactive tuning of optional 2D Fourier and rolling-ball filters.
+
+This module supports manual comparison experiments.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -18,13 +24,7 @@ from PFT.core_prog_parts.image_utils import normalize01_percentile as norm01_per
 from PFT.core_prog_parts.denoising.notch_filter import list_omezarr_images, _ensure_cyx, _to_numpy
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 from PFT.core_prog_parts.segmentation.thresholding import prepare_thresholded_dataset
-
-"Interactive tool to apply user-defined free-hand frequency masks to OME-Zarr images, with visualization and saving of results."
-
-try:
-    from skimage.restoration import rolling_ball
-except Exception:
-    rolling_ball = None
+from PFT.core_prog_parts.denoising.rolling_ball_filter import apply_rolling_ball_2d
 
 EPS = 1e-12
 
@@ -916,14 +916,8 @@ def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list
 
 
 def _rolling_ball_subtract_one_plane(img2d: np.ndarray, radius: int) -> tuple[np.ndarray, np.ndarray]:
-    """Estimate and subtract smooth background from one image plane."""
-    if rolling_ball is None:
-        raise RuntimeError("scikit-image is required for rolling-ball background subtraction")
-    x = np.asarray(img2d, dtype=np.float32)
-    background = np.asarray(rolling_ball(x, radius=radius), dtype=np.float32)
-    corrected = x - background
-    corrected = np.clip(corrected, 0.0, None).astype(np.float32)
-    return corrected, background
+    """Backward-compatible wrapper around the public rolling-ball function."""
+    return apply_rolling_ball_2d(img2d, radius=radius)
 
 
 def _save_rolling_ball_preview(before: np.ndarray, background: np.ndarray, after: np.ndarray, title: str, out_png: Path) -> None:
