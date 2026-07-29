@@ -124,6 +124,12 @@ class UNetRunConfig:
         SNR before is calculated from the raw image. SNR after is calculated by
         reloading the saved background-suppressed OME-Zarr image, which confirms
         that the reported metric corresponds to the actual stored result.
+    strict_metrics:
+        When ``False`` (default), samples without a hand-labelled reference mask
+        are still processed and saved, but their quantitative metrics are marked
+        as unavailable. When ``True``, a missing reference mask raises an error.
+        The non-strict default permits complete-dataset inference while keeping
+        metric coverage explicit in ``unet_2d_metrics_coverage.csv``.
     epsilon:
         Small numerical constant used only to prevent division by zero in
         metrics. It should remain very small and does not normally need tuning.
@@ -152,6 +158,7 @@ class UNetRunConfig:
     save_probability: bool = True
     save_foreground_image: bool = True
     compute_metrics: bool = True
+    strict_metrics: bool = False
     epsilon: float = 1e-12
 
 
@@ -686,52 +693,57 @@ def run_2d_unet_on_omezarr(
                 "SNR requires the saved background-suppressed OME-Zarr output"
             )
         if reference is None:
-            raise FileNotFoundError(
-                f"Cannot compute IoU/SNR because reference mask is missing: {mask_path}"
+            message = (
+                f"Reference mask is missing for {sample}; inference outputs were saved, "
+                "but IoU, Dice, and ROI-SNR metrics were skipped."
             )
-        if len(raw_frames) != len(filtered_frames):
-            raise ValueError(
-                f"Raw/filtered frame-count mismatch for {sample}: raw={len(raw_frames)}, "
-                f"filtered={len(filtered_frames)}"
-            )
-        if reference.shape != filtered_frames[0].shape[:2]:
-            raise ValueError(
-                f"Reference mask shape {reference.shape} does not match image YX "
-                f"{filtered_frames[0].shape[:2]} for {sample}"
-            )
+            if cfg.strict_metrics:
+                raise FileNotFoundError(f"{message} Expected: {mask_path}")
+            print(f"[METRICS SKIPPED] {message}")
+        else:
+            if len(raw_frames) != len(filtered_frames):
+                raise ValueError(
+                    f"Raw/filtered frame-count mismatch for {sample}: raw={len(raw_frames)}, "
+                    f"filtered={len(filtered_frames)}"
+                )
+            if reference.shape != filtered_frames[0].shape[:2]:
+                raise ValueError(
+                    f"Reference mask shape {reference.shape} does not match image YX "
+                    f"{filtered_frames[0].shape[:2]} for {sample}"
+                )
 
-        for frame_index, (raw_frame, filtered_frame, suppressed_frame, prediction) in enumerate(
-            zip(raw_frames, filtered_frames, suppressed_frames, masks)
-        ):
-            iou = binary_iou(reference, prediction, cfg.epsilon)
-            dice = binary_dice(reference, prediction, cfg.epsilon)
-            for channel_index in range(filtered_frame.shape[-1]):
-                snr_before = roi_snr(raw_frame[..., channel_index], reference, cfg.epsilon)
-                snr_after = roi_snr(
-                    suppressed_frame[..., channel_index], reference, cfg.epsilon
-                )
-                metric_rows.append(
-                    {
-                        "dataset": cfg.dataset,
-                        "sample": sample,
-                        "frame_index": frame_index,
-                        "channel_index": channel_index,
-                        "iou": iou,
-                        "dice": dice,
-                        "snr_before": snr_before,
-                        "snr_after": snr_after,
-                        "delta_snr": snr_after - snr_before,
-                        "outside_mask_depletion": cfg.outside_mask_depletion,
-                        "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
-                        "raw_zarr": str(raw_path),
-                        "filtered_zarr": str(zarr_path),
-                        "reference_mask": str(mask_path),
-                        "predicted_mask": str(mask_zarr),
-                        "background_suppressed_output": str(foreground_zarr),
-                        # Retained for compatibility with earlier result readers.
-                        "foreground_output": str(foreground_zarr),
-                    }
-                )
+            for frame_index, (raw_frame, filtered_frame, suppressed_frame, prediction) in enumerate(
+                zip(raw_frames, filtered_frames, suppressed_frames, masks)
+            ):
+                iou = binary_iou(reference, prediction, cfg.epsilon)
+                dice = binary_dice(reference, prediction, cfg.epsilon)
+                for channel_index in range(filtered_frame.shape[-1]):
+                    snr_before = roi_snr(raw_frame[..., channel_index], reference, cfg.epsilon)
+                    snr_after = roi_snr(
+                        suppressed_frame[..., channel_index], reference, cfg.epsilon
+                    )
+                    metric_rows.append(
+                        {
+                            "dataset": cfg.dataset,
+                            "sample": sample,
+                            "frame_index": frame_index,
+                            "channel_index": channel_index,
+                            "iou": iou,
+                            "dice": dice,
+                            "snr_before": snr_before,
+                            "snr_after": snr_after,
+                            "delta_snr": snr_after - snr_before,
+                            "outside_mask_depletion": cfg.outside_mask_depletion,
+                            "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
+                            "raw_zarr": str(raw_path),
+                            "filtered_zarr": str(zarr_path),
+                            "reference_mask": str(mask_path),
+                            "predicted_mask": str(mask_zarr),
+                            "background_suppressed_output": str(foreground_zarr),
+                            # Retained for compatibility with earlier result readers.
+                            "foreground_output": str(foreground_zarr),
+                        }
+                    )
 
     preview_png = _save_preview(
         raw_frames[0] if raw_frames else None,
@@ -866,6 +878,21 @@ def run_dataset(
         for output in outputs
     ]
     _write_csv(cfg.out_root / "unet_2d_inference_manifest.csv", manifest_rows)
+
+    metric_coverage_rows = [
+        {
+            "dataset": output.dataset,
+            "sample": output.sample,
+            "metrics_available": output.metrics_json is not None,
+            "metrics_json": str(output.metrics_json) if output.metrics_json else "",
+            "predicted_mask": str(output.mask_zarr),
+            "foreground_filtered": str(output.foreground_zarr) if output.foreground_zarr else "",
+            "qc_preview": str(output.preview_png),
+        }
+        for output in outputs
+    ]
+    _write_csv(cfg.out_root / "unet_2d_metrics_coverage.csv", metric_coverage_rows)
+
     if all_metric_rows:
         metrics_csv = cfg.out_root / "unet_2d_inference_metrics.csv"
         _write_csv(metrics_csv, all_metric_rows)
@@ -928,6 +955,8 @@ def run_dataset(
             f"Model: {cfg.model_path}",
             f"Input root: {cfg.input_root}",
             f"Samples processed: {len(outputs)}",
+            f"Samples with quantitative metrics: {sum(output.metrics_json is not None for output in outputs)}",
+            f"Samples without reference metrics: {sum(output.metrics_json is None for output in outputs)}",
             "Normalization: complete image, per channel, P1-P99.8 mapped to [0,1]",
             f"Prediction threshold: {cfg.threshold}",
             f"Outside-mask depletion: {100.0 * cfg.outside_mask_depletion:.1f}%",
