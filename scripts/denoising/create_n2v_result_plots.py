@@ -8,10 +8,7 @@ The command combines two result sources:
 2. ``results/noise_analysis/2d/n2v_raw_pair_comparison.csv`` produced by
    ``check_2d.py --mode n2v`` for paired raw/N2V image metrics.
 
-
-Generated outputs include per-model training curves, paired raw-to-N2V SNR
-plots, delta-SNR distributions, SSIM distributions, a descriptive-statistics
-CSV, and an optional paired Wilcoxon test when SciPy is available.
+Only the 2D time-lapse HADA and 2D WGA-DAPI datasets are included.
 
 """
 
@@ -82,42 +79,96 @@ def float_value(row: dict[str, str], key: str) -> float:
 
 
 def save_training_curve(history_csv: Path, output_dir: Path, model_name: str) -> Path:
-    """Create one PNG and PDF loss curve from a saved model history."""
+    """Create a thesis-ready PNG and PDF loss curve from model history.
+
+    The recorded losses are plotted without smoothing. A logarithmic Y axis is
+    used when all displayed losses are positive, which preserves early training
+    spikes while making late-stage convergence visible.
+    """
+
+    from matplotlib.ticker import MaxNLocator
 
     rows = read_numeric_csv(history_csv)
     epochs = np.asarray([int(float(row["epoch"])) for row in rows], dtype=int)
-    loss = np.asarray([float_value(row, "loss") for row in rows], dtype=float) if "loss" in rows[0] else None
+    loss = (
+        np.asarray([float_value(row, "loss") for row in rows], dtype=float)
+        if "loss" in rows[0]
+        else None
+    )
     validation = (
         np.asarray([float_value(row, "val_loss") for row in rows], dtype=float)
-        if "val_loss" in rows[0] and all(row.get("val_loss", "") != "" for row in rows)
+        if "val_loss" in rows[0]
+        and all(row.get("val_loss", "") != "" for row in rows)
         else None
     )
 
-    figure = plt.figure(figsize=(8, 5), constrained_layout=True)
+    display_titles = {
+        "n2v_2d_time_raw": "Noise2Void training — 2D HADA time-series model",
+        "n2v_2d_wga_dapi_dapi_blue_raw": "Noise2Void training — DAPI-channel model",
+        "n2v_2d_wga_dapi_wga_green_raw": "Noise2Void training — WGA-channel model",
+        "n2v_2d_wga_dapi_joint_dapi+wga_raw": (
+            "Noise2Void training — joint DAPI–WGA model"
+        ),
+    }
+    title = display_titles.get(model_name.lower(), model_name)
+
+    figure = plt.figure(figsize=(7.6, 4.8), constrained_layout=True)
     axis = figure.add_subplot(1, 1, 1)
+
     if loss is not None:
-        axis.plot(epochs, loss, marker="o", markersize=3, label="Training loss")
-    if validation is not None:
-        axis.plot(epochs, validation, marker="o", markersize=3, label="Validation loss")
-        best = int(np.argmin(validation))
-        axis.scatter([epochs[best]], [validation[best]], zorder=5)
-        axis.annotate(
-            f"Best epoch: {epochs[best]}",
-            (epochs[best], validation[best]),
-            xytext=(8, 8),
-            textcoords="offset points",
+        axis.plot(
+            epochs,
+            loss,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.8,
+            label="Training loss",
         )
+
+    if validation is not None:
+        axis.plot(
+            epochs,
+            validation,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.8,
+            label="Validation loss",
+        )
+
+        best = int(np.nanargmin(validation))
+        best_epoch = int(epochs[best])
+
+        # Dashed vertical line indicates the epoch with the lowest validation loss.
+        # No point marker or textual annotation is added to keep the figure clean.
+        axis.axvline(
+            best_epoch,
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.65,
+        )
+
+    plotted_arrays = [values for values in (loss, validation) if values is not None]
+    if plotted_arrays and all(np.all(np.isfinite(values) & (values > 0)) for values in plotted_arrays):
+        axis.set_yscale("log")
+        axis.set_ylabel("Loss (log scale)")
+    else:
+        axis.set_ylabel("Loss")
+
     axis.set_xlabel("Epoch")
-    axis.set_ylabel("Loss")
-    axis.set_title(model_name)
-    axis.grid(True, alpha=0.3)
+    axis.set_title(title, pad=10)
+    axis.xaxis.set_major_locator(MaxNLocator(integer=True))
+    axis.set_xlim(float(np.min(epochs)) - 0.5, float(np.max(epochs)) + 1.0)
+    axis.grid(True, axis="y", which="both", alpha=0.25)
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+
     if axis.lines:
-        axis.legend()
+        axis.legend(frameon=False, loc="upper right")
 
     stem = f"training_curve_{safe_name(model_name)}"
     png = output_dir / f"{stem}.png"
-    figure.savefig(png, dpi=300)
-    figure.savefig(output_dir / f"{stem}.pdf")
+    figure.savefig(png, dpi=300, bbox_inches="tight")
+    figure.savefig(output_dir / f"{stem}.pdf", bbox_inches="tight")
     plt.close(figure)
     return png
 
@@ -288,6 +339,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=PROJECT_ROOT / "results" / "N2V" / "thesis_plots",
         help="Directory for PNG, PDF, CSV, JSON, and TXT outputs.",
     )
+    parser.add_argument(
+        "--training-only",
+        action="store_true",
+        help=(
+            "Generate only the model training curves and skip all SNR, SSIM, "
+            "statistics, and comparison-CSV processing."
+        ),
+    )
     return parser
 
 
@@ -300,11 +359,22 @@ def main(argv: list[str] | None = None) -> int:
     figures: list[Path] = []
 
     for spec in MODEL_SPECS.values():
-        history = PROJECT_ROOT / "models" / spec.model_name / "pft_training" / "training_history.csv"
+        history = (
+            PROJECT_ROOT
+            / "models"
+            / spec.model_name
+            / "pft_training"
+            / "training_history.csv"
+        )
         if history.is_file():
             figures.append(save_training_curve(history, output_dir, spec.model_name))
         else:
             print(f"[WARN] Training history not found for {spec.model_name}: {history}")
+
+    if args.training_only:
+        print(f"N2V training curves: {output_dir}")
+        print(f"Training-curve figures generated: {len(figures)}")
+        return 0
 
     comparison_rows = read_numeric_csv(args.comparison_csv.resolve())
     groups = grouped_comparison_rows(comparison_rows)

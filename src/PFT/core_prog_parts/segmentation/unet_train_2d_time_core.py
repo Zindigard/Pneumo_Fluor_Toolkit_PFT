@@ -1,22 +1,147 @@
+"""
+Core training implementation for 2D U-Net foreground/background detection.
+
+This module is used for both supported 2D datasets:
+
+``2d_time``
+    One fluorescence channel per time frame.
+
+``2d_wga_dapi``
+    Two fluorescence channels, DAPI and WGA, processed together as one input.
+
+The network performs semantic binary classification.
+
+The main adjustable values are collected in :class:`UNet2DTrainConfig`. They
+can be changed through the terminal launcher or when constructing the config in
+Python. The class documentation explains the expected effect of increasing or
+decreasing every parameter.
+
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+import csv
 import json
 import random
-from typing import Iterable
+from typing import Any
 
-import numpy as np
-import tifffile as tiff
-import tensorflow as tf
 import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+import tifffile as tiff
 
-from PFT.core_prog_parts.common_paths import find_project_root, ensure_dir
-from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, normalize_axes, move_yx_to_last
+from PFT.core_prog_parts.common_paths import ensure_dir, find_project_root
+from PFT.core_prog_parts.decoder_omezar import load_ome_zarr, move_yx_to_last, normalize_axes
+
+
+DATASETS_2D = ("2d_time", "2d_wga_dapi")
+EXPECTED_LOCAL_THRESHOLD_PERCENTILE = {
+    "2d_time": 97.5,
+    "2d_wga_dapi": 98.0,
+}
 
 
 @dataclass
 class UNet2DTrainConfig:
+    """Configuration for thesis-aligned 2D semantic foreground training.
+
+    Parameter guide
+    ---------------
+    project_root:
+        Project directory used to construct all default paths. Changing it does
+        not change learning behaviour.
+    dataset:
+        ``"2d_time"`` selects one-channel HADA data. ``"2d_wga_dapi"``
+        selects two-channel WGA-DAPI data. Models are dataset-specific.
+    level:
+        OME-Zarr pyramid level. ``0`` uses full resolution. A higher level uses
+        a downsampled image, reducing memory and training time but also removing
+        fine spatial detail. Masks must correspond to the selected level.
+    image_root, mask_root, model_root:
+        Optional path overrides. They change where data are read or results are
+        written, but do not change the network itself.
+
+    patch:
+        Training crop width and height in pixels. Larger patches provide more
+        spatial context but use substantially more GPU memory and usually reduce
+        the number of patches processed per second. Smaller patches require less
+        memory but may omit complete cells or long structures. The value must be
+        a positive multiple of 16 and must also be used during inference.
+    batch:
+        Number of patches processed in one optimizer update. Increasing it may
+        improve throughput and produce smoother gradients, but requires more GPU
+        memory. Decreasing it is the first action when an out-of-memory error
+        occurs. Very small batches can make training noisier.
+    epochs:
+        Maximum passes through the configured training schedule. More epochs can
+        improve convergence, but also increase runtime and overfitting risk.
+        Select the best checkpoint from validation loss rather than assuming the
+        final epoch is optimal.
+    steps_per_epoch:
+        Number of randomly sampled training batches per epoch. Increasing it
+        exposes the model to more patches before the next epoch and increases
+        runtime approximately proportionally.
+    val_steps:
+        Number of validation batches evaluated per epoch. More steps provide a
+        more stable validation estimate but increase evaluation time.
+    val_split:
+        Fraction of complete samples reserved for validation. A larger value
+        gives a more reliable validation estimate but leaves fewer samples for
+        fitting. For a small dataset, 0.2 is a practical starting point.
+    seed:
+        Controls sample splitting and random patch sampling. Keeping it fixed
+        improves reproducibility. Changing it can alter the exact split and
+        therefore the measured validation curves.
+
+    lr:
+        Initial Adam learning rate. A larger value can learn faster but may make
+        loss unstable or skip a good solution. A smaller value is more stable but
+        may require more epochs. ``1e-3`` is the current starting value.
+    base_filters:
+        Number of filters in the first U-Net level. Each deeper level multiplies
+        this value. Increasing it raises model capacity, memory use, model size,
+        and training time. Decreasing it makes the model lighter but may reduce
+        its ability to represent complex foreground patterns.
+    dropout:
+        Dropout probability applied after each convolutional block. Increasing
+        it can reduce overfitting, but excessive dropout can slow convergence and
+        underfit the data. ``0.0`` disables dropout. Values around 0.1 to 0.3 are
+        reasonable experimental settings when validation loss worsens while
+        training loss continues to improve.
+    normalize:
+        Intensity conversion used before patch extraction. ``"percentile"`` is
+        recommended and maps P1 to 0 and P99.8 to 1 per channel. The optional
+        ``"scale_uint16"`` mode divides by 65535 and is appropriate only when
+        the input has a consistent uint16 intensity range. Inference must use the
+        same mode as training.
+
+    fg_fraction:
+        Fraction of sampled patches requested from foreground-containing areas.
+        Increasing it gives the network more positive examples and can improve
+        sensitivity, but too high a value may increase false positives because
+        the network sees too little pure background. Decreasing it strengthens
+        background learning but may worsen detection of small foreground areas.
+    fg_min_ratio:
+        Minimum foreground-pixel fraction for a patch to count as a foreground
+        patch. Increasing it selects denser foreground crops and may exclude
+        boundary or sparse-cell examples. Decreasing it includes weaker positive
+        examples but makes the distinction from background patches less clear.
+    bg_max_ratio:
+        Maximum foreground-pixel fraction allowed in a background patch.
+        Increasing it permits mixed patches and can blur the definition of pure
+        background. Decreasing it makes background examples cleaner but harder
+        to find.
+    max_tries:
+        Maximum attempts to locate a crop that satisfies the requested
+        foreground/background ratio. Increasing it can improve adherence to the
+        sampling rules but adds CPU preprocessing time. Lowering it is faster but
+        causes more fallback crops when valid regions are rare.
+    """
+
+    # Dataset and path selection. These parameters do not directly change the
+    # optimizer, but selecting another level or dataset changes the input data.
     project_root: Path = find_project_root(Path(__file__).resolve())
     dataset: str = "2d_time"
     level: int = 0
@@ -25,6 +150,7 @@ class UNet2DTrainConfig:
     mask_root: Path | None = None
     model_root: Path | None = None
 
+    # Patch sampling and training duration.
     patch: int = 256
     batch: int = 8
     epochs: int = 50
@@ -33,20 +159,38 @@ class UNet2DTrainConfig:
     val_split: float = 0.2
     seed: int = 1337
 
+    # Optimizer, architecture, regularization, and intensity preprocessing.
     lr: float = 1e-3
     base_filters: int = 16
     dropout: float = 0.0
     normalize: str = "percentile"
 
+    # Class-aware crop sampling. These values help compensate for the typically
+    # much larger background area in fluorescence images.
     fg_fraction: float = 0.75
     fg_min_ratio: float = 0.05
     bg_max_ratio: float = 0.02
     max_tries: int = 80
 
 
-def _default_image_root(project_root: Path, dataset: str) -> Path:
-    # U-Net training should normally use filtered/preprocessed images.
-    return project_root / "results" / "img" / "filtered" / dataset
+def validate_train_config(cfg: UNet2DTrainConfig) -> None:
+    """Validate parameters that affect U-Net dimensions and sampling."""
+    if cfg.patch <= 0 or cfg.patch % 16 != 0:
+        raise ValueError("patch must be a positive multiple of 16 for four pooling stages")
+    if cfg.batch <= 0 or cfg.epochs <= 0:
+        raise ValueError("batch and epochs must be positive")
+    if cfg.steps_per_epoch <= 0 or cfg.val_steps <= 0:
+        raise ValueError("training and validation steps must be positive")
+    if not 0.0 < cfg.val_split < 1.0:
+        raise ValueError("val_split must be between zero and one")
+    if not 0.0 <= cfg.fg_fraction <= 1.0:
+        raise ValueError("fg_fraction must be in [0,1]")
+    if not 0.0 <= cfg.bg_max_ratio <= cfg.fg_min_ratio <= 1.0:
+        raise ValueError("require 0 <= bg_max_ratio <= fg_min_ratio <= 1")
+    if cfg.max_tries <= 0:
+        raise ValueError("max_tries must be positive")
+    if cfg.lr <= 0:
+        raise ValueError("learning rate must be positive")
 
 
 def _default_mask_root(project_root: Path, dataset: str) -> Path:
@@ -57,203 +201,417 @@ def _default_model_root(project_root: Path, dataset: str) -> Path:
     return project_root / "models" / f"u_net_{dataset}"
 
 
+def _local_threshold_base(project_root: Path, dataset: str) -> Path:
+    return (
+        project_root
+        / "results"
+        / "Filters"
+        / "Local_high_threshold"
+        / dataset
+        / "intensity_preserved"
+    )
+
+
+def default_filtered_root(project_root: Path, dataset: str) -> Path:
+    """Resolve the production local-threshold folder for one 2D dataset.
+
+    The selected production settings are p97.5 for ``2d_time`` and p98.0 for
+    ``2d_wga_dapi``. The remainder of the folder label is discovered so minor
+    parameter-label changes do not break the training command.
+    """
+    dataset = dataset.strip().lower()
+    if dataset not in DATASETS_2D:
+        raise ValueError(f"Unsupported 2D dataset: {dataset}")
+
+    base = _local_threshold_base(project_root, dataset)
+    percentile = EXPECTED_LOCAL_THRESHOLD_PERCENTILE[dataset]
+    expected_label = base / f"p{percentile:.1f}_k3f40_s370_k10f40"
+    if expected_label.is_dir():
+        return expected_label
+
+    expected_prefix = f"p{percentile:.1f}_"
+    matches = sorted(p for p in base.glob(f"{expected_prefix}*") if p.is_dir())
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        exact = [p for p in matches if (p / "local_threshold_dataset_summary.txt").exists()]
+        if len(exact) == 1:
+            return exact[0]
+        raise RuntimeError(
+            f"Multiple local-threshold folders match {expected_prefix} under {base}. "
+            "Pass --image-root explicitly."
+        )
+
+    # Return the expected base so a later error reports the useful location.
+    return expected_label
+
+
 def normalize_image01(x: np.ndarray, mode: str = "percentile") -> np.ndarray:
-    x = x.astype(np.float32, copy=False)
-    if mode == "scale_uint16":
-        return np.clip(x / 65535.0, 0.0, 1.0).astype(np.float32)
-    if mode != "percentile":
-        raise ValueError(f"Unknown normalization mode: {mode}")
+    """Normalize one complete HWC image channel-wise to [0, 1].
 
-    out = np.empty_like(x, dtype=np.float32)
-    if x.ndim == 2:
+    Percentile normalization maps P1 to zero and P99.8 to one. It must be
+    applied to the complete image before patch extraction, not independently
+    to every patch. This keeps training and inference preprocessing identical.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    squeeze = x.ndim == 2
+    if squeeze:
         x = x[..., None]
-        squeeze = True
+    if x.ndim != 3:
+        raise ValueError(f"Expected YX or YXC image, received shape={x.shape}")
+
+    if mode == "scale_uint16":
+        out = np.clip(x / 65535.0, 0.0, 1.0)
+    elif mode == "percentile":
+        out = np.empty_like(x, dtype=np.float32)
+        for channel in range(x.shape[-1]):
+            plane = x[..., channel]
+            lo = float(np.percentile(plane, 1.0))
+            hi = float(np.percentile(plane, 99.8))
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+                out[..., channel] = 0.0
+            else:
+                out[..., channel] = np.clip(
+                    (plane - lo) / (hi - lo + 1e-8), 0.0, 1.0
+                )
     else:
-        squeeze = False
-
-    for c in range(x.shape[-1]):
-        xc = x[..., c]
-        lo = np.percentile(xc, 1.0)
-        hi = np.percentile(xc, 99.8)
-        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-            out[..., c] = 0.0
-        else:
-            out[..., c] = np.clip((xc - lo) / (hi - lo + 1e-8), 0.0, 1.0)
-    return out[..., 0] if squeeze else out
+        raise ValueError(f"Unknown normalization mode: {mode}")
+    return out[..., 0] if squeeze else out.astype(np.float32, copy=False)
 
 
-def _as_numpy(a) -> np.ndarray:
-    return np.asarray(a)
+def _select_axis(arr: np.ndarray, axes: str, axis: str, index: int) -> tuple[np.ndarray, str]:
+    position = axes.index(axis)
+    arr = np.take(arr, int(index), axis=position)
+    return arr, axes[:position] + axes[position + 1 :]
 
 
-def _select_first_time_if_present(arr: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
+def ome_zarr_to_hwc_frames_2d(
+    zarr_path: Path,
+    *,
+    dataset: str,
+    level: int = 0,
+) -> list[np.ndarray]:
+    """Load every 2D frame from an OME-Zarr store as HWC float32 arrays."""
+    dataset = dataset.strip().lower()
+    if dataset not in DATASETS_2D:
+        raise ValueError(f"Unsupported 2D dataset: {dataset}")
+
+    arr, axes = load_ome_zarr(zarr_path, level=level, as_numpy=True)
+    arr = np.asarray(arr)
     axes = normalize_axes(axes)
-    if "t" not in axes:
-        return arr, axes
-    ax = axes.index("t")
-    arr = np.take(arr, 0, axis=ax)
-    axes = axes[:ax] + axes[ax + 1:]
-    return arr, axes
+    arr, axes = move_yx_to_last(arr, axes)
+
+    for axis in tuple(axes):
+        if axis not in {"t", "c", "y", "x"}:
+            size = int(arr.shape[axes.index(axis)])
+            if size != 1:
+                raise ValueError(
+                    f"Unsupported non-singleton axis {axis}={size} in {zarr_path}"
+                )
+            arr, axes = _select_axis(arr, axes, axis, 0)
+
+    time_count = int(arr.shape[axes.index("t")]) if "t" in axes else 1
+    frames: list[np.ndarray] = []
+    for time_index in range(time_count):
+        frame = arr
+        frame_axes = axes
+        if "t" in frame_axes:
+            frame, frame_axes = _select_axis(frame, frame_axes, "t", time_index)
+
+        if frame_axes == "yx":
+            hwc = frame[..., None]
+        elif frame_axes == "cyx":
+            channel_axis = frame_axes.index("c")
+            channel_count = int(frame.shape[channel_axis])
+            if dataset == "2d_time":
+                hwc = np.take(frame, 0, axis=channel_axis)[..., None]
+            else:
+                if channel_count < 2:
+                    raise ValueError(
+                        f"2d_wga_dapi requires two channels, found {channel_count}: {zarr_path}"
+                    )
+                hwc = np.stack(
+                    [
+                        np.take(frame, 0, axis=channel_axis),
+                        np.take(frame, 1, axis=channel_axis),
+                    ],
+                    axis=-1,
+                )
+        else:
+            raise ValueError(
+                f"Unsupported 2D OME-Zarr axes '{frame_axes}' for {zarr_path}"
+            )
+        frames.append(np.asarray(hwc, dtype=np.float32))
+    return frames
 
 
 def ome_zarr_to_hwc_2d(zarr_path: Path, *, dataset: str, level: int = 0) -> np.ndarray:
-    arr, axes = load_ome_zarr(zarr_path, level=level, as_numpy=True)
-    axes = normalize_axes(axes)
-    arr, axes = _select_first_time_if_present(arr, axes)
-    arr, axes = move_yx_to_last(arr, axes)
+    """Backward-compatible loader returning the first available 2D frame."""
+    return ome_zarr_to_hwc_frames_2d(zarr_path, dataset=dataset, level=level)[0]
 
-    if axes == "yx":
-        img = arr[..., None]
-    elif axes == "cyx":
-        c_axis = axes.index("c")
-        c_count = arr.shape[c_axis]
-        if dataset == "2d_time":
-            img = np.take(arr, 0, axis=c_axis)[..., None]
-        elif dataset == "2d_wga_dapi":
-            use_channels = [0, 1] if c_count > 1 else [0]
-            planes = [np.take(arr, ci, axis=c_axis) for ci in use_channels]
-            img = np.stack(planes, axis=-1)
-        else:
-            raise ValueError(f"Unsupported 2D dataset: {dataset}")
-    else:
-        raise ValueError(f"Unsupported 2D OME-Zarr axes '{axes}' for {zarr_path}")
 
-    return img.astype(np.float32, copy=False)
+def read_reference_mask_2d(mask_path: Path) -> tuple[np.ndarray, int]:
+    """Read a 2D reference mask and convert every positive label to foreground.
+
+    The source mask may already be binary or may contain positive instance
+    labels. This follows the Methods definition ``M_bin = 1`` for ``M > 0``.
+    Negative, non-finite, or non-2D masks are rejected.
+    """
+    source = np.asarray(tiff.imread(mask_path))
+    source = np.squeeze(source)
+    if source.ndim != 2:
+        raise ValueError(
+            f"Reference mask must be 2D after squeeze: {mask_path}, {source.shape}"
+        )
+    if not np.issubdtype(source.dtype, np.number):
+        raise ValueError(f"Reference mask must be numeric: {mask_path}, {source.dtype}")
+    if not np.all(np.isfinite(source)):
+        raise ValueError(f"Reference mask contains non-finite values: {mask_path}")
+    if np.any(source < 0):
+        raise ValueError(f"Reference mask contains negative labels: {mask_path}")
+
+    positive_labels = np.unique(source[source > 0])
+    binary = (source > 0).astype(np.uint8)
+    return binary, int(positive_labels.size)
 
 
 def read_binary_mask_2d(mask_path: Path) -> np.ndarray:
-    m = tiff.imread(mask_path)
-    m = np.asarray(m)
-    while m.ndim > 2:
-        m = m[0]
-    return (m > 0).astype(np.uint8)
+    """Return the binary semantic foreground target derived from a source mask."""
+    binary, _ = read_reference_mask_2d(mask_path)
+    return binary
 
 
 def find_mask_file(sample_dir: Path) -> Path | None:
-    candidates = ["mask.tif", "mask.tiff", "labels.tif", "label.tif", "mask.png"]
-    for name in candidates:
-        p = sample_dir / name
-        if p.exists():
-            return p
-    tifs = sorted(list(sample_dir.glob("*.tif")) + list(sample_dir.glob("*.tiff")))
-    return tifs[0] if tifs else None
+    """Find the canonical numerical reference mask for one sample."""
+    canonical = sample_dir / "mask.tif"
+    if canonical.is_file():
+        return canonical
+    for name in ("mask.tiff", "labels.tif", "label.tif"):
+        candidate = sample_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def list_2d_training_pairs(cfg: UNet2DTrainConfig) -> list[tuple[Path, Path]]:
-    image_root = Path(cfg.image_root or _default_image_root(cfg.project_root, cfg.dataset))
+    """Pair filtered image stores and hand-labelled masks by sample directory."""
+    image_root = Path(cfg.image_root or default_filtered_root(cfg.project_root, cfg.dataset))
     mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root, cfg.dataset))
-    if not image_root.exists():
-        raise FileNotFoundError(f"Image root does not exist: {image_root}")
-    if not mask_root.exists():
+    if not image_root.is_dir():
+        raise FileNotFoundError(
+            f"Filtered image root does not exist: {image_root}. Run local-threshold filtering "
+            "or pass --image-root."
+        )
+    if not mask_root.is_dir():
         raise FileNotFoundError(f"Mask root does not exist: {mask_root}")
 
     pairs: list[tuple[Path, Path]] = []
-    for sample_dir in sorted(mask_root.iterdir()):
-        if not sample_dir.is_dir():
-            continue
+    for sample_dir in sorted(p for p in mask_root.iterdir() if p.is_dir()):
         mask_path = find_mask_file(sample_dir)
-        if mask_path is None:
-            continue
-        zarr_path = image_root / sample_dir.name / "image.ome.zarr"
-        if zarr_path.exists():
-            pairs.append((zarr_path, mask_path))
+        image_path = image_root / sample_dir.name / "image.ome.zarr"
+        if mask_path is not None and image_path.is_dir():
+            pairs.append((image_path, mask_path))
     return pairs
 
 
-def split_pairs(pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
-    rng = random.Random(cfg.seed)
-    pairs = list(pairs)
-    rng.shuffle(pairs)
-    if len(pairs) == 1:
-        return pairs, pairs
-    n_val = max(1, int(round(len(pairs) * cfg.val_split)))
-    return pairs[n_val:], pairs[:n_val]
+def validate_2d_training_pairs(
+    pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig
+) -> list[dict[str, Any]]:
+    """Validate shapes, channels, source masks, and foreground/background pixels."""
+    rows: list[dict[str, Any]] = []
+    for image_path, mask_path in pairs:
+        sample = image_path.parent.name
+        status = "PASS"
+        issue = ""
+        shape = ""
+        channels = 0
+        frame_count = 0
+        foreground = 0
+        background = 0
+        positive_label_count = 0
+        try:
+            frames = ome_zarr_to_hwc_frames_2d(
+                image_path, dataset=cfg.dataset, level=cfg.level
+            )
+            mask, positive_label_count = read_reference_mask_2d(mask_path)
+            frame_count = len(frames)
+            channels = int(frames[0].shape[-1])
+            shape = "x".join(str(v) for v in frames[0].shape)
+            if any(frame.shape[:2] != mask.shape for frame in frames):
+                raise ValueError(
+                    f"Image/mask YX mismatch: frames={frames[0].shape[:2]}, mask={mask.shape}"
+                )
+            expected_channels = 1 if cfg.dataset == "2d_time" else 2
+            if channels != expected_channels:
+                raise ValueError(
+                    f"Expected {expected_channels} input channels, found {channels}"
+                )
+            foreground = int(np.count_nonzero(mask))
+            background = int(mask.size - foreground)
+            if foreground == 0 or background == 0:
+                raise ValueError(
+                    f"Mask must contain foreground and background pixels: fg={foreground}, bg={background}"
+                )
+            if min(mask.shape) < cfg.patch:
+                raise ValueError(
+                    f"Patch {cfg.patch} exceeds mask dimensions {mask.shape}"
+                )
+        except Exception as exc:  # validation report should retain all samples
+            status = "FAIL"
+            issue = f"{type(exc).__name__}: {exc}"
+        rows.append(
+            {
+                "dataset": cfg.dataset,
+                "sample": sample,
+                "status": status,
+                "image_path": str(image_path),
+                "mask_path": str(mask_path),
+                "frame_count": frame_count,
+                "image_shape_yxc": shape,
+                "channels": channels,
+                "foreground_pixels": foreground,
+                "background_pixels": background,
+                "positive_source_labels": positive_label_count,
+                "issue": issue,
+            }
+        )
+    return rows
 
 
-def _random_crop(H: int, W: int, patch: int, rng: random.Random) -> tuple[int, int]:
-    return rng.randint(0, H - patch), rng.randint(0, W - patch)
+def split_pairs(
+    pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig
+) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
+    """Create the fixed 80:20 image-pair split before patch extraction."""
+    shuffled = list(pairs)
+    random.Random(cfg.seed).shuffle(shuffled)
+    if len(shuffled) < 2:
+        raise RuntimeError("At least two image-mask pairs are required for an independent validation split.")
+    n_val = max(1, int(round(len(shuffled) * cfg.val_split)))
+    if n_val >= len(shuffled):
+        n_val = len(shuffled) - 1
+    return shuffled[n_val:], shuffled[:n_val]
 
 
-def sample_patch_2d(img: np.ndarray, mask: np.ndarray, cfg: UNet2DTrainConfig, rng: random.Random) -> tuple[np.ndarray, np.ndarray]:
-    H, W = mask.shape
-    P = cfg.patch
-    if H < P or W < P:
-        raise ValueError(f"Patch {P} is larger than image/mask {(H, W)}")
+def _random_crop(height: int, width: int, patch: int, rng: random.Random) -> tuple[int, int]:
+    return rng.randint(0, height - patch), rng.randint(0, width - patch)
 
-    want_fg = rng.random() < cfg.fg_fraction
-    fg = np.argwhere(mask > 0)
-    best = None
-    best_score = None
+
+def sample_patch_2d(
+    img: np.ndarray,
+    mask: np.ndarray,
+    cfg: UNet2DTrainConfig,
+    rng: random.Random,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample a foreground-aware or background-aware 256 x 256 patch."""
+    height, width = mask.shape
+    patch = cfg.patch
+    if height < patch or width < patch:
+        raise ValueError(f"Patch {patch} is larger than image/mask {(height, width)}")
+
+    want_foreground = rng.random() < cfg.fg_fraction
+    foreground_coordinates = np.argwhere(mask > 0)
+    best: tuple[np.ndarray, np.ndarray] | None = None
+    best_distance = float("inf")
 
     for _ in range(cfg.max_tries):
-        if want_fg and len(fg) > 0:
-            cy, cx = fg[rng.randint(0, len(fg) - 1)]
-            y0 = int(np.clip(cy - P // 2 + rng.randint(-P // 8, P // 8), 0, H - P))
-            x0 = int(np.clip(cx - P // 2 + rng.randint(-P // 8, P // 8), 0, W - P))
+        if want_foreground and len(foreground_coordinates) > 0:
+            cy, cx = foreground_coordinates[rng.randrange(len(foreground_coordinates))]
+            y0 = int(np.clip(cy - patch // 2 + rng.randint(-patch // 8, patch // 8), 0, height - patch))
+            x0 = int(np.clip(cx - patch // 2 + rng.randint(-patch // 8, patch // 8), 0, width - patch))
         else:
-            y0, x0 = _random_crop(H, W, P, rng)
+            y0, x0 = _random_crop(height, width, patch, rng)
 
-        im = img[y0:y0 + P, x0:x0 + P, :]
-        ma = mask[y0:y0 + P, x0:x0 + P]
-        ratio = float(ma.mean())
-        if want_fg and ratio >= cfg.fg_min_ratio:
-            return im, ma
-        if (not want_fg) and ratio <= cfg.bg_max_ratio:
-            return im, ma
+        image_patch = img[y0 : y0 + patch, x0 : x0 + patch, :]
+        mask_patch = mask[y0 : y0 + patch, x0 : x0 + patch]
+        foreground_ratio = float(mask_patch.mean())
 
-        score = ratio if want_fg else -ratio
-        if best is None or score > best_score:
-            best = (im, ma)
-            best_score = score
+        if want_foreground and foreground_ratio >= cfg.fg_min_ratio:
+            return image_patch, mask_patch
+        if not want_foreground and foreground_ratio <= cfg.bg_max_ratio:
+            return image_patch, mask_patch
+
+        target = cfg.fg_min_ratio if want_foreground else cfg.bg_max_ratio
+        distance = abs(foreground_ratio - target)
+        if distance < best_distance:
+            best = image_patch, mask_patch
+            best_distance = distance
 
     if best is not None:
         return best
-    y0, x0 = _random_crop(H, W, P, rng)
-    return img[y0:y0 + P, x0:x0 + P, :], mask[y0:y0 + P, x0:x0 + P]
+    y0, x0 = _random_crop(height, width, patch, rng)
+    return (
+        img[y0 : y0 + patch, x0 : x0 + patch, :],
+        mask[y0 : y0 + patch, x0 : x0 + patch],
+    )
 
 
-def make_2d_dataset(pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig, *, training: bool):
+def make_2d_dataset(
+    pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig, *, training: bool
+):
+    """Build an infinite TensorFlow dataset from image-level train/validation pairs."""
     rng = random.Random(cfg.seed + (0 if training else 10000))
-    first_img = ome_zarr_to_hwc_2d(pairs[0][0], dataset=cfg.dataset, level=cfg.level)
-    channels = first_img.shape[-1]
+    first_frame = ome_zarr_to_hwc_frames_2d(
+        pairs[0][0], dataset=cfg.dataset, level=cfg.level
+    )[0]
+    channels = int(first_frame.shape[-1])
 
-    def gen():
+    def generator():
         while True:
-            img_path, mask_path = pairs[rng.randint(0, len(pairs) - 1)]
-            img = ome_zarr_to_hwc_2d(img_path, dataset=cfg.dataset, level=cfg.level)
+            image_path, mask_path = pairs[rng.randrange(len(pairs))]
+            frames = ome_zarr_to_hwc_frames_2d(
+                image_path, dataset=cfg.dataset, level=cfg.level
+            )
+            image = frames[rng.randrange(len(frames))]
             mask = read_binary_mask_2d(mask_path)
-            if img.shape[:2] != mask.shape[:2]:
-                raise ValueError(f"Image/mask shape mismatch: {img_path} {img.shape[:2]} vs {mask_path} {mask.shape[:2]}")
-            x, y = sample_patch_2d(img, mask, cfg, rng)
-            x = normalize_image01(x, cfg.normalize).astype(np.float32)
-            y = y.astype(np.float32)[..., None]
-            yield x, y
+            if image.shape[:2] != mask.shape:
+                raise ValueError(
+                    f"Image/mask shape mismatch: {image_path} {image.shape[:2]} vs "
+                    f"{mask_path} {mask.shape}"
+                )
 
-    ds = tf.data.Dataset.from_generator(
-        gen,
+            # Thesis-defined normalization is applied once to the complete image.
+            image_normalized = normalize_image01(image, cfg.normalize)
+            x_patch, y_patch = sample_patch_2d(image_normalized, mask, cfg, rng)
+            yield x_patch.astype(np.float32), y_patch.astype(np.float32)[..., None]
+
+    dataset = tf.data.Dataset.from_generator(
+        generator,
         output_signature=(
-            tf.TensorSpec(shape=(cfg.patch, cfg.patch, channels), dtype=tf.float32),
+            tf.TensorSpec(
+                shape=(cfg.patch, cfg.patch, channels), dtype=tf.float32
+            ),
             tf.TensorSpec(shape=(cfg.patch, cfg.patch, 1), dtype=tf.float32),
         ),
     )
     if training:
-        ds = ds.shuffle(256, seed=cfg.seed, reshuffle_each_iteration=True)
-    return ds.batch(cfg.batch).prefetch(tf.data.AUTOTUNE), channels
+        dataset = dataset.shuffle(256, seed=cfg.seed, reshuffle_each_iteration=True)
+    return dataset.batch(cfg.batch).prefetch(tf.data.AUTOTUNE), channels
 
 
 def conv_block(x, filters: int, dropout: float = 0.0):
-    x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation("relu")(x)
-    x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation("relu")(x)
+    """Two 3 x 3 convolutions, each followed by batch normalization and ReLU."""
+    for _ in range(2):
+        x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation("relu")(x)
     if dropout > 0:
         x = tf.keras.layers.Dropout(dropout)(x)
     return x
 
 
-def build_unet(input_shape: tuple[int, int, int], base_filters: int = 16, dropout: float = 0.0) -> tf.keras.Model:
+def build_unet(
+    input_shape: tuple[int, int, int],
+    base_filters: int = 16,
+    dropout: float = 0.0,
+) -> tf.keras.Model:
+    """Build the four-stage 2D U-Net described in the Methods chapter.
+
+    ``input_shape`` is normally ``(patch, patch, channels)``. ``base_filters``
+    controls model width and therefore has the strongest effect on GPU memory
+    after ``patch`` and ``batch``. ``dropout`` regularizes every convolutional
+    block. Both parameters alter training behaviour, while ``base_filters`` also
+    alters the saved model architecture.
+    """
     inputs = tf.keras.Input(shape=input_shape)
     c1 = conv_block(inputs, base_filters, dropout)
     p1 = tf.keras.layers.MaxPool2D()(c1)
@@ -263,8 +621,9 @@ def build_unet(input_shape: tuple[int, int, int], base_filters: int = 16, dropou
     p3 = tf.keras.layers.MaxPool2D()(c3)
     c4 = conv_block(p3, base_filters * 8, dropout)
     p4 = tf.keras.layers.MaxPool2D()(c4)
-    bn = conv_block(p4, base_filters * 16, dropout)
-    u4 = tf.keras.layers.Conv2DTranspose(base_filters * 8, 2, strides=2, padding="same")(bn)
+    bottleneck = conv_block(p4, base_filters * 16, dropout)
+
+    u4 = tf.keras.layers.Conv2DTranspose(base_filters * 8, 2, strides=2, padding="same")(bottleneck)
     c5 = conv_block(tf.keras.layers.Concatenate()([u4, c4]), base_filters * 8, dropout)
     u3 = tf.keras.layers.Conv2DTranspose(base_filters * 4, 2, strides=2, padding="same")(c5)
     c6 = conv_block(tf.keras.layers.Concatenate()([u3, c3]), base_filters * 4, dropout)
@@ -273,19 +632,29 @@ def build_unet(input_shape: tuple[int, int, int], base_filters: int = 16, dropou
     u1 = tf.keras.layers.Conv2DTranspose(base_filters, 2, strides=2, padding="same")(c7)
     c8 = conv_block(tf.keras.layers.Concatenate()([u1, c1]), base_filters, dropout)
     outputs = tf.keras.layers.Conv2D(1, 1, activation="sigmoid")(c8)
-    return tf.keras.Model(inputs, outputs, name="UNet2D")
+    return tf.keras.Model(inputs, outputs, name="UNet2DForeground")
+
+
+def soft_dice_coef(y_true, y_pred, eps: float = 1e-6):
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.clip_by_value(tf.cast(y_pred, tf.float32), 0.0, 1.0)
+    intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
+    denominator = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3])
+    return tf.reduce_mean((2.0 * intersection + eps) / (denominator + eps))
 
 
 def dice_coef(y_true, y_pred, eps: float = 1e-6):
-    y_true = tf.cast(y_true, tf.float32)
-    y_pred = tf.clip_by_value(tf.cast(y_pred, tf.float32), 0.0, 1.0)
-    inter = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
-    denom = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3])
-    return tf.reduce_mean((2.0 * inter + eps) / (denom + eps))
+    """Binary Dice coefficient after thresholding probabilities at 0.5."""
+    y_true = tf.cast(y_true >= 0.5, tf.float32)
+    y_pred = tf.cast(y_pred >= 0.5, tf.float32)
+    intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
+    denominator = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3])
+    return tf.reduce_mean((2.0 * intersection + eps) / (denominator + eps))
 
 
 def dice_loss(y_true, y_pred):
-    return 1.0 - dice_coef(y_true, y_pred)
+    """Differentiable soft Dice loss used in the combined training objective."""
+    return 1.0 - soft_dice_coef(y_true, y_pred)
 
 
 def bce_dice_loss(y_true, y_pred):
@@ -294,91 +663,259 @@ def bce_dice_loss(y_true, y_pred):
 
 
 def iou_coef(y_true, y_pred, eps: float = 1e-6):
-    y_true = tf.cast(y_true, tf.float32)
+    """Binary intersection over union after thresholding at 0.5."""
+    y_true = tf.cast(y_true >= 0.5, tf.float32)
     y_pred = tf.cast(y_pred >= 0.5, tf.float32)
-    inter = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
-    union = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3]) - inter
-    return tf.reduce_mean((inter + eps) / (union + eps))
+    intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
+    union = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3]) - intersection
+    return tf.reduce_mean((intersection + eps) / (union + eps))
 
 
-def save_training_graph(history: tf.keras.callbacks.History, out_png: Path) -> Path:
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    hist = history.history
-    fig = plt.figure(figsize=(8, 5), dpi=180)
-    ax = fig.add_subplot(1, 1, 1)
-    for key in ["loss", "val_loss", "dice_coef", "val_dice_coef", "iou_coef", "val_iou_coef"]:
-        if key in hist:
-            ax.plot(hist[key], label=key)
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Metric value")
-    ax.set_title("U-Net training history")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_png)
-    plt.close(fig)
-    return out_png
+class LearningRateHistory(tf.keras.callbacks.Callback):
+    """Add the effective optimizer learning rate to every history epoch."""
+
+    def on_epoch_end(self, epoch, logs=None):  # type: ignore[override]
+        logs = logs if logs is not None else {}
+        value = tf.keras.backend.get_value(self.model.optimizer.learning_rate)
+        logs["learning_rate"] = float(value)
+
+
+def _save_curve(
+    history: dict[str, list[float]],
+    train_key: str,
+    validation_key: str,
+    ylabel: str,
+    title: str,
+    path: Path,
+) -> Path:
+    figure = plt.figure(figsize=(7.2, 4.8), dpi=180)
+    axis = figure.add_subplot(1, 1, 1)
+    epochs = np.arange(1, len(history.get(train_key, [])) + 1)
+    if train_key in history:
+        axis.plot(epochs, history[train_key], label="training")
+    if validation_key in history:
+        axis.plot(epochs, history[validation_key], label="validation")
+    axis.set_xlabel("Epoch")
+    axis.set_ylabel(ylabel)
+    axis.set_title(title)
+    axis.grid(True, alpha=0.25)
+    axis.legend()
+    figure.tight_layout()
+    figure.savefig(path)
+    plt.close(figure)
+    return path
+
+
+def save_training_curves(history: tf.keras.callbacks.History, model_root: Path, dataset: str) -> dict[str, Path]:
+    """Save separate thesis-ready loss, Dice, IoU, and learning-rate curves."""
+    model_root.mkdir(parents=True, exist_ok=True)
+    values = {key: [float(v) for v in sequence] for key, sequence in history.history.items()}
+    outputs = {
+        "loss_curve": _save_curve(
+            values,
+            "loss",
+            "val_loss",
+            "BCE + soft Dice loss",
+            f"U-Net loss: {dataset}",
+            model_root / f"u_net_{dataset}_loss_curve.png",
+        ),
+        "dice_curve": _save_curve(
+            values,
+            "dice_coef",
+            "val_dice_coef",
+            "Binary Dice coefficient",
+            f"U-Net Dice: {dataset}",
+            model_root / f"u_net_{dataset}_dice_curve.png",
+        ),
+        "iou_curve": _save_curve(
+            values,
+            "iou_coef",
+            "val_iou_coef",
+            "Intersection over union",
+            f"U-Net IoU: {dataset}",
+            model_root / f"u_net_{dataset}_iou_curve.png",
+        ),
+    }
+
+    if "learning_rate" in values:
+        figure = plt.figure(figsize=(7.2, 4.8), dpi=180)
+        axis = figure.add_subplot(1, 1, 1)
+        epochs = np.arange(1, len(values["learning_rate"]) + 1)
+        axis.plot(epochs, values["learning_rate"])
+        axis.set_xlabel("Epoch")
+        axis.set_ylabel("Learning rate")
+        axis.set_yscale("log")
+        axis.set_title(f"U-Net learning rate: {dataset}")
+        axis.grid(True, alpha=0.25)
+        figure.tight_layout()
+        lr_path = model_root / f"u_net_{dataset}_learning_rate_curve.png"
+        figure.savefig(lr_path)
+        plt.close(figure)
+        outputs["learning_rate_curve"] = lr_path
+
+    history_json = model_root / f"u_net_{dataset}_history.json"
+    history_json.write_text(json.dumps(values, indent=2), encoding="utf-8")
+    outputs["history_json"] = history_json
+    return outputs
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = list(rows[0]) if rows else ["status"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        if rows:
+            writer.writerows(rows)
+        else:
+            writer.writerow({"status": "no rows"})
 
 
 def train_2d_binary_unet(cfg: UNet2DTrainConfig) -> dict[str, Path]:
+    """Validate inputs, train one 2D U-Net, and save complete training evidence.
+
+    Processing order
+    ----------------
+    1. Resolve paths and validate all configuration values.
+    2. Pair each filtered OME-Zarr image with its reference mask.
+    3. Validate shapes, channels, positive labels, and foreground/background.
+    4. Split complete samples into training and validation subsets.
+    5. Normalize complete images, then draw class-aware random patches.
+    6. Train with Adam and the combined BCE plus soft-Dice objective.
+    7. Save the best validation-loss model, final model, history, split list,
+       architecture, and training curves.
+
+    The learning-rate callback below halves the learning rate after six epochs
+    without validation-loss improvement, down to 1e-6. Those callback constants
+    may be changed in this function, but the initial learning rate is controlled
+    by ``cfg.lr``.
+    """
     cfg.dataset = cfg.dataset.strip().lower()
-    cfg.image_root = Path(cfg.image_root or _default_image_root(cfg.project_root, cfg.dataset))
+    validate_train_config(cfg)
+    if cfg.dataset not in DATASETS_2D:
+        raise ValueError(f"Unsupported 2D dataset: {cfg.dataset}")
+    cfg.image_root = Path(cfg.image_root or default_filtered_root(cfg.project_root, cfg.dataset))
     cfg.mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root, cfg.dataset))
     cfg.model_root = ensure_dir(Path(cfg.model_root or _default_model_root(cfg.project_root, cfg.dataset)))
 
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    tf.random.set_seed(cfg.seed)
+
     pairs = list_2d_training_pairs(cfg)
     if not pairs:
-        raise RuntimeError(f"No training pairs found. Images: {cfg.image_root} | Masks: {cfg.mask_root}")
-    train_pairs, val_pairs = split_pairs(pairs, cfg)
-    train_ds, channels = make_2d_dataset(train_pairs, cfg, training=True)
-    val_ds, _ = make_2d_dataset(val_pairs, cfg, training=False)
+        raise RuntimeError(
+            f"No training pairs found. Images: {cfg.image_root} | Masks: {cfg.mask_root}"
+        )
 
-    model = build_unet((cfg.patch, cfg.patch, channels), base_filters=cfg.base_filters, dropout=cfg.dropout)
+    validation_rows = validate_2d_training_pairs(pairs, cfg)
+    validation_csv = cfg.model_root / f"u_net_{cfg.dataset}_input_validation.csv"
+    _write_csv(validation_csv, validation_rows)
+    failures = [row for row in validation_rows if row["status"] != "PASS"]
+    if failures:
+        examples = "; ".join(f"{row['sample']}: {row['issue']}" for row in failures[:5])
+        raise RuntimeError(
+            f"U-Net input validation failed for {len(failures)} sample(s). "
+            f"See {validation_csv}. Examples: {examples}"
+        )
+
+    train_pairs, validation_pairs = split_pairs(pairs, cfg)
+    split_rows = [
+        {
+            "dataset": cfg.dataset,
+            "split": split,
+            "sample": image_path.parent.name,
+            "image_path": str(image_path),
+            "mask_path": str(mask_path),
+        }
+        for split, subset in (("train", train_pairs), ("validation", validation_pairs))
+        for image_path, mask_path in subset
+    ]
+    split_csv = cfg.model_root / f"u_net_{cfg.dataset}_split_manifest.csv"
+    _write_csv(split_csv, split_rows)
+
+    train_dataset, channels = make_2d_dataset(train_pairs, cfg, training=True)
+    validation_dataset, _ = make_2d_dataset(validation_pairs, cfg, training=False)
+
+    model = build_unet(
+        (cfg.patch, cfg.patch, channels),
+        base_filters=cfg.base_filters,
+        dropout=cfg.dropout,
+    )
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(cfg.lr),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=cfg.lr),
         loss=bce_dice_loss,
         metrics=[dice_coef, iou_coef],
     )
 
     best_model = cfg.model_root / f"u_net_{cfg.dataset}_best.keras"
     final_model = cfg.model_root / f"u_net_{cfg.dataset}_final.keras"
-    graph_png = cfg.model_root / f"u_net_{cfg.dataset}_training_graph.png"
+    history_csv = cfg.model_root / f"u_net_{cfg.dataset}_history.csv"
     summary_json = cfg.model_root / f"u_net_{cfg.dataset}_training_summary.json"
+    architecture_txt = cfg.model_root / f"u_net_{cfg.dataset}_architecture.txt"
 
+    with architecture_txt.open("w", encoding="utf-8") as handle:
+        model.summary(print_fn=lambda line: handle.write(line + "\n"))
+
+    # Validation loss selects the deployable checkpoint. ReduceLROnPlateau
+    # lowers the step size when learning stalls. Increasing ``patience`` waits
+    # longer before reducing the rate; a smaller ``factor`` makes a stronger
+    # reduction; and a smaller ``min_lr`` permits finer late-stage updates.
     callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(str(best_model), monitor="val_loss", save_best_only=True),
-        tf.keras.callbacks.CSVLogger(str(cfg.model_root / f"u_net_{cfg.dataset}_history.csv")),
-        tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=6, min_lr=1e-6),
-        tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=12, restore_best_weights=True),
+        LearningRateHistory(),
+        tf.keras.callbacks.ModelCheckpoint(
+            str(best_model), monitor="val_loss", save_best_only=True
+        ),
+        tf.keras.callbacks.CSVLogger(str(history_csv)),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=6,
+            min_lr=1e-6,
+            verbose=1,
+        ),
     ]
     history = model.fit(
-        train_ds,
-        validation_data=val_ds,
+        train_dataset,
+        validation_data=validation_dataset,
         epochs=cfg.epochs,
         steps_per_epoch=cfg.steps_per_epoch,
         validation_steps=cfg.val_steps,
         callbacks=callbacks,
     )
     model.save(final_model)
-    save_training_graph(history, graph_png)
+    curve_outputs = save_training_curves(history, cfg.model_root, cfg.dataset)
+
     summary = {
-        "dataset": cfg.dataset,
+        **{
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in asdict(cfg).items()
+        },
         "channels": channels,
-        "pairs": len(pairs),
-        "train_pairs": len(train_pairs),
-        "val_pairs": len(val_pairs),
-        "image_root": str(cfg.image_root),
-        "mask_root": str(cfg.mask_root),
-        "patch": cfg.patch,
-        "batch": cfg.batch,
-        "epochs": cfg.epochs,
-        "steps_per_epoch": cfg.steps_per_epoch,
-        "val_steps": cfg.val_steps,
+        "pair_count": len(pairs),
+        "train_pair_count": len(train_pairs),
+        "validation_pair_count": len(validation_pairs),
+        "normalization_scope": "complete image, independently per channel, before patch extraction",
+        "normalization_percentiles": [1.0, 99.8],
         "best_model": str(best_model),
         "final_model": str(final_model),
+        "history_csv": str(history_csv),
+        "split_manifest": str(split_csv),
+        "input_validation": str(validation_csv),
+        "curves": {name: str(path) for name, path in curve_outputs.items()},
     }
     summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    return {"best_model": best_model, "final_model": final_model, "graph": graph_png, "summary": summary_json}
+
+    return {
+        "best_model": best_model,
+        "final_model": final_model,
+        "history_csv": history_csv,
+        "summary": summary_json,
+        "split_manifest": split_csv,
+        "input_validation": validation_csv,
+        "architecture": architecture_txt,
+        **curve_outputs,
+    }
 
 
 def train_2d_time_unet(cfg: UNet2DTrainConfig | None = None) -> dict[str, Path]:

@@ -1,139 +1,122 @@
+"""Train the 2D U-Net from terminal prompts or argparse."""
+
 from __future__ import annotations
 
-# Configure imports for direct execution from the repository source tree.
-import sys as _pft_sys
-from pathlib import Path as _PFTPath
-
-_PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
-
-
-def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``.
-
-    The lookup is based on this script's physical location and therefore does
-    not depend on the current working directory. An explicit error is raised
-    when the expected repository layout cannot be found.
-    """
-    current = (start or _PFT_SCRIPT_FILE).resolve()
-    search_start = current if current.is_dir() else current.parent
-
-    for candidate in (search_start, *search_start.parents):
-        core_dir = candidate / "src" / "PFT" / "core_prog_parts"
-        if (candidate / "scripts").is_dir() and core_dir.is_dir():
-            return candidate
-
-    raise RuntimeError(
-        "Cannot locate the PFT repository root. Expected both "
-        "'scripts' and 'src/PFT/core_prog_parts' in the same project folder. "
-        f"Script location: {_PFT_SCRIPT_FILE}"
-    )
-
-
-_PFT_PROJECT_ROOT = _pft_project_root()
-_PFT_SRC_DIR = _PFT_PROJECT_ROOT / "src"
-
-if str(_PFT_SRC_DIR) not in _pft_sys.path:
-    _pft_sys.path.insert(0, str(_PFT_SRC_DIR))
-
-
-
+import argparse
 from pathlib import Path
 import sys
+from typing import Sequence
 
-_THIS = Path(__file__).resolve()
-
-from PFT.core_prog_parts.common_paths import find_project_root
-from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import UNet2DTrainConfig, train_2d_time_unet
-from PFT.core_prog_parts.segmentation.unet_train_2d_wga_dapi_core import UNet2DWgaDapiTrainConfig, train_2d_wga_dapi_unet
-from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import UNet25DTrainConfig, train_3d_25d_unet
-
-"Use this script to run U-Net fine-tuning. The output will be saved as OME-Zarr."
+_SCRIPT = Path(__file__).resolve()
 
 
-def ask_int(text: str, default: int) -> int:
-    s = input(f"{text} [{default}]: ").strip()
-    return default if s == "" else int(s)
+def _project_root() -> Path:
+    for candidate in (_SCRIPT.parent, *_SCRIPT.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
+            return candidate
+    raise RuntimeError("Cannot locate project root containing scripts and src/PFT")
 
 
-def ask_float(text: str, default: float) -> float:
-    s = input(f"{text} [{default}]: ").strip()
-    return default if s == "" else float(s)
+PROJECT_ROOT = _project_root()
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (  # noqa: E402
+    DATASETS_2D,
+    UNet2DTrainConfig,
+    default_filtered_root,
+    train_2d_time_unet,
+)
+from PFT.core_prog_parts.segmentation.unet_train_2d_wga_dapi_core import (  # noqa: E402
+    UNet2DWgaDapiTrainConfig,
+    train_2d_wga_dapi_unet,
+)
 
 
-def ask_path(text: str, default: Path) -> Path:
-    s = input(f"{text}\nDefault: {default}\nPath or Enter: ").strip().strip('"')
-    return default if s == "" else Path(s)
-
-
-def choose_dataset() -> str:
-    print("\nChoose U-Net training dataset:")
+def _choose_dataset() -> str:
+    print("\nChoose 2D U-Net training dataset:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
-    print("  3) 3d_25d   (2.5D U-Net, nearby z-slices)")
-    s = input("Choose number [1]: ").strip()
-    if s == "2":
-        return "2d_wga_dapi"
-    if s == "3":
-        return "3d_25d"
-    return "2d_time"
+    answer = input("Choose number [1]: ").strip()
+    return "2d_wga_dapi" if answer == "2" else "2d_time"
 
 
-def ask_channels() -> tuple[int, ...] | None:
-    s = input("3D image channels to use, comma-separated, or Enter for all channels: ").strip()
-    if not s:
-        return None
-    return tuple(int(x.strip()) for x in s.split(",") if x.strip() != "")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Train the 2D bacterial foreground/background U-Net."
+    )
+    parser.add_argument("--dataset", choices=DATASETS_2D)
+    parser.add_argument("--image-root", type=Path)
+    parser.add_argument("--mask-root", type=Path)
+    parser.add_argument("--model-root", type=Path)
+    parser.add_argument("--level", type=int, default=0)
+    parser.add_argument("--patch", type=int, default=256)
+    parser.add_argument("--batch", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--steps-per-epoch", type=int, default=300)
+    parser.add_argument("--val-steps", type=int, default=60)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--base-filters", type=int, default=16)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Require command-line choices and never open a prompt.",
+    )
+    return parser
 
 
-def main() -> int:
-    root = find_project_root(Path(__file__).resolve())
-    dataset = choose_dataset()
-
-    if dataset == "2d_time":
-        cfg = UNet2DTrainConfig(project_root=root, dataset="2d_time")
-        cfg.image_root = ask_path("Training image root", root / "results" / "img" / "filtered" / "2d_time")
-        cfg.mask_root = ask_path("Training mask root", root / "results" / "training_files" / "U-net" / "2d_time")
-        cfg.model_root = root / "models" / "u_net_2d_time"
-    elif dataset == "2d_wga_dapi":
-        cfg = UNet2DWgaDapiTrainConfig(project_root=root, dataset="2d_wga_dapi")
-        cfg.image_root = ask_path("Training image root", root / "results" / "img" / "filtered" / "2d_wga_dapi")
-        cfg.mask_root = ask_path("Training mask root", root / "results" / "training_files" / "U-net" / "2d_wga_dapi")
-        cfg.model_root = root / "models" / "u_net_2d_wga_dapi"
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.dataset is None:
+        if args.non_interactive:
+            raise SystemExit("--dataset is required with --non-interactive")
+        dataset = _choose_dataset()
     else:
-        cfg = UNet25DTrainConfig(project_root=root)
-        cfg.image_root = ask_path("3D training image root", root / "results" / "img" / "3d_data")
-        cfg.mask_root = ask_path("3D training mask root", root / "results" / "3d_label")
-        cfg.model_root = root / "models" / "u_net_3d_25d"
-        cfg.z_radius = ask_int("2.5D z-radius: 1 means z-1, z, z+1", cfg.z_radius)
-        cfg.channels = ask_channels()
+        dataset = args.dataset
 
-    print("\nTraining parameters:")
-    cfg.level = ask_int("OME-Zarr pyramid level", cfg.level)
-    cfg.patch = ask_int("Patch size", cfg.patch)
-    cfg.batch = ask_int("Batch size", cfg.batch)
-    cfg.epochs = ask_int("Epochs", cfg.epochs)
-    cfg.steps_per_epoch = ask_int("Steps per epoch", cfg.steps_per_epoch)
-    cfg.val_steps = ask_int("Validation steps", cfg.val_steps)
-    cfg.lr = ask_float("Learning rate", cfg.lr)
-    cfg.base_filters = ask_int("Base filters", cfg.base_filters)
+    config_class = (
+        UNet2DWgaDapiTrainConfig if dataset == "2d_wga_dapi" else UNet2DTrainConfig
+    )
+    cfg = config_class(project_root=PROJECT_ROOT, dataset=dataset)
+    cfg.image_root = Path(args.image_root or default_filtered_root(PROJECT_ROOT, dataset))
+    cfg.mask_root = Path(
+        args.mask_root
+        or PROJECT_ROOT / "results" / "training_files" / "U-net" / dataset
+    )
+    cfg.model_root = Path(
+        args.model_root or PROJECT_ROOT / "models" / f"u_net_{dataset}"
+    )
+    cfg.level = args.level
+    cfg.patch = args.patch
+    cfg.batch = args.batch
+    cfg.epochs = args.epochs
+    cfg.steps_per_epoch = args.steps_per_epoch
+    cfg.val_steps = args.val_steps
+    cfg.lr = args.learning_rate
+    cfg.base_filters = args.base_filters
+    cfg.dropout = args.dropout
+    cfg.seed = args.seed
 
-    print("\n=== TRAINING CONFIG ===")
-    print(f"Project root: {root}")
-    print(f"Dataset:      {dataset}")
-    print(f"Image root:   {cfg.image_root}")
-    print(f"Mask root:    {cfg.mask_root}")
-    print(f"Model root:   {cfg.model_root}")
-    print(f"Patch/batch:  {cfg.patch}/{cfg.batch}")
-    print(f"Epochs:       {cfg.epochs}")
+    print("\n=== 2D U-NET TRAINING CONFIGURATION ===")
+    print(f"Dataset:              {cfg.dataset}")
+    print(f"Filtered input root:   {cfg.image_root}")
+    print(f"Reference mask root:   {cfg.mask_root}")
+    print(f"Model output root:     {cfg.model_root}")
+    print("Stored input values:   original scale, not pre-normalized")
+    print("Runtime normalization: complete image, per channel, P1-P99.8 -> [0,1]")
+    print(f"Patch / batch:         {cfg.patch} / {cfg.batch}")
+    print(f"Epochs:                {cfg.epochs}")
+    print(f"Steps / val steps:     {cfg.steps_per_epoch} / {cfg.val_steps}")
+    print(f"Learning rate:         {cfg.lr}")
 
-    if dataset == "2d_time":
-        outputs = train_2d_time_unet(cfg)
-    elif dataset == "2d_wga_dapi":
-        outputs = train_2d_wga_dapi_unet(cfg)
-    else:
-        outputs = train_3d_25d_unet(cfg)
-
-    print("\nTraining finished. Saved files:")
+    outputs = (
+        train_2d_wga_dapi_unet(cfg)
+        if dataset == "2d_wga_dapi"
+        else train_2d_time_unet(cfg)
+    )
+    print("\nTraining finished. Saved outputs:")
     for name, path in outputs.items():
         print(f"  {name}: {path}")
     return 0
