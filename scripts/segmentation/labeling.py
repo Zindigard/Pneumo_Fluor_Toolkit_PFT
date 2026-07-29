@@ -46,7 +46,6 @@ from skimage.morphology import binary_dilation, disk
 from skimage.segmentation import find_boundaries
 
 
-# Samples reported as missing ``mask.tif`` by ANALYSIS_INPUT_READINESS.txt.
 MISSING_MASK_SAMPLES: dict[str, tuple[str, ...]] = {
     "2d_time": (
         "WT_HADA_NHS_120min_ROI1_SIM",
