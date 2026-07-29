@@ -25,6 +25,7 @@ import sys
 from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
 _SCRIPT = Path(__file__).resolve()
@@ -174,15 +175,43 @@ def _storage_normalization_state(raw: np.ndarray, filtered: np.ndarray, exact: b
     return "NO: retained values and dtype equal raw"
 
 
-def _display(hwc: np.ndarray, already_normalized: bool = False) -> np.ndarray:
+# Fluorescence-style display map for the single-channel 2d_time/HADA dataset.
+# This affects PNG previews only; quantitative arrays are never recoloured or changed.
+_TIME_BLUE_CMAP = LinearSegmentedColormap.from_list(
+    "pft_time_blue", [(0.0, 0.0, 0.0), (0.0, 0.25, 1.0)]
+)
+
+
+def _display(
+    hwc: np.ndarray,
+    *,
+    dataset: str,
+    already_normalized: bool = False,
+) -> tuple[np.ndarray, str | LinearSegmentedColormap | None]:
+    """Prepare one image for the HTML/PNG input-readiness preview.
+
+    The returned image is display-normalized only. The stored raw and filtered
+    arrays are not modified. For ``2d_time``, the single HADA channel is shown
+    with a black-to-blue fluorescence map. For ``2d_wga_dapi``, channel 0 is
+    displayed as DAPI/blue and channel 1 as WGA/green.
+    """
     image = hwc if already_normalized else normalize_image01(hwc, "percentile")
+
+    if dataset == "2d_time":
+        if image.shape[-1] != 1:
+            raise ValueError(
+                f"2d_time preview expects one channel, received shape {image.shape}"
+            )
+        return image[..., 0], _TIME_BLUE_CMAP
+
     if image.shape[-1] == 1:
-        return image[..., 0]
+        return image[..., 0], "gray"
     if image.shape[-1] == 2:
-        return np.stack(
+        rgb = np.stack(
             [np.zeros_like(image[..., 0]), image[..., 1], image[..., 0]], axis=-1
         )
-    return image[..., :3]
+        return rgb, None
+    return image[..., :3], None
 
 
 def _save_preview(
@@ -195,22 +224,38 @@ def _save_preview(
 ) -> Path:
     normalized_input = normalize_image01(filtered_frame, "percentile")
     figure, axes = plt.subplots(1, 4, figsize=(16, 4.3), dpi=160)
-    panels: list[tuple[str, np.ndarray, str | None]] = [
-        ("Raw image\n(display normalization only)", _display(raw_frame), None),
-        (
-            "Stored local-threshold input\n(raw intensity values, display normalized)",
-            _display(filtered_frame),
-            None,
-        ),
-        (
-            "Exact tensor passed to U-Net\nP1-P99.8 per channel, [0,1]",
-            _display(normalized_input, already_normalized=True),
-            None,
-        ),
-        ("Hand-labelled binary foreground mask", mask, "gray"),
+
+    raw_display, raw_cmap = _display(raw_frame, dataset=dataset)
+    filtered_display, filtered_cmap = _display(filtered_frame, dataset=dataset)
+    normalized_display, normalized_cmap = _display(
+        normalized_input, dataset=dataset, already_normalized=True
+    )
+
+    if dataset == "2d_time":
+        raw_title = "Raw HADA image\noriginal values; blue display only"
+        filtered_title = (
+            "Local-threshold filtered HADA\noriginal values; blue display only"
+        )
+        normalized_title = (
+            "Normalized U-Net input\nP1-P99.8 → [0,1]; blue display only"
+        )
+    else:
+        raw_title = "Raw image\nDAPI blue + WGA green; display only"
+        filtered_title = (
+            "Local-threshold filtered image\noriginal values; display normalized"
+        )
+        normalized_title = "Normalized U-Net input\nP1-P99.8 per channel → [0,1]"
+
+    panels: list[
+        tuple[str, np.ndarray, str | LinearSegmentedColormap | None]
+    ] = [
+        (raw_title, raw_display, raw_cmap),
+        (filtered_title, filtered_display, filtered_cmap),
+        (normalized_title, normalized_display, normalized_cmap),
+        ("Reference foreground mask\npositive labels converted to foreground", mask, "gray"),
     ]
     for axis, (title, image, cmap) in zip(axes, panels):
-        axis.imshow(image, cmap=cmap)
+        axis.imshow(image, cmap=cmap, vmin=0.0, vmax=1.0)
         axis.set_title(title, fontsize=9)
         axis.axis("off")
     figure.suptitle(f"U-Net input readiness: {dataset} | {sample}")
