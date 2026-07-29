@@ -1,5 +1,6 @@
 """
 Interactively inspect one 2D U-Net inference result in napari.
+
 """
 
 from __future__ import annotations
@@ -399,7 +400,7 @@ def open_result(
         add_source_layers(
             viewer,
             dataset=dataset,
-            label="1 Raw image",
+            label="1 Raw image | original scale",
             frames=raw_frames,
             visible=True,
             metadata={"source_path": str(raw_path), "normalized": False},
@@ -419,7 +420,19 @@ def open_result(
         add_source_layers(
             viewer,
             dataset=dataset,
-            label="3 Normalized U-Net result",
+            label="3 U-Net result | original scale",
+            frames=result_frames,
+            visible=True,
+            metadata={
+                "source_path": str(result_path),
+                "normalized": False,
+                "normalization": "none",
+            },
+        )
+        add_source_layers(
+            viewer,
+            dataset=dataset,
+            label="4 Normalized U-Net result",
             frames=normalized_result,
             visible=True,
             metadata={
@@ -454,7 +467,7 @@ def open_result(
             ("Raw image | original scale", raw_frames, raw_path, False, False),
             ("Filtered input | original scale", filtered_frames, filtered_path, False, False),
             ("Filtered input | normalized", normalized_input, filtered_path, True, True),
-            ("U-Net result | original scale", result_frames, result_path, False, False),
+            ("U-Net result | original scale", result_frames, result_path, False, True),
             ("U-Net result | normalized", normalized_result, result_path, True, True),
         ):
             add_source_layers(
@@ -483,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Open one completed 2D U-Net inference result and compare the raw image, "
-            "normalized network input, and normalized saved foreground-filtered image."
+            "normalized network input, original-scale saved result, and normalized result."
         )
     )
     parser.add_argument("--dataset", choices=DATASETS)
@@ -507,8 +520,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=VIEWS,
         default="comparison",
         help=(
-            "comparison: raw, normalized U-Net input, normalized U-Net result; "
-            "all: add original-scale inputs, probability, and mask; "
+            "comparison: raw, normalized U-Net input, original-scale U-Net result, "
+            "and normalized U-Net result; all: add original-scale inputs, probability, and mask; "
             "result: saved result only."
         ),
     )
