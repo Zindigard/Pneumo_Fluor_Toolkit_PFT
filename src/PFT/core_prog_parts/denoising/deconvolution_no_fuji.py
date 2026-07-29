@@ -1,207 +1,395 @@
+"""
+Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
+
+The selected input pyramid level is deconvolved channel by channel and written
+as level 0 of a new multiscale OME-Zarr. Numeric fluorescence values are saved
+as raw ``float32`` Richardson-Lucy output. No 0-1 normalization is applied to
+the stored arrays. Display normalization is used only in PNG quality-control
+figures.
+"""
+
 from __future__ import annotations
 
+import csv
+import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Mapping, Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tiff
 import zarr
 from skimage.restoration import richardson_lucy
 
 from PFT.core_prog_parts.common_paths import find_project_root
-from PFT.core_prog_parts.decoder_omezar import (
-    extract_ome_zarr_meta_for_compare,
+from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
+from PFT.core_prog_parts.denoising.metadata_3d import (
+    coordinate_scale_for_level,
+    copyable_root_metadata,
+    resolve_channel_optics,
+)
+from PFT.core_prog_parts.denoising.validation_3d import (
+    check_3d_sample,
+    write_readiness_report,
+)
+from PFT.core_prog_parts.denoising.psf_creator import (
+    PSFJob,
+    plan_psf_jobs_for_image,
+    validate_psf_for_job,
 )
 
 PSFModel = Literal["BW", "GL", "RW"]
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (5, 10, 15, 20, 25, 30, 35)
 
-"""
-Richardson-Lucy deconvolution on OME-Zarr using scikit-image.
-"""
 
-DEFAULT_CHANNEL_WAVELENGTH_NM = {
-    "TV1-T1-SR": 405.0,
-    "TV1-T2-SR": 488.0,
-    "TV1-T3-SR": 561.0,
-}
+@dataclass(frozen=True)
+class VolumeStats:
+    """Descriptive statistics for one channel volume."""
+
+    stage: str
+    channel_index: int
+    channel_name: str
+    dtype: str
+    voxel_count: int
+    finite_fraction: float
+    minimum: float
+    maximum: float
+    mean: float
+    standard_deviation: float
+    sum: float
+    negative_voxels: int
+    zero_voxels: int
 
 
 @dataclass(frozen=True)
 class SkimageDeconvRunInfo:
+    """Paths and parameters of one completed deconvolution run."""
+
     in_zarr: Path
     out_zarr: Path
     out_dir: Path
     model: PSFModel
     iters: int
     background: float
-    level: int
+    input_level: int
+    pyramid_max_layer: int
     out_dtype: str
     clip: bool
     filter_epsilon: float | None
+    report_txt: Path
+    report_json: Path
+    stats_csv: Path
+    preview_dir: Path
+    preflight_report: Path
 
 
 def _dataset_path_for_level(zarr_dir: Path, level: int) -> str:
-    """Return NGFF dataset path for a given pyramid level."""
-    root = zarr.open_group(str(zarr_dir), mode="r")
-    ms = root.attrs.get("multiscales")
-
-    if not ms or not isinstance(ms, list) or not ms[0].get("datasets"):
-        if level != 0:
-            raise ValueError("No multiscales found; only level=0 is available for this OME-Zarr.")
-        return "0"
-
-    ds = ms[0]["datasets"]
-    levels = list(range(len(ds)))
-    if level not in levels:
-        raise ValueError(f"Invalid level={level}. Available levels: {levels}")
-
-    path = ds[level].get("path")
-    if not isinstance(path, str) or not path:
-        raise ValueError(f"Invalid dataset path for level={level}: {path!r}")
-    return path
-
-
-def _psf_path_for(
-    *,
-    model: PSFModel,
-    channel_name: str,
-    wavelength_nm: float,
-    level: int,
-    project_root: Path,
-) -> Path:
-    """
-    Expected PSF naming convention:
-      psf_<MODEL>_<CHANNEL>_Lambda<NNN>nm__L<level>.tif
-    """
-    psf_dir = project_root / "results" / "psf" / "generated"
-    return psf_dir / f"psf_{model}_{channel_name}_Lambda{int(round(wavelength_nm))}nm__L{int(level)}.tif"
-
-
-def _ensure_empty_dir(p: Path) -> None:
-    """Remove and recreate a directory."""
-    if p.exists():
-        shutil.rmtree(p)
-    p.mkdir(parents=True, exist_ok=True)
-
-
-def _normalize_psf(psf: np.ndarray) -> np.ndarray:
-    """
-    Make PSF valid for Richardson-Lucy:
-    - float32
-    - finite
-    - non-negative
-    - sum == 1
-    """
-    psf = np.asarray(psf, dtype=np.float32)
-
-    if psf.ndim != 3:
-        raise ValueError(f"PSF must be 3D (Z,Y,X). Got shape={psf.shape}")
-
-    if not np.isfinite(psf).all():
-        raise ValueError("PSF contains NaN or Inf values.")
-
-    psf = np.maximum(psf, 0.0)
-    s = float(psf.sum())
-    if s <= 0:
-        raise ValueError("PSF sum <= 0 after clipping negatives.")
-
-    return psf / s
+    meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
+    return str(meta["array_path"])
 
 
 def _prepare_image_for_rl(image_zyx: np.ndarray, background: float) -> np.ndarray:
-    """
-    Prepare image for Richardson-Lucy:
-    - convert to float32
-    - subtract constant background
-    - clamp to non-negative
-    """
-    img = np.asarray(image_zyx, dtype=np.float32)
-
-    if img.ndim != 3:
-        raise ValueError(f"Image must be 3D (Z,Y,X). Got shape={img.shape}")
-
-    if not np.isfinite(img).all():
-        raise ValueError("Image contains NaN or Inf values.")
-
-    img = img - np.float32(background)
-    img = np.maximum(img, 0.0)
-    return img
+    """Convert to finite non-negative float32 values without normalization."""
+    image = np.asarray(image_zyx, dtype=np.float32)
+    if image.ndim != 3:
+        raise ValueError(f"Richardson-Lucy input must be ZYX, got {image.shape}")
+    if not np.isfinite(image).all():
+        raise ValueError("Input volume contains NaN or infinite values")
+    image = image - np.float32(background)
+    return np.maximum(image, np.float32(0.0))
 
 
-def _create_output_omezarr_single_scale_like_input(
+def _load_normalized_psf(job: PSFJob) -> np.ndarray:
+    validation = validate_psf_for_job(job)
+    if not validation.suitable:
+        raise ValueError(
+            f"PSF is missing or incompatible with the selected image: {job.out_tif}\n"
+            + "\n".join(f"- {issue}" for issue in validation.issues)
+        )
+    psf = np.asarray(tiff.imread(str(job.out_tif)), dtype=np.float32)
+    # The validator already requires sum=1. This division corrects only tiny
+    # floating-point drift, not an unsuitable PSF.
+    psf /= np.float32(psf.sum(dtype=np.float64))
+    return psf
+
+
+def _volume_stats(stage: str, channel_index: int, channel_name: str, array: np.ndarray) -> VolumeStats:
+    values = np.asarray(array)
+    finite = np.isfinite(values)
+    finite_values = values[finite]
+    if finite_values.size == 0:
+        raise ValueError(f"{stage} channel {channel_name} contains no finite voxels")
+    return VolumeStats(
+        stage=stage,
+        channel_index=channel_index,
+        channel_name=channel_name,
+        dtype=str(values.dtype),
+        voxel_count=int(values.size),
+        finite_fraction=float(finite.mean()),
+        minimum=float(finite_values.min()),
+        maximum=float(finite_values.max()),
+        mean=float(finite_values.mean(dtype=np.float64)),
+        standard_deviation=float(finite_values.std(dtype=np.float64)),
+        sum=float(finite_values.sum(dtype=np.float64)),
+        negative_voxels=int(np.count_nonzero(finite_values < 0)),
+        zero_voxels=int(np.count_nonzero(finite_values == 0)),
+    )
+
+
+def _downsample_yx_mean(array_zyx: np.ndarray, factor: int = 2) -> np.ndarray:
+    """Mean-pool only Y and X while preserving all Z slices."""
+    z_size, y_size, x_size = array_zyx.shape
+    y_trim = y_size - y_size % factor
+    x_trim = x_size - x_size % factor
+    if y_trim < factor or x_trim < factor:
+        raise ValueError(f"Cannot downsample spatial shape {(y_size, x_size)} by {factor}")
+    cropped = array_zyx[:, :y_trim, :x_trim]
+    return cropped.reshape(z_size, y_trim // factor, factor, x_trim // factor, factor).mean(axis=(2, 4), dtype=np.float32)
+
+
+def _axes_descriptors(axes: str) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    for axis in axes:
+        item = {"name": axis, "type": "channel" if axis == "c" else "space"}
+        if axis in "zyx":
+            item["unit"] = "micrometer"
+        output.append(item)
+    return output
+
+
+def _create_output_store(
     *,
     out_zarr: Path,
-    in_meta: dict,
     shape_czyx: tuple[int, int, int, int],
-    dtype: np.dtype,
-    chunks_czyx: tuple[int, int, int, int] | None,
-) -> zarr.Array:
-    """
-    Create output OME-Zarr as single-scale dataset '0',
-    preserving basic metadata from the input.
-    """
+    chunks_czyx: tuple[int, int, int, int],
+    base_scale: Sequence[float],
+    pyramid_max_layer: int,
+    source_attrs: Mapping[str, Any],
+    processing: Mapping[str, Any],
+) -> tuple[zarr.Group, list[zarr.Array]]:
     if out_zarr.exists():
         shutil.rmtree(out_zarr)
     out_zarr.parent.mkdir(parents=True, exist_ok=True)
-
     root = zarr.open_group(str(out_zarr), mode="w")
-
-    chunks = chunks_czyx or (1, 1, 256, 256)
-    arr0 = root.create_dataset(
-        "0",
-        shape=shape_czyx,
-        chunks=chunks,
-        dtype=dtype,
-        overwrite=True,
-    )
-
-    axes = str(in_meta.get("axes") or "czyx").lower()
-    voxel = in_meta.get("voxel_size_um") or {"x": 1.0, "y": 1.0, "z": 1.0}
-
-    scale_map = {
-        "c": 1.0,
-        "z": float(voxel.get("z") or 1.0),
-        "y": float(voxel.get("y") or 1.0),
-        "x": float(voxel.get("x") or 1.0),
-    }
-    scale_vec = [scale_map.get(a, 1.0) for a in axes]
-
+    c_size, z_size, y_size, x_size = shape_czyx
+    arrays: list[zarr.Array] = []
+    datasets: list[dict[str, Any]] = []
+    for level in range(pyramid_max_layer + 1):
+        factor = 2**level
+        shape = (c_size, z_size, max(1, y_size // factor), max(1, x_size // factor))
+        chunks = (
+            min(chunks_czyx[0], shape[0]),
+            min(chunks_czyx[1], shape[1]),
+            min(chunks_czyx[2], shape[2]),
+            min(chunks_czyx[3], shape[3]),
+        )
+        arrays.append(root.create_dataset(str(level), shape=shape, chunks=chunks, dtype=np.float32, overwrite=True))
+        level_scale = [
+            float(value) * factor if axis in "yx" else float(value)
+            for axis, value in zip("czyx", base_scale)
+        ]
+        datasets.append({
+            "path": str(level),
+            "coordinateTransformations": [{"type": "scale", "scale": level_scale}],
+        })
     root.attrs["multiscales"] = [{
         "version": "0.4",
         "name": "image",
-        "datasets": [{
-            "path": "0",
-            "coordinateTransformations": [{"type": "scale", "scale": scale_vec}],
-        }],
-        "axes": [{"name": a, "type": ("channel" if a == "c" else "space")} for a in axes],
+        "axes": _axes_descriptors("czyx"),
+        "datasets": datasets,
     }]
+    for key, value in source_attrs.items():
+        root.attrs[key] = value
+    root.attrs["pft_axes"] = "czyx"
+    root.attrs["pft_level0_shape"] = list(shape_czyx)
+    root.attrs["pft_level0_dtype"] = "float32"
+    root.attrs["pft_multiscale_enabled"] = pyramid_max_layer > 0
+    root.attrs["pft_pyramid_max_layer"] = int(pyramid_max_layer)
+    root.attrs["pft_pyramid_downscale"] = 2
+    root.attrs["pft_processing"] = dict(processing)
+    return root, arrays
 
-    if in_meta.get("channel_names") is not None:
-        root.attrs["channel_names"] = in_meta["channel_names"]
 
-    if in_meta.get("source_path") is not None:
-        root.attrs["source_path"] = in_meta["source_path"]
+def _robust_limits(reference: np.ndarray) -> tuple[float, float]:
+    values = np.asarray(reference, dtype=np.float32)
+    low, high = np.percentile(values[np.isfinite(values)], (1.0, 99.8))
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        low, high = float(np.nanmin(values)), float(np.nanmax(values))
+    if high <= low:
+        high = low + 1.0
+    return float(low), float(high)
 
-    root.attrs["pft_deconvolution_method"] = "skimage_richardson_lucy"
 
-    return arr0
+def _rgb_composite(cyx: np.ndarray, limits: Sequence[tuple[float, float]]) -> np.ndarray:
+    c_size, y_size, x_size = cyx.shape
+    output = np.zeros((y_size, x_size, 3), dtype=np.float32)
+    # PFT convention: channel 0 blue, channel 1 green, channel 2 red.
+    destinations = (2, 1, 0)
+    for channel in range(min(c_size, 3)):
+        low, high = limits[channel]
+        output[..., destinations[channel]] = np.clip((cyx[channel] - low) / (high - low), 0.0, 1.0)
+    return output
 
 
-def _print_omezarr_meta(title: str, zarr_dir: Path, *, level: int) -> None:
-    """Print compact OME-Zarr metadata for debugging."""
-    meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
-    print(f"\n[{title}] OME-Zarr meta")
-    print(f"  path         : {zarr_dir}")
-    print(f"  level        : {level}")
-    print(f"  array_path   : {meta.get('array_path')}")
-    print(f"  stored shape : {meta.get('shape')}")
-    print(f"  stored dtype : {meta.get('dtype')}")
-    print(f"  stored chunks: {meta.get('chunks')}")
-    print(f"  axes         : {meta.get('axes')}")
-    print(f"  voxel_size_um: {meta.get('voxel_size_um')}")
-    print(f"  channel_names: {meta.get('channel_names')}")
+def save_selected_slice_qc(
+    *,
+    original_zarr: Path,
+    original_level: int,
+    deconvolved_zarr: Path,
+    output_dir: Path,
+    slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
+) -> list[Path]:
+    """Save original, deconvolved, signed-difference, and absolute-difference panels.
+
+    Numeric values are never changed in the OME-Zarr files. Percentile scaling is
+    performed only for display in these PNG figures.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    raw_meta = extract_ome_zarr_meta_for_compare(original_zarr, level=original_level)
+    raw_root = zarr.open_group(str(original_zarr), mode="r")
+    raw = raw_root[str(raw_meta["array_path"])]
+    dec_root = zarr.open_group(str(deconvolved_zarr), mode="r")
+    dec = dec_root["0"]
+    if raw.shape != dec.shape:
+        raise ValueError(f"QC shape mismatch: original={raw.shape}, deconvolved={dec.shape}")
+    c_size, z_size, _, _ = raw.shape
+    saved: list[Path] = []
+    channel_names = raw_meta.get("channel_names") or [f"channel {index}" for index in range(c_size)]
+
+    for slice_number in slices_1based:
+        z_index = slice_number - 1
+        if not 0 <= z_index < z_size:
+            continue
+        raw_cyx = np.asarray(raw[:, z_index], dtype=np.float32)
+        dec_cyx = np.asarray(dec[:, z_index], dtype=np.float32)
+        signed = dec_cyx - raw_cyx
+        absolute = np.abs(signed)
+        limits = [_robust_limits(raw_cyx[channel]) for channel in range(c_size)]
+
+        rows = c_size + 1
+        figure, axes = plt.subplots(rows, 4, figsize=(16, 3.6 * rows), constrained_layout=True)
+        if rows == 1:
+            axes = axes[None, :]
+
+        raw_rgb = _rgb_composite(raw_cyx, limits)
+        dec_rgb = _rgb_composite(dec_cyx, limits)
+        signed_mean = signed.mean(axis=0)
+        absolute_mean = absolute.mean(axis=0)
+        signed_limit = float(np.percentile(np.abs(signed_mean), 99.5)) or 1.0
+        axes[0, 0].imshow(raw_rgb)
+        axes[0, 1].imshow(dec_rgb)
+        image = axes[0, 2].imshow(signed_mean, cmap="coolwarm", vmin=-signed_limit, vmax=signed_limit)
+        figure.colorbar(image, ax=axes[0, 2], fraction=0.046)
+        image = axes[0, 3].imshow(absolute_mean, cmap="magma")
+        figure.colorbar(image, ax=axes[0, 3], fraction=0.046)
+        axes[0, 0].set_ylabel("3-channel composite")
+
+        for channel in range(c_size):
+            row = channel + 1
+            low, high = limits[channel]
+            channel_signed_limit = float(np.percentile(np.abs(signed[channel]), 99.5)) or 1.0
+            axes[row, 0].imshow(raw_cyx[channel], cmap="gray", vmin=low, vmax=high)
+            axes[row, 1].imshow(dec_cyx[channel], cmap="gray", vmin=low, vmax=high)
+            image = axes[row, 2].imshow(signed[channel], cmap="coolwarm", vmin=-channel_signed_limit, vmax=channel_signed_limit)
+            figure.colorbar(image, ax=axes[row, 2], fraction=0.046)
+            image = axes[row, 3].imshow(absolute[channel], cmap="magma")
+            figure.colorbar(image, ax=axes[row, 3], fraction=0.046)
+            axes[row, 0].set_ylabel(str(channel_names[channel]))
+
+        for column, title in enumerate(("Original", "Deconvolved", "Signed difference", "Absolute difference")):
+            axes[0, column].set_title(title)
+        for axis in axes.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
+        figure.suptitle(f"Z{slice_number:03d}: original vs Richardson-Lucy output")
+        output = output_dir / f"z{slice_number:03d}__original_deconvolved_difference.png"
+        figure.savefig(output, dpi=160)
+        plt.close(figure)
+        saved.append(output)
+    return saved
+
+
+def _write_reports(
+    *,
+    run_info: Mapping[str, Any],
+    stats: Sequence[VolumeStats],
+    output_dir: Path,
+) -> tuple[Path, Path, Path]:
+    stats_csv = output_dir / "deconvolution_channel_statistics.csv"
+    with stats_csv.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(asdict(stats[0]).keys()))
+        writer.writeheader()
+        writer.writerows(asdict(item) for item in stats)
+
+    by_channel: dict[int, dict[str, VolumeStats]] = {}
+    for item in stats:
+        by_channel.setdefault(item.channel_index, {})[item.stage] = item
+    checks: list[dict[str, Any]] = []
+    for channel, stages in sorted(by_channel.items()):
+        before = stages["input"]
+        after = stages["deconvolved"]
+        checks.append({
+            "channel_index": channel,
+            "channel_name": before.channel_name,
+            "shape_and_voxel_count_preserved": before.voxel_count == after.voxel_count,
+            "output_finite": after.finite_fraction == 1.0,
+            "output_nonnegative": after.negative_voxels == 0,
+            "stored_output_not_01_normalized": not (after.minimum >= 0.0 and after.maximum <= 1.0 and before.maximum > 1.0),
+            "input_sum": before.sum,
+            "output_sum": after.sum,
+            "sum_ratio_output_to_input": after.sum / before.sum if before.sum else None,
+            "input_min_max": [before.minimum, before.maximum],
+            "output_min_max": [after.minimum, after.maximum],
+        })
+
+    report_data = {
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "run": dict(run_info),
+        "checks": checks,
+        "statistics": [asdict(item) for item in stats],
+    }
+    report_json = output_dir / "deconvolution_validation.json"
+    report_json.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
+    passed = all(
+        check["shape_and_voxel_count_preserved"]
+        and check["output_finite"]
+        and check["output_nonnegative"]
+        and check["stored_output_not_01_normalized"]
+        for check in checks
+    )
+    lines = [
+        "PFT 3D Richardson-Lucy validation report",
+        "=" * 80,
+        f"Status: {'PASS' if passed else 'FAIL'}",
+        f"Generated (UTC): {report_data['generated_utc']}",
+        f"Input OME-Zarr: {run_info['input_omezarr']}",
+        f"Output OME-Zarr: {run_info['output_omezarr']}",
+        f"Input level: {run_info['input_level']}",
+        f"PSF model: {run_info['psf_model']}",
+        f"Iterations: {run_info['iterations']}",
+        "Stored numeric normalization: NONE",
+        "Stored dtype: float32",
+        "",
+    ]
+    for check in checks:
+        lines.extend([
+            f"Channel {check['channel_index']} ({check['channel_name']}):",
+            f"  finite: {check['output_finite']}",
+            f"  non-negative: {check['output_nonnegative']}",
+            f"  not accidentally normalized to 0-1: {check['stored_output_not_01_normalized']}",
+            f"  sum ratio output/input: {check['sum_ratio_output_to_input']}",
+            f"  input min/max: {check['input_min_max']}",
+            f"  output min/max: {check['output_min_max']}",
+            "",
+        ])
+    report_txt = output_dir / "deconvolution_validation.txt"
+    report_txt.write_text("\n".join(lines), encoding="utf-8")
+    if not passed:
+        raise ValueError(f"Deconvolution output failed validation. See {report_txt}")
+    return report_txt, report_json, stats_csv
 
 
 def deconvolve_omezarr_3ch_to_omezarr_skimage(
@@ -209,200 +397,213 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     in_omezarr: Path,
     out_root: Path,
     model: PSFModel = "BW",
-    iters: int = 15,
+    iters: int = 5,
     background: float = 0.0,
     level: int = 0,
-    channel_wavelength_nm: dict[str, float] | None = None,
+    channel_wavelength_nm: Mapping[str, float] | None = None,
     overwrite: bool = True,
     clip: bool = False,
     filter_epsilon: float | None = None,
+    pyramid_max_layer: int = 2,
+    preview_slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
 ) -> SkimageDeconvRunInfo:
+    """Run channel-wise 3D Richardson-Lucy and save a validated multiscale output.
+
+    ``clip`` must remain ``False`` for raw fluorescence values. The selected input
+    level becomes level 0 of the derived OME-Zarr, and its physical voxel size is
+    retained. Additional output levels are generated by lateral mean pooling.
     """
-    Run scikit-image Richardson-Lucy deconvolution on each channel of a 3D OME-Zarr.
-
-    Parameters
-    ----------
-    in_omezarr : Path
-        Input OME-Zarr path.
-    out_root : Path
-        Root directory where the deconvolved output folder is created.
-    model : {"BW","GL","RW"}
-        PSF model name.
-    iters : int
-        Number of RL iterations.
-    background : float
-        Constant background subtracted before deconvolution.
-    level : int
-        OME-Zarr pyramid level to read from input.
-    channel_wavelength_nm : dict[str, float] | None
-        Mapping from channel name to wavelength.
-    overwrite : bool
-        Whether to overwrite output directory.
-    clip : bool
-        Passed to skimage.restoration.richardson_lucy.
-    filter_epsilon : float | None
-        Small stability parameter passed to skimage RL.
-
-    Returns
-    -------
-    SkimageDeconvRunInfo
-        Metadata about the completed run.
-    """
-    in_omezarr = Path(in_omezarr)
-    out_root = Path(out_root)
-    channel_wavelength_nm = channel_wavelength_nm or dict(DEFAULT_CHANNEL_WAVELENGTH_NM)
-
+    in_omezarr = Path(in_omezarr).resolve()
+    out_root = Path(out_root).resolve()
     if iters < 1:
-        raise ValueError(f"`iters` must be >= 1. Got {iters}")
-
-    project_root = find_project_root(Path(__file__).resolve())
-
-    _print_omezarr_meta("INPUT", in_omezarr, level=level)
-
-    dataset_path = _dataset_path_for_level(in_omezarr, level)
-    root_in = zarr.open_group(str(in_omezarr), mode="r")
-    arr_in = root_in[dataset_path]
-
-    print(f"\n[INPUT] raw dataset")
-    print(f"  dataset_path: {dataset_path}")
-    print(f"  shape       : {arr_in.shape}")
-    print(f"  dtype       : {arr_in.dtype}")
-
-    if arr_in.ndim != 4:
-        raise ValueError(
-            f"Expected dataset '{dataset_path}' to be 4D (C,Z,Y,X) at level={level}. Got shape={arr_in.shape}"
-        )
-
-    c, z, y, x = arr_in.shape
+        raise ValueError("iters must be at least 1")
+    if clip:
+        raise ValueError("clip=True is prohibited because it would clip raw fluorescence intensities to [-1, 1]")
+    if background < 0:
+        raise ValueError("background must be non-negative")
+    if pyramid_max_layer < 0:
+        raise ValueError("pyramid_max_layer must be non-negative")
 
     meta = extract_ome_zarr_meta_for_compare(in_omezarr, level=level)
-    channel_names = meta.get("channel_names") or []
-    if not isinstance(channel_names, list) or len(channel_names) < c:
-        raise ValueError(f"Expected channel_names list length >= C. Got: {channel_names}")
+    axes = str(meta.get("axes") or "").lower()
+    if axes != "czyx":
+        raise ValueError(f"Expected CZYX input, got axes={axes!r}")
+    root_in = zarr.open_group(str(in_omezarr), mode="r")
+    array_in = root_in[str(meta["array_path"])]
+    if array_in.ndim != 4:
+        raise ValueError(f"Expected 4D CZYX array, got shape={array_in.shape}")
+    c_size, z_size, y_size, x_size = (int(value) for value in array_in.shape)
 
-    tag = in_omezarr.parent.name
-    out_dir = out_root / f"{tag}__SK_RL__PSF{model}__iter{iters}__L{int(level)}"
+    project_root = find_project_root(Path(__file__).resolve())
+    jobs = plan_psf_jobs_for_image(
+        project_root=project_root,
+        zarr_dir=in_omezarr,
+        level=level,
+        models=(model,),
+        channel_wavelength_nm=channel_wavelength_nm,
+    )
+    jobs_by_index = {job.channel_index: job for job in jobs}
+    optics = resolve_channel_optics(
+        in_omezarr,
+        level=level,
+        explicit_wavelength_nm=channel_wavelength_nm,
+    )
+    if len(optics) != c_size:
+        raise ValueError(f"Resolved {len(optics)} channels for C={c_size}")
+
+    sample = in_omezarr.parent.name
+    out_dir = out_root / f"{sample}__SK_RL__PSF{model}__iter{iters}__sourceL{level}"
     out_zarr = out_dir / "image.ome.zarr"
+    if out_dir.exists() and overwrite:
+        shutil.rmtree(out_dir)
+    elif out_dir.exists():
+        raise FileExistsError(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    if overwrite:
-        _ensure_empty_dir(out_dir)
-    else:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        if out_zarr.exists():
-            raise FileExistsError(out_zarr)
+    preflight = check_3d_sample(
+        in_omezarr,
+        level=level,
+        require_masks=False,
+    )
+    preflight_report, _ = write_readiness_report(preflight, out_dir / "preflight")
+    if not preflight.passed:
+        raise ValueError(f"Input OME-Zarr failed pre-deconvolution checks: {preflight_report}")
 
-    chunks_in = getattr(arr_in, "chunks", None)
-    chunks_czyx = tuple(chunks_in) if chunks_in and len(chunks_in) == 4 else None
-
-    arr_out = _create_output_omezarr_single_scale_like_input(
+    source_attrs = copyable_root_metadata(in_omezarr)
+    base_scale = coordinate_scale_for_level(in_omezarr, level=level)
+    chunks_in = tuple(int(value) for value in (array_in.chunks or (1, 1, 256, 256)))
+    processing = {
+        "operation": "3d_richardson_lucy_deconvolution",
+        "software": "skimage.restoration.richardson_lucy",
+        "source_omezarr": str(in_omezarr),
+        "source_level": int(level),
+        "source_array_path": str(meta["array_path"]),
+        "psf_model": model,
+        "iterations": int(iters),
+        "background_subtracted": float(background),
+        "clip": False,
+        "filter_epsilon": filter_epsilon,
+        "stored_dtype": "float32",
+        "normalization_applied_to_stored_intensities": False,
+        "output_level0_represents_source_level": int(level),
+        "channel_wavelengths": [asdict(item) for item in optics],
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    _, output_arrays = _create_output_store(
         out_zarr=out_zarr,
-        in_meta=meta,
-        shape_czyx=(c, z, y, x),
-        dtype=np.dtype(np.float32),
-        chunks_czyx=chunks_czyx,
+        shape_czyx=(c_size, z_size, y_size, x_size),
+        chunks_czyx=chunks_in,
+        base_scale=base_scale,
+        pyramid_max_layer=pyramid_max_layer,
+        source_attrs=source_attrs,
+        processing=processing,
     )
 
-    print(f"\n[OUTPUT] created output OME-Zarr (float32)")
-    print(f"  out_dir : {out_dir}")
-    print(f"  out_zarr: {out_zarr}")
-    print(f"  out dataset '0' shape: {arr_out.shape} dtype: {arr_out.dtype}")
-
-    for ch_idx in range(c):
-        ch_name = str(channel_names[ch_idx])
-        if ch_name not in channel_wavelength_nm:
-            raise KeyError(
-                f"No wavelength mapping for channel '{ch_name}'. Provide channel_wavelength_nm mapping.\n"
-                f"Known keys: {sorted(channel_wavelength_nm.keys())}"
-            )
-
-        lam = float(channel_wavelength_nm[ch_name])
-        psf_path = _psf_path_for(
-            model=model,
-            channel_name=ch_name,
-            wavelength_nm=lam,
-            level=level,
-            project_root=project_root,
+    statistics: list[VolumeStats] = []
+    for channel_index in range(c_size):
+        channel_name = optics[channel_index].name
+        job = jobs_by_index[channel_index]
+        psf = _load_normalized_psf(job)
+        volume_raw = np.asarray(array_in[channel_index], dtype=np.float32)
+        prepared = _prepare_image_for_rl(volume_raw, background=background)
+        statistics.append(_volume_stats("input", channel_index, channel_name, prepared))
+        if any(psf_size > image_size for psf_size, image_size in zip(psf.shape, prepared.shape)):
+            raise ValueError(f"PSF {psf.shape} is larger than channel volume {prepared.shape}")
+        print(f"[DECONV] channel {channel_index}: {channel_name}; wavelength={optics[channel_index].wavelength_nm:g} nm")
+        print(f"         input={prepared.shape} {prepared.dtype}; PSF={psf.shape}; iterations={iters}")
+        deconvolved = np.asarray(
+            richardson_lucy(
+                image=prepared,
+                psf=psf,
+                num_iter=int(iters),
+                clip=False,
+                filter_epsilon=filter_epsilon,
+            ),
+            dtype=np.float32,
         )
-        if not psf_path.exists():
-            raise FileNotFoundError(
-                f"PSF not found: {psf_path}\n"
-                f"Generate it first for model={model}, channel={ch_name}, lambda={lam}, level={level}."
-            )
+        if deconvolved.shape != prepared.shape:
+            raise ValueError(f"Output shape mismatch: {deconvolved.shape} vs {prepared.shape}")
+        statistics.append(_volume_stats("deconvolved", channel_index, channel_name, deconvolved))
+        output_arrays[0][channel_index] = np.ascontiguousarray(deconvolved)
+        level_data = deconvolved
+        for output_level in range(1, pyramid_max_layer + 1):
+            level_data = _downsample_yx_mean(level_data, factor=2)
+            expected_shape = output_arrays[output_level].shape[1:]
+            # Odd dimensions are trimmed by mean pooling; output arrays follow the same floor rule.
+            if level_data.shape != expected_shape:
+                level_data = level_data[:, : expected_shape[1], : expected_shape[2]]
+            output_arrays[output_level][channel_index] = np.ascontiguousarray(level_data, dtype=np.float32)
 
-        vol_zyx = np.asarray(arr_in[ch_idx, :, :, :])
-        vol_zyx_f = _prepare_image_for_rl(vol_zyx, background=background)
+    # Reopen from disk before validation so reports describe stored values.
+    stored_root = zarr.open_group(str(out_zarr), mode="r")
+    stored_level0 = stored_root["0"]
+    stored_stats: list[VolumeStats] = []
+    for channel_index in range(c_size):
+        stored = np.asarray(stored_level0[channel_index], dtype=np.float32)
+        stored_stats.append(_volume_stats("stored_deconvolved", channel_index, optics[channel_index].name, stored))
+        reference = next(item for item in statistics if item.stage == "deconvolved" and item.channel_index == channel_index)
+        if not np.allclose(
+            [reference.minimum, reference.maximum, reference.mean, reference.sum],
+            [stored_stats[-1].minimum, stored_stats[-1].maximum, stored_stats[-1].mean, stored_stats[-1].sum],
+            rtol=1e-5,
+            atol=1e-6,
+        ):
+            raise ValueError(f"Stored-value check failed for channel {channel_index}")
 
-        psf_zyx = tiff.imread(str(psf_path))
-        psf_zyx_f = _normalize_psf(psf_zyx)
+    preview_dir = out_dir / "qc_training_slices"
+    save_selected_slice_qc(
+        original_zarr=in_omezarr,
+        original_level=level,
+        deconvolved_zarr=out_zarr,
+        output_dir=preview_dir,
+        slices_1based=preview_slices_1based,
+    )
 
-        print(f"\n[CHANNEL {ch_idx}] {ch_name}")
-        print(
-            f"  input vol shape: {vol_zyx.shape} dtype={vol_zyx.dtype} "
-            f"min={float(vol_zyx.min()):.3g} max={float(vol_zyx.max()):.3g}"
-        )
-        print(
-            f"  prepared input dtype={vol_zyx_f.dtype} "
-            f"min={float(vol_zyx_f.min()):.3g} max={float(vol_zyx_f.max()):.3g}"
-        )
-        print(
-            f"  PSF path: {psf_path}\n"
-            f"  PSF shape: {psf_zyx_f.shape} dtype={psf_zyx_f.dtype} "
-            f"sum={float(psf_zyx_f.sum()):.6f}"
-        )
-
-        if psf_zyx_f.shape != vol_zyx_f.shape and any(p > i for p, i in zip(psf_zyx_f.shape, vol_zyx_f.shape)):
-            raise ValueError(
-                f"PSF shape {psf_zyx_f.shape} is larger than image shape {vol_zyx_f.shape} "
-                f"along at least one axis."
-            )
-
-        deconv_zyx = richardson_lucy(
-            image=vol_zyx_f,
-            psf=psf_zyx_f,
-            num_iter=int(iters),
-            clip=bool(clip),
-            filter_epsilon=filter_epsilon,
-        )
-
-        deconv_zyx = np.asarray(deconv_zyx, dtype=np.float32)
-
-        print(
-            f"  RL output: shape={deconv_zyx.shape} dtype={deconv_zyx.dtype} "
-            f"min={float(deconv_zyx.min()):.3g} max={float(deconv_zyx.max()):.3g}"
-        )
-
-        if deconv_zyx.shape != (z, y, x):
-            raise ValueError(
-                f"RL output shape mismatch for channel {ch_idx}: {deconv_zyx.shape} vs {(z, y, x)}"
-            )
-
-        arr_out[ch_idx, :, :, :] = np.ascontiguousarray(deconv_zyx)
-
-        check = np.asarray(arr_out[ch_idx, :, :, :])
-        print(
-            f"  [WRITE CHECK] stored dtype={check.dtype} "
-            f"min={float(check.min()):.3g} max={float(check.max()):.3g}"
-        )
-
-    _print_omezarr_meta("OUTPUT-STORED", out_zarr, level=0)
-
+    run_data = {
+        "input_omezarr": str(in_omezarr),
+        "output_omezarr": str(out_zarr),
+        "input_level": int(level),
+        "output_level0_shape": list(stored_level0.shape),
+        "output_levels": pyramid_max_layer + 1,
+        "psf_model": model,
+        "iterations": int(iters),
+        "background": float(background),
+        "clip": False,
+        "filter_epsilon": filter_epsilon,
+        "normalization_applied_to_stored_intensities": False,
+        "metadata_preserved_for_segmentation": True,
+        "preview_slices_1based": list(preview_slices_1based),
+    }
+    report_txt, report_json, stats_csv = _write_reports(
+        run_info=run_data,
+        stats=statistics,
+        output_dir=out_dir,
+    )
     return SkimageDeconvRunInfo(
         in_zarr=in_omezarr,
         out_zarr=out_zarr,
         out_dir=out_dir,
         model=model,
-        iters=iters,
-        background=background,
-        level=int(level),
+        iters=int(iters),
+        background=float(background),
+        input_level=int(level),
+        pyramid_max_layer=int(pyramid_max_layer),
         out_dtype="float32",
-        clip=bool(clip),
+        clip=False,
         filter_epsilon=filter_epsilon,
+        report_txt=report_txt,
+        report_json=report_json,
+        stats_csv=stats_csv,
+        preview_dir=preview_dir,
+        preflight_report=preflight_report,
     )
 
 
 __all__ = [
+    "DEFAULT_TRAINING_SLICES_1BASED",
     "PSFModel",
-    "DEFAULT_CHANNEL_WAVELENGTH_NM",
     "SkimageDeconvRunInfo",
+    "VolumeStats",
     "deconvolve_omezarr_3ch_to_omezarr_skimage",
+    "save_selected_slice_qc",
 ]

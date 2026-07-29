@@ -1,136 +1,123 @@
+"""
+Create and validate metadata-matched PSFs for a 3D OME-Zarr image.
+
+The script must know where ImageJ/Fiji and PSF Generator are installed. Pass
+``--imagej-dir`` and ``--psf-creator-dir`` on a new computer. The latter can be
+a directory containing ``PSF_Generator.jar`` or the JAR file itself.
+
+Examples
+--------
+python scripts/denoising/create_psf.py --zarr D:/.../image.ome.zarr --level 2 \
+    --models BW --imagej-dir D:/Fiji.app \
+    --psf-creator-dir D:/PSFGenerator
+"""
+
 from __future__ import annotations
 
-# Configure imports for direct execution from the repository source tree.
-import sys as _pft_sys
-from pathlib import Path as _PFTPath
-
-_PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
-
-
-def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``.
-
-    The lookup is based on this script's physical location and therefore does
-    not depend on the current working directory. An explicit error is raised
-    when the expected repository layout cannot be found.
-    """
-    current = (start or _PFT_SCRIPT_FILE).resolve()
-    search_start = current if current.is_dir() else current.parent
-
-    for candidate in (search_start, *search_start.parents):
-        core_dir = candidate / "src" / "PFT" / "core_prog_parts"
-        if (candidate / "scripts").is_dir() and core_dir.is_dir():
-            return candidate
-
-    raise RuntimeError(
-        "Cannot locate the PFT repository root. Expected both "
-        "'scripts' and 'src/PFT/core_prog_parts' in the same project folder. "
-        f"Script location: {_PFT_SCRIPT_FILE}"
-    )
-
-
-_PFT_PROJECT_ROOT = _pft_project_root()
-_PFT_SRC_DIR = _PFT_PROJECT_ROOT / "src"
-
-if str(_PFT_SRC_DIR) not in _pft_sys.path:
-    _pft_sys.path.insert(0, str(_PFT_SRC_DIR))
-
-
-
-from pathlib import Path
-import sys
-
-_THIS_FILE = Path(__file__).resolve()
-
-from PFT.core_prog_parts.common_paths import find_project_root as find_repo_root
 import argparse
+import sys
 from pathlib import Path
-from typing import Tuple
-import zarr
-from PFT.core_prog_parts.denoising.psf_creator import generate_psfs_for_image
-from PFT.core_prog_parts.denoising.psf_creator import _available_levels, _prompt_level
 
-"Builds a PSF file"
+SCRIPT_FILE = Path(__file__).resolve()
 
 
-DEFAULT_PROJECT_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT")
+def _project_root() -> Path:
+    for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
+        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
+            return candidate
+    raise RuntimeError(f"Cannot locate PFT project root from {SCRIPT_FILE}")
+
+
+PROJECT_ROOT = _project_root()
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from PFT.core_prog_parts.denoising.psf_creator import (  # noqa: E402
+    _available_levels,
+    _parse_models_arg,
+    _prompt_level,
+    generate_psfs_for_image,
+)
 
 
 def _find_first_image_omezarr(root: Path) -> Path:
-    hits = sorted(root.rglob("image.ome.zarr"))
-    if not hits:
-        raise FileNotFoundError(f"No image.ome.zarr found under: {root}")
-    return hits[0]
-
-
-def _parse_models_arg(s: str) -> Tuple[str, ...]:
-    s = (s or "").strip()
-    if not s or s.lower() == "all":
-        return ("BW", "GL", "RW")
-
-    parts = [p.strip().upper() for p in s.replace(",", " ").split() if p.strip()]
-    allowed = {"BW", "GL", "RW"}
-    bad = [p for p in parts if p not in allowed]
-    if bad:
-        raise ValueError(f"Unknown model(s): {bad}. Allowed: BW, GL, RW, or 'all'")
-
-    out = []
-    for p in parts:
-        if p not in out:
-            out.append(p)
-    return tuple(out)
+    results = sorted(path for path in root.rglob("image.ome.zarr") if path.is_dir())
+    if not results:
+        raise FileNotFoundError(f"No image.ome.zarr found below {root}")
+    return results[0]
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate PSFs (BW/GL/RW) for an OME-Zarr.")
-    ap.add_argument("--zarr", default=None, help="Path to image.ome.zarr")
-    ap.add_argument("--project_root", default=str(DEFAULT_PROJECT_ROOT))
-    ap.add_argument("--models", default="all", help="all | BW | GL | RW | BW,GL")
-    ap.add_argument("--accuracy", default="Best")
-    ap.add_argument("--level", type=int, default=None, help="OME-Zarr pyramid level (interactive if omitted)")
-    ap.add_argument("--quiet", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="Generate or reuse metadata-matched, normalized 3D PSFs.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--zarr", type=Path, default=None, help="Input image.ome.zarr")
+    parser.add_argument(
+        "--root-3d",
+        type=Path,
+        default=PROJECT_ROOT / "results" / "img" / "3d_data",
+        help="Search root used when --zarr is omitted",
+    )
+    parser.add_argument("--models", default="BW", help="BW, GL, RW, or comma-separated values")
+    parser.add_argument("--accuracy", default="Best", help="PSFGenerator accuracy setting")
+    parser.add_argument("--level", type=int, default=None, help="OME-Zarr level; prompts when omitted")
+    parser.add_argument(
+        "--imagej-dir",
+        type=Path,
+        default=None,
+        help="ESSENTIAL external path: ImageJ/Fiji installation folder containing Java and jars",
+    )
+    parser.add_argument(
+        "--psf-creator-dir",
+        type=Path,
+        default=None,
+        help="ESSENTIAL external path: PSF Generator folder or PSF_Generator.jar",
+    )
+    parser.add_argument("--no-reuse", action="store_true", help="Regenerate even when a suitable PSF exists")
+    parser.add_argument("--quiet", action="store_true", help="Suppress Java output")
+    args = parser.parse_args()
 
-    args = ap.parse_args()
-
-    project_root = Path(args.project_root)
-    if not project_root.exists():
-        raise FileNotFoundError(project_root)
-
-    if args.zarr:
-        zarr_dir = Path(args.zarr)
-    else:
-        zarr_dir = _find_first_image_omezarr(project_root / "results" / "img" / "3d_data")
-
-    if not zarr_dir.exists():
+    zarr_dir = args.zarr or _find_first_image_omezarr(args.root_3d)
+    zarr_dir = zarr_dir.expanduser().resolve()
+    if not zarr_dir.is_dir():
         raise FileNotFoundError(zarr_dir)
 
-    if args.level is None:
-        levels = _available_levels(zarr_dir)
-        level = _prompt_level(levels, default=2)
-    else:
-        level = args.level
-
+    levels = _available_levels(zarr_dir)
+    level = _prompt_level(levels, default=0) if args.level is None else int(args.level)
+    if level not in levels:
+        raise ValueError(f"Level {level} is unavailable; choose from {levels}")
     models = _parse_models_arg(args.models)
 
-    print("\nPSF generation settings:")
-    print(f"  zarr   : {zarr_dir}")
-    print(f"  level  : {level}")
-    print(f"  models : {models}")
-    print(f"  accuracy: {args.accuracy}")
+    print("\nPFT 3D PSF generation")
+    print("=" * 72)
+    print(f"OME-Zarr:          {zarr_dir}")
+    print(f"Pyramid level:     {level}")
+    print(f"Models:            {', '.join(models)}")
+    print(f"ImageJ/Fiji:       {args.imagej_dir or 'project-managed default'}")
+    print(f"PSF Generator:     {args.psf_creator_dir or 'ImageJ plugins/default'}")
+    print("Existing PSF use:  validate and reuse" if not args.no_reuse else "Existing PSF use:  regenerate")
 
     outputs = generate_psfs_for_image(
         zarr_dir=zarr_dir,
-        start_path=Path(__file__),
+        start_path=SCRIPT_FILE,
         level=level,
         models=models,
         accuracy=args.accuracy,
         quiet=args.quiet,
+        imagej_dir=args.imagej_dir,
+        psf_creator_dir=args.psf_creator_dir,
+        reuse_existing=not args.no_reuse,
     )
 
-    print("\nGenerated PSFs:")
-    for (model, ch, lvl), p in outputs.items():
-        print(f"  L{lvl} | {model} | {ch} -> {p}")
-
+    print("\nValidated PSFs")
+    for (model, channel, selected_level), path in sorted(outputs.items()):
+        print(f"  L{selected_level} | {model} | {channel} -> {path}")
+    report_path = (
+        PROJECT_ROOT / "results" / "psf" /
+        f"psf_generation_report__{zarr_dir.parent.name}__L{level}.txt"
+    )
+    print(f"\nAudit report: {report_path}")
     return 0
 
 
