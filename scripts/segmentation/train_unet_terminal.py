@@ -1,4 +1,4 @@
-"""Train the 2D U-Net from terminal prompts or argparse."""
+"""Train the thesis-aligned 2D U-Net from terminal prompts or argparse."""
 
 from __future__ import annotations
 
@@ -58,6 +58,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--base-filters", type=int, default=16)
     parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument(
+        "--foreground-patch-fraction",
+        type=float,
+        default=0.75,
+        help="Requested fraction of positive/mask-containing training patches.",
+    )
+    parser.add_argument(
+        "--foreground-min-ratio",
+        type=float,
+        default=0.01,
+        help="Minimum labelled foreground fraction in a positive patch.",
+    )
+    parser.add_argument(
+        "--background-max-ratio",
+        type=float,
+        default=0.001,
+        help="Maximum labelled foreground fraction in a background patch.",
+    )
+    parser.add_argument(
+        "--sampling-max-tries",
+        type=int,
+        default=160,
+        help="Maximum crop attempts per requested class-aware patch.",
+    )
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument(
         "--non-interactive",
@@ -97,6 +121,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg.lr = args.learning_rate
     cfg.base_filters = args.base_filters
     cfg.dropout = args.dropout
+    cfg.fg_fraction = args.foreground_patch_fraction
+    cfg.fg_min_ratio = args.foreground_min_ratio
+    cfg.bg_max_ratio = args.background_max_ratio
+    cfg.max_tries = args.sampling_max_tries
     cfg.seed = args.seed
 
     print("\n=== 2D U-NET TRAINING CONFIGURATION ===")
@@ -110,6 +138,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Epochs:                {cfg.epochs}")
     print(f"Steps / val steps:     {cfg.steps_per_epoch} / {cfg.val_steps}")
     print(f"Learning rate:         {cfg.lr}")
+    print(f"Foreground patches:    {cfg.fg_fraction:.1%}")
+    print(f"Positive min ratio:    {cfg.fg_min_ratio:.4f}")
+    print(f"Background max ratio:  {cfg.bg_max_ratio:.4f}")
+    print(f"Sampling max tries:    {cfg.max_tries}")
 
     outputs = (
         train_2d_wga_dapi_unet(cfg)

@@ -9,7 +9,10 @@ This module is used for both supported 2D datasets:
 ``2d_wga_dapi``
     Two fluorescence channels, DAPI and WGA, processed together as one input.
 
-The network performs semantic binary classification.
+The network performs semantic binary classification. Every pixel is assigned a
+foreground probability and is compared with a hand-labelled reference mask.
+Positive instance labels in a reference TIFF are converted to semantic
+foreground by the rule ``mask > 0``.
 
 The main adjustable values are collected in :class:`UNet2DTrainConfig`. They
 can be changed through the terminal launcher or when constructing the config in
@@ -118,21 +121,26 @@ class UNet2DTrainConfig:
         same mode as training.
 
     fg_fraction:
-        Fraction of sampled patches requested from foreground-containing areas.
-        Increasing it gives the network more positive examples and can improve
-        sensitivity, but too high a value may increase false positives because
-        the network sees too little pure background. Decreasing it strengthens
-        background learning but may worsen detection of small foreground areas.
+        Fraction of requested training patches that must contain labelled
+        foreground. The default is 0.75: approximately 75% foreground-aware
+        patches and 25% background patches. A value of 1.0 requests only
+        foreground-containing patches, but this is normally not recommended
+        because the network still needs examples of residual fluorescence and
+        background texture. Increasing this value usually improves foreground
+        recall; decreasing it strengthens background discrimination.
     fg_min_ratio:
-        Minimum foreground-pixel fraction for a patch to count as a foreground
-        patch. Increasing it selects denser foreground crops and may exclude
-        boundary or sparse-cell examples. Decreasing it includes weaker positive
-        examples but makes the distinction from background patches less clear.
+        Minimum fraction of labelled foreground pixels required in a positive
+        patch. The default is 0.01, corresponding to about 655 labelled pixels
+        in a 256 x 256 patch. This lower requirement is appropriate for thin
+        bacterial walls, septa, and sparse HADA signal. A value of 0.05 would
+        require about 3277 positive pixels and may reject biologically useful
+        sparse patches.
     bg_max_ratio:
-        Maximum foreground-pixel fraction allowed in a background patch.
-        Increasing it permits mixed patches and can blur the definition of pure
-        background. Decreasing it makes background examples cleaner but harder
-        to find.
+        Maximum foreground fraction allowed in a requested background patch.
+        The default 0.001 permits at most about 66 positive pixels in a 256 x
+        256 patch. Set it to 0.0 to require strictly empty reference masks.
+        Retaining a small number of background patches is important because the
+        model must learn what should remain class 0.
     max_tries:
         Maximum attempts to locate a crop that satisfies the requested
         foreground/background ratio. Increasing it can improve adherence to the
@@ -168,9 +176,9 @@ class UNet2DTrainConfig:
     # Class-aware crop sampling. These values help compensate for the typically
     # much larger background area in fluorescence images.
     fg_fraction: float = 0.75
-    fg_min_ratio: float = 0.05
-    bg_max_ratio: float = 0.02
-    max_tries: int = 80
+    fg_min_ratio: float = 0.01
+    bg_max_ratio: float = 0.001
+    max_tries: int = 160
 
 
 def validate_train_config(cfg: UNet2DTrainConfig) -> None:
@@ -502,7 +510,20 @@ def sample_patch_2d(
     cfg: UNet2DTrainConfig,
     rng: random.Random,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Sample a foreground-aware or background-aware 256 x 256 patch."""
+    """Sample one class-aware patch without silently returning an empty positive crop.
+
+    Approximately ``cfg.fg_fraction`` of requests are positive. A positive crop
+    is centred near a labelled mask pixel and must satisfy ``fg_min_ratio``.
+    The remaining requests are negative/background crops and must satisfy
+    ``bg_max_ratio``. If the exact positive criterion cannot be reached after
+    ``max_tries``, the best crop is accepted only when it still contains at
+    least one labelled foreground pixel. Consequently, a requested positive
+    patch can never silently become an all-zero target patch.
+
+    Some negative patches are intentionally retained. Removing all negative
+    examples would make false-positive foreground predictions more likely at
+    inference time.
+    """
     height, width = mask.shape
     patch = cfg.patch
     if height < patch or width < patch:
@@ -510,14 +531,29 @@ def sample_patch_2d(
 
     want_foreground = rng.random() < cfg.fg_fraction
     foreground_coordinates = np.argwhere(mask > 0)
+    if want_foreground and len(foreground_coordinates) == 0:
+        raise ValueError("Foreground patch requested, but the reference mask is empty")
+
     best: tuple[np.ndarray, np.ndarray] | None = None
-    best_distance = float("inf")
+    best_ratio = -1.0 if want_foreground else float("inf")
 
     for _ in range(cfg.max_tries):
-        if want_foreground and len(foreground_coordinates) > 0:
+        if want_foreground:
             cy, cx = foreground_coordinates[rng.randrange(len(foreground_coordinates))]
-            y0 = int(np.clip(cy - patch // 2 + rng.randint(-patch // 8, patch // 8), 0, height - patch))
-            x0 = int(np.clip(cx - patch // 2 + rng.randint(-patch // 8, patch // 8), 0, width - patch))
+            y0 = int(
+                np.clip(
+                    cy - patch // 2 + rng.randint(-patch // 8, patch // 8),
+                    0,
+                    height - patch,
+                )
+            )
+            x0 = int(
+                np.clip(
+                    cx - patch // 2 + rng.randint(-patch // 8, patch // 8),
+                    0,
+                    width - patch,
+                )
+            )
         else:
             y0, x0 = _random_crop(height, width, patch, rng)
 
@@ -525,24 +561,30 @@ def sample_patch_2d(
         mask_patch = mask[y0 : y0 + patch, x0 : x0 + patch]
         foreground_ratio = float(mask_patch.mean())
 
-        if want_foreground and foreground_ratio >= cfg.fg_min_ratio:
-            return image_patch, mask_patch
-        if not want_foreground and foreground_ratio <= cfg.bg_max_ratio:
-            return image_patch, mask_patch
+        if want_foreground:
+            if foreground_ratio >= cfg.fg_min_ratio:
+                return image_patch, mask_patch
+            if foreground_ratio > best_ratio:
+                best = image_patch, mask_patch
+                best_ratio = foreground_ratio
+        else:
+            if foreground_ratio <= cfg.bg_max_ratio:
+                return image_patch, mask_patch
+            if foreground_ratio < best_ratio:
+                best = image_patch, mask_patch
+                best_ratio = foreground_ratio
 
-        target = cfg.fg_min_ratio if want_foreground else cfg.bg_max_ratio
-        distance = abs(foreground_ratio - target)
-        if distance < best_distance:
-            best = image_patch, mask_patch
-            best_distance = distance
+    if best is None:
+        raise RuntimeError("Patch sampler could not produce a candidate crop")
 
-    if best is not None:
-        return best
-    y0, x0 = _random_crop(height, width, patch, rng)
-    return (
-        img[y0 : y0 + patch, x0 : x0 + patch, :],
-        mask[y0 : y0 + patch, x0 : x0 + patch],
-    )
+    if want_foreground and best_ratio <= 0.0:
+        raise RuntimeError(
+            "Positive patch sampling failed: every candidate had an all-zero mask"
+        )
+
+    # For rare geometries, return the best non-empty positive crop or the
+    # cleanest available background crop rather than an unrelated random patch.
+    return best
 
 
 def make_2d_dataset(
