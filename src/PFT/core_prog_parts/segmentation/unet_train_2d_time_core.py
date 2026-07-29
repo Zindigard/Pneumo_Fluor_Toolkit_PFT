@@ -3,17 +3,6 @@ Core training implementation for 2D U-Net foreground/background detection.
 
 This module is used for both supported 2D datasets:
 
-``2d_time``
-    One fluorescence channel per time frame.
-
-``2d_wga_dapi``
-    Two fluorescence channels, DAPI and WGA, processed together as one input.
-
-The network performs semantic binary classification. Every pixel is assigned a
-foreground probability and is compared with a hand-labelled reference mask.
-Positive instance labels in a reference TIFF are converted to semantic
-foreground by the rule ``mask > 0``.
-
 The main adjustable values are collected in :class:`UNet2DTrainConfig`. They
 can be changed through the terminal launcher or when constructing the config in
 Python. The class documentation explains the expected effect of increasing or

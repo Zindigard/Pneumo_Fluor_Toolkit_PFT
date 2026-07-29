@@ -1,5 +1,5 @@
-"""T
-rain reproducible two-dimensional Noise2Void models from original OME-Zarr data.
+"""
+Train reproducible two-dimensional Noise2Void models from original OME-Zarr data.
 
 The module is the core implementation used by
 ``scripts/denoising/train_n2v_2d.py``.  Training inputs are discovered only at
