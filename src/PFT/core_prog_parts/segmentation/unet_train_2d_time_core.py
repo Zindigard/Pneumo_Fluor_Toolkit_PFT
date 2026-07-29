@@ -23,6 +23,7 @@ decreasing every parameter.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import csv
@@ -160,10 +161,10 @@ class UNet2DTrainConfig:
 
     # Patch sampling and training duration.
     patch: int = 256
-    batch: int = 8
-    epochs: int = 50
-    steps_per_epoch: int = 300
-    val_steps: int = 60
+    batch: int = 4
+    epochs: int = 30
+    steps_per_epoch: int = 150
+    val_steps: int = 30
     val_split: float = 0.2
     seed: int = 1337
 
@@ -179,6 +180,16 @@ class UNet2DTrainConfig:
     fg_min_ratio: float = 0.01
     bg_max_ratio: float = 0.001
     max_tries: int = 160
+
+    # Input-pipeline and callback controls. Fixed validation patches remove the
+    # large epoch-to-epoch metric fluctuations caused by resampling validation
+    # crops. A small image cache reduces repeated OME-Zarr decoding on CPU.
+    shuffle_buffer: int = 64
+    cache_size: int = 6
+    fixed_validation: bool = True
+    reduce_lr_patience: int = 4
+    early_stopping_patience: int = 8
+    min_lr: float = 1e-6
 
 
 def validate_train_config(cfg: UNet2DTrainConfig) -> None:
@@ -199,6 +210,16 @@ def validate_train_config(cfg: UNet2DTrainConfig) -> None:
         raise ValueError("max_tries must be positive")
     if cfg.lr <= 0:
         raise ValueError("learning rate must be positive")
+    if cfg.shuffle_buffer <= 0:
+        raise ValueError("shuffle_buffer must be positive")
+    if cfg.cache_size < 0:
+        raise ValueError("cache_size must be non-negative")
+    if cfg.reduce_lr_patience <= 0 or cfg.early_stopping_patience <= 0:
+        raise ValueError("callback patience values must be positive")
+    if cfg.early_stopping_patience <= cfg.reduce_lr_patience:
+        raise ValueError("early_stopping_patience must exceed reduce_lr_patience")
+    if cfg.min_lr <= 0 or cfg.min_lr > cfg.lr:
+        raise ValueError("min_lr must be positive and not exceed the initial learning rate")
 
 
 def _default_mask_root(project_root: Path, dataset: str) -> Path:
@@ -590,31 +611,73 @@ def sample_patch_2d(
 def make_2d_dataset(
     pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig, *, training: bool
 ):
-    """Build an infinite TensorFlow dataset from image-level train/validation pairs."""
+    """Build the training or validation TensorFlow dataset.
+
+    Training patches remain stochastic. Validation patches are materialized once
+    by default and then repeated unchanged for every epoch. This makes validation
+    loss, Dice, and IoU directly comparable between epochs. A bounded LRU cache
+    avoids reopening and normalizing the same OME-Zarr image for every patch.
+    """
     rng = random.Random(cfg.seed + (0 if training else 10000))
     first_frame = ome_zarr_to_hwc_frames_2d(
         pairs[0][0], dataset=cfg.dataset, level=cfg.level
     )[0]
     channels = int(first_frame.shape[-1])
+    cache: OrderedDict[tuple[str, str], tuple[list[np.ndarray], np.ndarray]] = OrderedDict()
 
-    def generator():
-        while True:
-            image_path, mask_path = pairs[rng.randrange(len(pairs))]
-            frames = ome_zarr_to_hwc_frames_2d(
-                image_path, dataset=cfg.dataset, level=cfg.level
-            )
-            image = frames[rng.randrange(len(frames))]
-            mask = read_binary_mask_2d(mask_path)
-            if image.shape[:2] != mask.shape:
+    def load_pair(image_path: Path, mask_path: Path) -> tuple[list[np.ndarray], np.ndarray]:
+        key = (str(image_path), str(mask_path))
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+
+        frames = ome_zarr_to_hwc_frames_2d(
+            image_path, dataset=cfg.dataset, level=cfg.level
+        )
+        normalized_frames = [normalize_image01(frame, cfg.normalize) for frame in frames]
+        mask = read_binary_mask_2d(mask_path)
+        for frame in normalized_frames:
+            if frame.shape[:2] != mask.shape:
                 raise ValueError(
-                    f"Image/mask shape mismatch: {image_path} {image.shape[:2]} vs "
+                    f"Image/mask shape mismatch: {image_path} {frame.shape[:2]} vs "
                     f"{mask_path} {mask.shape}"
                 )
 
-            # Thesis-defined normalization is applied once to the complete image.
-            image_normalized = normalize_image01(image, cfg.normalize)
-            x_patch, y_patch = sample_patch_2d(image_normalized, mask, cfg, rng)
-            yield x_patch.astype(np.float32), y_patch.astype(np.float32)[..., None]
+        if cfg.cache_size > 0:
+            cache[key] = (normalized_frames, mask)
+            cache.move_to_end(key)
+            while len(cache) > cfg.cache_size:
+                cache.popitem(last=False)
+        return normalized_frames, mask
+
+    def sample_one() -> tuple[np.ndarray, np.ndarray]:
+        image_path, mask_path = pairs[rng.randrange(len(pairs))]
+        frames, mask = load_pair(image_path, mask_path)
+        image = frames[rng.randrange(len(frames))]
+        x_patch, y_patch = sample_patch_2d(image, mask, cfg, rng)
+        return x_patch.astype(np.float32), y_patch.astype(np.float32)[..., None]
+
+    if not training and cfg.fixed_validation:
+        patch_count = cfg.val_steps * cfg.batch
+        x_values = np.empty(
+            (patch_count, cfg.patch, cfg.patch, channels), dtype=np.float32
+        )
+        y_values = np.empty(
+            (patch_count, cfg.patch, cfg.patch, 1), dtype=np.float32
+        )
+        for index in range(patch_count):
+            x_values[index], y_values[index] = sample_one()
+        dataset = tf.data.Dataset.from_tensor_slices((x_values, y_values))
+        options = tf.data.Options()
+        options.experimental_deterministic = True
+        dataset = dataset.with_options(options).batch(
+            cfg.batch, drop_remainder=True
+        ).repeat()
+        return dataset.prefetch(tf.data.AUTOTUNE), channels
+
+    def generator():
+        while True:
+            yield sample_one()
 
     dataset = tf.data.Dataset.from_generator(
         generator,
@@ -626,7 +689,9 @@ def make_2d_dataset(
         ),
     )
     if training:
-        dataset = dataset.shuffle(256, seed=cfg.seed, reshuffle_each_iteration=True)
+        dataset = dataset.shuffle(
+            cfg.shuffle_buffer, seed=cfg.seed, reshuffle_each_iteration=True
+        )
     return dataset.batch(cfg.batch).prefetch(tf.data.AUTOTUNE), channels
 
 
@@ -912,8 +977,14 @@ def train_2d_binary_unet(cfg: UNet2DTrainConfig) -> dict[str, Path]:
         tf.keras.callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,
-            patience=6,
-            min_lr=1e-6,
+            patience=cfg.reduce_lr_patience,
+            min_lr=cfg.min_lr,
+            verbose=1,
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=cfg.early_stopping_patience,
+            restore_best_weights=True,
             verbose=1,
         ),
     ]
@@ -939,6 +1010,14 @@ def train_2d_binary_unet(cfg: UNet2DTrainConfig) -> dict[str, Path]:
         "validation_pair_count": len(validation_pairs),
         "normalization_scope": "complete image, independently per channel, before patch extraction",
         "normalization_percentiles": [1.0, 99.8],
+        "validation_sampling": (
+            "fixed patches reused every epoch"
+            if cfg.fixed_validation
+            else "stochastic patches resampled continuously"
+        ),
+        "fixed_validation_patch_count": (
+            cfg.val_steps * cfg.batch if cfg.fixed_validation else None
+        ),
         "best_model": str(best_model),
         "final_model": str(final_model),
         "history_csv": str(history_csv),

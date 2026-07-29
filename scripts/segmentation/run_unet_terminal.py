@@ -218,6 +218,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Saved intensity scale: original filtered dtype and values; no normalization")
     print("SNR after source:     reloaded foreground_filtered.ome.zarr")
     print(f"Compute IoU and SNR:  {cfg.compute_metrics}")
+    print(
+        "QC visualization:     all 2d_time panels use blue fluorescence; "
+        "2d_wga_dapi retains its channel colours"
+    )
 
     outputs = run_dataset(cfg, process_all=process_all, selected_zarrs=selected)
     print("\nInference finished:")
