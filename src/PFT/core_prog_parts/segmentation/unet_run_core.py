@@ -25,6 +25,7 @@ import json
 from typing import Any
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import tensorflow as tf
 
@@ -42,6 +43,12 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
     ome_zarr_to_hwc_frames_2d,
     read_binary_mask_2d,
     soft_dice_coef,
+)
+
+
+BLUE_FLUORESCENCE_CMAP = LinearSegmentedColormap.from_list(
+    "pft_blue_fluorescence",
+    [(0.0, (0.0, 0.0, 0.0)), (1.0, (0.0, 0.0, 1.0))],
 )
 
 
@@ -452,7 +459,9 @@ def _save_preview(
     """Save inference QC including the actual non-normalized final output.
 
     Display normalization is applied only for visualization. It does not alter
-    the saved OME-Zarr or the arrays used for SNR calculation.
+    the saved OME-Zarr or the arrays used for SNR calculation. For the one-channel
+    2d_time dataset, every image, probability, and mask panel uses a black-to-blue
+    fluorescence colour map. No grayscale or magma panel is used in that QC figure.
     """
     figure, axes = plt.subplots(2, 4, figsize=(17, 8), dpi=160)
     depletion_percent = 100.0 * outside_mask_depletion
@@ -466,30 +475,49 @@ def _save_preview(
     )
     residual_display = np.where(prediction > 0, 0.0, residual_display)
 
-    panels: list[tuple[str, np.ndarray, str | None]] = [
-        ("Raw image", _display_image(raw_hwc if raw_hwc is not None else filtered_hwc), None),
-        ("Filtered input, display normalized", filtered_display, None),
-        ("Exact normalized U-Net input", _display_image(normalize_image01(filtered_hwc, "percentile")), None),
-        ("Foreground probability", probability, "magma"),
-        ("Predicted foreground mask", prediction, "gray"),
+    single_channel = int(filtered_hwc.shape[-1]) == 1
+    scalar_cmap = BLUE_FLUORESCENCE_CMAP if single_channel else "gray"
+    probability_cmap = BLUE_FLUORESCENCE_CMAP if single_channel else "magma"
+
+    panels: list[tuple[str, np.ndarray, object | None]] = [
+        (
+            "Raw image",
+            _display_image(raw_hwc if raw_hwc is not None else filtered_hwc),
+            scalar_cmap if single_channel else None,
+        ),
+        (
+            "Filtered input, display normalized",
+            filtered_display,
+            scalar_cmap if single_channel else None,
+        ),
+        (
+            "Exact normalized U-Net input",
+            _display_image(normalize_image01(filtered_hwc, "percentile")),
+            scalar_cmap if single_channel else None,
+        ),
+        ("Foreground probability", probability, probability_cmap),
+        ("Predicted foreground mask", prediction, scalar_cmap),
         (
             f"Saved output: {depletion_percent:.1f}% outside-mask depletion",
             suppressed_display,
-            None,
+            scalar_cmap if single_channel else None,
         ),
         (
             "Reference mask" if reference is not None else "No reference mask",
             reference if reference is not None else np.zeros_like(prediction),
-            "gray",
+            scalar_cmap,
         ),
         (
             f"Residual outside mask: {residual_percent:.1f}%",
             residual_display,
-            "gray",
+            scalar_cmap,
         ),
     ]
     for axis, (title, image, cmap) in zip(axes.ravel(), panels):
-        axis.imshow(image, cmap=cmap)
+        if single_channel:
+            axis.imshow(image, cmap=cmap, vmin=0.0, vmax=1.0)
+        else:
+            axis.imshow(image, cmap=cmap)
         axis.set_title(title)
         axis.axis("off")
     figure.suptitle(f"2D U-Net inference QC: {sample}")
