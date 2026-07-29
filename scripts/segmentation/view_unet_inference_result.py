@@ -196,32 +196,69 @@ def load_hwc_frames(zarr_path: Path, dataset: str, level: int) -> list[np.ndarra
     return frames
 
 
-def normalize_image01(image: np.ndarray) -> np.ndarray:
-    """Apply the exact complete-image, per-channel P1-P99.8 normalization."""
+def percentile_limits_per_channel(
+    image: np.ndarray,
+    *,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+) -> list[tuple[float, float]]:
+    """Calculate complete-image percentile limits for each channel."""
     image = np.asarray(image, dtype=np.float32)
     if image.ndim == 2:
         image = image[..., None]
     if image.ndim != 3:
         raise ValueError(f"Expected YX or YXC image, received shape={image.shape}")
 
-    output = np.empty_like(image, dtype=np.float32)
+    limits: list[tuple[float, float]] = []
     for channel in range(image.shape[-1]):
         plane = image[..., channel]
         finite = plane[np.isfinite(plane)]
         if finite.size == 0:
-            output[..., channel] = 0.0
+            limits.append((0.0, 1.0))
             continue
-        low = float(np.percentile(finite, 1.0))
-        high = float(np.percentile(finite, 99.8))
+
+        low = float(np.percentile(finite, p_low))
+        high = float(np.percentile(finite, p_high))
         if not np.isfinite(low) or not np.isfinite(high) or high <= low:
-            output[..., channel] = 0.0
-        else:
-            output[..., channel] = np.clip(
-                (plane - low) / (high - low + 1e-8),
-                0.0,
-                1.0,
-            )
+            low = float(np.min(finite))
+            high = float(np.max(finite))
+        if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+            high = low + 1.0
+        limits.append((low, high))
+    return limits
+
+
+def apply_channel_limits(
+    image: np.ndarray,
+    limits: Sequence[tuple[float, float]],
+) -> np.ndarray:
+    """Map an image to [0,1] using externally supplied per-channel limits."""
+    image = np.asarray(image, dtype=np.float32)
+    if image.ndim == 2:
+        image = image[..., None]
+    if image.ndim != 3:
+        raise ValueError(f"Expected YX or YXC image, received shape={image.shape}")
+    if len(limits) != image.shape[-1]:
+        raise ValueError(
+            f"Received {len(limits)} normalization limits for "
+            f"{image.shape[-1]} channels."
+        )
+
+    output = np.empty_like(image, dtype=np.float32)
+    for channel, (low, high) in enumerate(limits):
+        denominator = max(float(high) - float(low), 1e-8)
+        output[..., channel] = np.clip(
+            (image[..., channel] - float(low)) / denominator,
+            0.0,
+            1.0,
+        )
     return output
+
+
+def normalize_image01(image: np.ndarray) -> np.ndarray:
+    """Apply complete-image, per-channel P1-P99.8 normalization."""
+    limits = percentile_limits_per_channel(image)
+    return apply_channel_limits(image, limits)
 
 
 def normalize_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
@@ -229,9 +266,56 @@ def normalize_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
     return [normalize_image01(frame) for frame in frames]
 
 
+def normalize_target_with_reference(
+    reference_frames: list[np.ndarray],
+    target_frames: list[np.ndarray],
+) -> list[np.ndarray]:
+    """Normalize targets using percentile limits calculated from references.
+
+    This is required for zero-outside-mask results. Independently calculating
+    P1-P99.8 on a sparse result can produce P99.8 == 0 and therefore a completely
+    black display, even when foreground intensities are stored correctly.
+    """
+    if len(reference_frames) != len(target_frames):
+        raise ValueError(
+            "Reference and target frame counts differ: "
+            f"{len(reference_frames)} versus {len(target_frames)}"
+        )
+
+    normalized: list[np.ndarray] = []
+    for reference, target in zip(reference_frames, target_frames):
+        if np.asarray(reference).shape != np.asarray(target).shape:
+            raise ValueError(
+                "Reference and target frame shapes differ: "
+                f"{np.asarray(reference).shape} versus {np.asarray(target).shape}"
+            )
+        limits = percentile_limits_per_channel(reference)
+        normalized.append(apply_channel_limits(target, limits))
+    return normalized
+
+
 def stack_channel(frames: list[np.ndarray], channel: int) -> np.ndarray:
     """Convert HWC frame lists to YX or TYX napari arrays."""
     planes = [np.asarray(frame[..., channel]) for frame in frames]
+    return planes[0] if len(planes) == 1 else np.stack(planes, axis=0)
+
+
+def make_wga_dapi_merged(frame: np.ndarray) -> np.ndarray:
+    """Create one RGB merged frame with DAPI in blue and WGA in green."""
+    frame = np.asarray(frame, dtype=np.float32)
+    if frame.ndim != 3 or frame.shape[-1] < 2:
+        raise ValueError(
+            "WGA-DAPI merged rendering requires a YXC frame with at least 2 channels."
+        )
+    rgb = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.float32)
+    rgb[..., 2] = frame[..., 0]
+    rgb[..., 1] = frame[..., 1]
+    return np.clip(rgb, 0.0, 1.0)
+
+
+def stack_merged(frames: list[np.ndarray]) -> np.ndarray:
+    """Convert WGA-DAPI frame lists to merged RGB napari arrays."""
+    planes = [make_wga_dapi_merged(frame) for frame in frames]
     return planes[0] if len(planes) == 1 else np.stack(planes, axis=0)
 
 
@@ -257,28 +341,51 @@ def add_source_layers(
     frames: list[np.ndarray],
     visible: bool,
     metadata: dict[str, object],
+    contrast_limits: tuple[float, float] | None = None,
+    include_merged: bool = False,
+    merged_visible: bool = False,
 ) -> None:
     """Add one single-channel or two-channel source using biological colours."""
+    common_kwargs: dict[str, object] = {
+        "visible": visible,
+        "metadata": metadata,
+    }
+    if contrast_limits is not None:
+        common_kwargs["contrast_limits"] = contrast_limits
+
     if dataset == "2d_time":
         viewer.add_image(
             stack_channel(frames, 0),
             name=label,
             colormap="blue",
-            visible=visible,
-            metadata=metadata,
+            **common_kwargs,
         )
         return
 
     names = ("DAPI", "WGA")
     colormaps = ("blue", "green")
     for channel, (channel_name, colormap) in enumerate(zip(names, colormaps)):
+        channel_kwargs = dict(common_kwargs)
+        channel_kwargs["metadata"] = {**metadata, "channel": channel_name}
         viewer.add_image(
             stack_channel(frames, channel),
             name=f"{label} | {channel_name}",
             colormap=colormap,
-            visible=visible,
             blending="additive",
-            metadata={**metadata, "channel": channel_name},
+            **channel_kwargs,
+        )
+
+    if include_merged:
+        viewer.add_image(
+            stack_merged(frames),
+            name=f"{label} | Merged",
+            rgb=True,
+            visible=merged_visible,
+            metadata={
+                **metadata,
+                "channel": "Merged",
+                "rendering": "DAPI-blue + WGA-green",
+            },
         )
 
 
@@ -370,7 +477,10 @@ def open_result(
         )
 
     normalized_input = normalize_frames(filtered_frames)
-    normalized_result = normalize_frames(result_frames)
+    normalized_result = normalize_target_with_reference(
+        filtered_frames,
+        result_frames,
+    )
 
     print("\n=== U-NET RESULT VIEWER ===")
     print(f"Dataset:          {dataset}")
@@ -379,7 +489,8 @@ def open_result(
     print(f"Raw OME-Zarr:     {raw_path}")
     print(f"Filtered input:   {filtered_path}")
     print(f"Saved U-Net data: {result_path}")
-    print("Normalization:    in-memory P1-P99.8 per complete frame and channel")
+    print("Input normalization:  P1-P99.8 per complete frame and channel")
+    print("Result normalization: filtered-input P1-P99.8 limits applied to saved result")
     print("Saved result:     original intensity scale; normalization is display-only")
 
     for label, frames in (
@@ -404,6 +515,8 @@ def open_result(
             frames=raw_frames,
             visible=True,
             metadata={"source_path": str(raw_path), "normalized": False},
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=False,
         )
         add_source_layers(
             viewer,
@@ -416,6 +529,9 @@ def open_result(
                 "normalized": True,
                 "normalization": "P1-P99.8 per complete frame and channel",
             },
+            contrast_limits=(0.0, 1.0),
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=False,
         )
         add_source_layers(
             viewer,
@@ -428,18 +544,25 @@ def open_result(
                 "normalized": False,
                 "normalization": "none",
             },
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=False,
         )
         add_source_layers(
             viewer,
             dataset=dataset,
-            label="4 Normalized U-Net result",
+            label="4 Normalized U-Net result | input limits",
             frames=normalized_result,
             visible=True,
             metadata={
                 "source_path": str(result_path),
                 "normalized": True,
-                "normalization": "P1-P99.8 per complete frame and channel",
+                "normalization": (
+                    "Filtered-input P1-P99.8 limits applied to saved U-Net result"
+                ),
             },
+            contrast_limits=(0.0, 1.0),
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=True,
         )
     elif view == "result":
         add_source_layers(
@@ -449,26 +572,68 @@ def open_result(
             frames=result_frames,
             visible=False,
             metadata={"source_path": str(result_path), "normalized": False},
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=False,
         )
         add_source_layers(
             viewer,
             dataset=dataset,
-            label="U-Net result | normalized",
+            label="U-Net result | normalized with input limits",
             frames=normalized_result,
             visible=True,
             metadata={
                 "source_path": str(result_path),
                 "normalized": True,
-                "normalization": "P1-P99.8 per complete frame and channel",
+                "normalization": (
+                    "Filtered-input P1-P99.8 limits applied to saved U-Net result"
+                ),
             },
+            contrast_limits=(0.0, 1.0),
+            include_merged=(dataset == "2d_wga_dapi"),
+            merged_visible=True,
         )
     else:
-        for label, frames, path, normalized, visible in (
-            ("Raw image | original scale", raw_frames, raw_path, False, False),
-            ("Filtered input | original scale", filtered_frames, filtered_path, False, False),
-            ("Filtered input | normalized", normalized_input, filtered_path, True, True),
-            ("U-Net result | original scale", result_frames, result_path, False, True),
-            ("U-Net result | normalized", normalized_result, result_path, True, True),
+        for label, frames, path, normalized, visible, normalization_text in (
+            (
+                "Raw image | original scale",
+                raw_frames,
+                raw_path,
+                False,
+                False,
+                "none",
+            ),
+            (
+                "Filtered input | original scale",
+                filtered_frames,
+                filtered_path,
+                False,
+                False,
+                "none",
+            ),
+            (
+                "Filtered input | normalized",
+                normalized_input,
+                filtered_path,
+                True,
+                True,
+                "P1-P99.8 per complete frame and channel",
+            ),
+            (
+                "U-Net result | original scale",
+                result_frames,
+                result_path,
+                False,
+                True,
+                "none",
+            ),
+            (
+                "U-Net result | normalized with input limits",
+                normalized_result,
+                result_path,
+                True,
+                True,
+                "Filtered-input P1-P99.8 limits applied to saved U-Net result",
+            ),
         ):
             add_source_layers(
                 viewer,
@@ -479,10 +644,11 @@ def open_result(
                 metadata={
                     "source_path": str(path),
                     "normalized": normalized,
-                    "normalization": (
-                        "P1-P99.8 per complete frame and channel" if normalized else "none"
-                    ),
+                    "normalization": normalization_text,
                 },
+                contrast_limits=(0.0, 1.0) if normalized else None,
+                include_merged=(dataset == "2d_wga_dapi"),
+                merged_visible=(dataset == "2d_wga_dapi" and normalized and "U-Net result" in label),
             )
         add_optional_mask_layers(viewer, sample_dir, level=0)
 
@@ -521,7 +687,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="comparison",
         help=(
             "comparison: raw, normalized U-Net input, original-scale U-Net result, "
-            "and normalized U-Net result; all: add original-scale inputs, probability, and mask; "
+            "and U-Net result normalized with input-derived limits; "
+            "all: add original-scale inputs, probability, and mask; "
             "result: saved result only."
         ),
     )
