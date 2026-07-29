@@ -132,6 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--no-metrics", action="store_true")
+    parser.add_argument(
+        "--strict-metrics",
+        action="store_true",
+        help=(
+            "Fail when any selected sample lacks a reference mask. By default, "
+            "such samples are still processed and saved, while metrics are skipped."
+        ),
+    )
     parser.add_argument("--no-probability", action="store_true")
     parser.add_argument("--no-foreground-image", action="store_true")
     parser.add_argument("--non-interactive", action="store_true")
@@ -159,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg.predict_batch_size = args.predict_batch_size
     cfg.outside_mask_depletion = args.outside_mask_depletion
     cfg.compute_metrics = not args.no_metrics
+    cfg.strict_metrics = args.strict_metrics
     cfg.save_probability = not args.no_probability
     cfg.save_foreground_image = not args.no_foreground_image
 
@@ -218,6 +227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("Saved intensity scale: original filtered dtype and values; no normalization")
     print("SNR after source:     reloaded foreground_filtered.ome.zarr")
     print(f"Compute IoU and SNR:  {cfg.compute_metrics}")
+    print(f"Strict missing masks: {cfg.strict_metrics}")
     print(
         "QC visualization:     all 2d_time panels use blue fluorescence; "
         "2d_wga_dapi retains its channel colours"
