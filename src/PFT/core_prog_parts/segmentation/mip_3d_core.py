@@ -1,11 +1,10 @@
 """Create 2D maximum-intensity projections from PFT 3D OME-Zarr volumes.
 
-The workflow supports three products:
-
-* a raw, unmasked MIP for subsequent purely 2D segmentation;
-* a raw MIP masked by the existing per-volume 2.5D U-Net prediction;
-* a Richardson-Lucy-deconvolved MIP (BW, blue/green/red iterations 3/3/2)
-  masked by the same 2.5D prediction.
+The workflow supports raw and Richardson-Lucy-deconvolved MIPs, either
+unmasked or followed by the existing per-volume 2.5D U-Net prediction.
+Deconvolution iterations and outside-mask suppression are configurable.
+For example, 99.8% suppression retains 0.2% of the original outside-mask
+intensity instead of setting it to zero.
 
 All 40 Z planes are projected. The saved quantitative image remains in the
 source intensity scale: raw products retain the original dtype, whereas the
@@ -41,17 +40,20 @@ from PFT.core_prog_parts.denoising.validation_3d import (
     volume_key,
 )
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
-MIPMode = Literal["raw_unmasked", "raw_masked", "deconv_masked"]
+MIPMode = Literal["raw_unmasked", "raw_masked", "deconv_unmasked", "deconv_masked"]
 
 DECONV_MODEL = "BW"
-DECONV_ITERATION_TAG = "iterB3_G3_R2"
+DECONV_DEFAULT_ITERS_BLUE = 3
+DECONV_DEFAULT_ITERS_GREEN = 3
+DECONV_DEFAULT_ITERS_RED = 2
 DECONV_SOURCE_LEVEL = 0
 EXPECTED_Z_COUNT = 40
 
 MODE_DIRECTORY_NAMES: dict[MIPMode, str] = {
     "raw_unmasked": "raw_mip",
     "raw_masked": "raw_mip_masked",
-    "deconv_masked": "deconv_332_mip_masked",
+    "deconv_unmasked": "deconv_mip",
+    "deconv_masked": "deconv_mip_masked",
 }
 
 
@@ -74,6 +76,10 @@ class MIP3DConfig:
     qc_max_dimension: int = 1400
     scale_bar_um: float = 2.0
     snr_epsilon: float = 1e-12
+    deconv_iters_blue: int = DECONV_DEFAULT_ITERS_BLUE
+    deconv_iters_green: int = DECONV_DEFAULT_ITERS_GREEN
+    deconv_iters_red: int = DECONV_DEFAULT_ITERS_RED
+    outside_suppression_percent: float = 100.0
 
 
 @dataclass(frozen=True)
@@ -269,25 +275,60 @@ def _read_cyx_slice(array_czyx: Any, slice_1based: int) -> np.ndarray:
     return plane
 
 
-def resolve_deconvolved_332_zarr(raw_zarr: Path, deconv_root: Path) -> Path:
-    """Resolve the exact BW Richardson-Lucy 3/3/2 result for one raw volume."""
+def _validate_iteration_count(value: int, name: str) -> int:
+    result = int(value)
+    if result < 1:
+        raise ValueError(f"{name} must be at least 1, got {value}")
+    return result
+
+
+def deconvolution_iteration_tag(blue: int, green: int, red: int) -> str:
+    """Return the folder tag used by the 3D deconvolution workflow."""
+    blue = _validate_iteration_count(blue, "blue iterations")
+    green = _validate_iteration_count(green, "green iterations")
+    red = _validate_iteration_count(red, "red iterations")
+    return f"iterB{blue}_G{green}_R{red}"
+
+
+def resolve_deconvolved_zarr(
+    raw_zarr: Path,
+    deconv_root: Path,
+    *,
+    iters_blue: int = DECONV_DEFAULT_ITERS_BLUE,
+    iters_green: int = DECONV_DEFAULT_ITERS_GREEN,
+    iters_red: int = DECONV_DEFAULT_ITERS_RED,
+) -> Path:
+    """Resolve one exact BW Richardson-Lucy result for a configured raw volume."""
     relative = relative_volume_path(raw_zarr)
     sample = relative.name
+    iteration_tag = deconvolution_iteration_tag(
+        iters_blue, iters_green, iters_red
+    )
     result = (
         Path(deconv_root)
         / relative.parent
         / (
-            f"{sample}__SK_RL__PSF{DECONV_MODEL}__{DECONV_ITERATION_TAG}"
+            f"{sample}__SK_RL__PSF{DECONV_MODEL}__{iteration_tag}"
             f"__sourceL{DECONV_SOURCE_LEVEL}"
         )
         / "image.ome.zarr"
     )
     if not result.is_dir():
         raise FileNotFoundError(
-            "Required deconvolution result is missing. Expected the fixed BW 3/3/2 output: "
-            f"{result}"
+            "Required deconvolution result is missing. Expected: " f"{result}"
         )
     return result.resolve()
+
+
+def resolve_deconvolved_332_zarr(raw_zarr: Path, deconv_root: Path) -> Path:
+    """Backward-compatible resolver for the original fixed 3/3/2 product."""
+    return resolve_deconvolved_zarr(
+        raw_zarr,
+        deconv_root,
+        iters_blue=3,
+        iters_green=3,
+        iters_red=2,
+    )
 
 
 def resolve_predicted_mask_zarr(raw_zarr: Path, mask_root: Path) -> Path:
@@ -331,14 +372,56 @@ def _load_target_mask_yx(
     return binary
 
 
-def apply_zero_background_mask(mip_cyx: np.ndarray, mask_yx: np.ndarray) -> np.ndarray:
-    """Set every channel outside the 2D mask to exactly zero and preserve dtype."""
+def apply_background_suppression_mask(
+    mip_cyx: np.ndarray,
+    mask_yx: np.ndarray,
+    *,
+    suppression_percent: float,
+) -> np.ndarray:
+    """Suppress intensities outside the mask while preserving the source dtype.
+
+    ``suppression_percent=99.8`` retains 0.2% of each outside-mask value.
+    ``suppression_percent=100`` sets the outside-mask values exactly to zero.
+    """
     if mip_cyx.ndim != 3:
         raise ValueError(f"Expected CYX MIP, got shape={mip_cyx.shape}")
     if tuple(mip_cyx.shape[1:]) != tuple(mask_yx.shape):
         raise ValueError(f"MIP/mask shape mismatch: {mip_cyx.shape} vs {mask_yx.shape}")
-    return np.where(mask_yx[None, :, :] > 0, mip_cyx, 0).astype(
-        mip_cyx.dtype, copy=False
+    suppression = float(suppression_percent)
+    if not np.isfinite(suppression) or not 0.0 <= suppression <= 100.0:
+        raise ValueError(
+            "outside suppression must be between 0 and 100 percent, "
+            f"got {suppression_percent}"
+        )
+    retain_fraction = 1.0 - suppression / 100.0
+    mask = np.asarray(mask_yx) > 0
+    if suppression == 100.0:
+        return np.where(mask[None, :, :], mip_cyx, 0).astype(
+            mip_cyx.dtype, copy=False
+        )
+
+    values = np.asarray(mip_cyx)
+    output = values.copy()
+    outside = ~mask
+    if np.issubdtype(values.dtype, np.integer):
+        scaled = np.rint(
+            values[:, outside].astype(np.float64) * retain_fraction
+        )
+        limits = np.iinfo(values.dtype)
+        output[:, outside] = np.clip(scaled, limits.min, limits.max).astype(
+            values.dtype
+        )
+    else:
+        output[:, outside] = (
+            values[:, outside] * np.asarray(retain_fraction, dtype=values.dtype)
+        )
+    return output
+
+
+def apply_zero_background_mask(mip_cyx: np.ndarray, mask_yx: np.ndarray) -> np.ndarray:
+    """Backward-compatible exact-zero mask application."""
+    return apply_background_suppression_mask(
+        mip_cyx, mask_yx, suppression_percent=100.0
     )
 
 
@@ -488,6 +571,7 @@ def _save_merged_qc(
     sample: str,
     mode: MIPMode,
     output_png: Path,
+    outside_suppression_percent: float,
     percentile_low: float,
     percentile_high: float,
     max_dimension: int,
@@ -517,30 +601,61 @@ def _save_merged_qc(
         for image in display_images
     ]
 
-    output_title = "Masked MIP (outside=0)" if mode != "raw_unmasked" else "Output MIP (unmasked)"
-    column_titles = (
-        f"Raw target Z{target_slice_1based}",
-        "MIP before mask",
-        output_title,
+    is_masked = mode in ("raw_masked", "deconv_masked")
+    if is_masked:
+        retained_percent = 100.0 - float(outside_suppression_percent)
+        output_title = (
+            "Masked MIP (outside=0)"
+            if np.isclose(outside_suppression_percent, 100.0)
+            else (
+                f"Suppressed MIP (outside retains {retained_percent:g}%)"
+            )
+        )
+        column_titles = (
+            f"Raw target Z{target_slice_1based}",
+            "MIP before mask",
+            output_title,
+        )
+        selected_raw_scale = raw_scale
+        selected_normalized = normalized
+        selected_display_images = display_images
+        selected_display_strides = display_strides
+    else:
+        column_titles = (
+            f"Raw target Z{target_slice_1based}",
+            "Deconvolved MIP" if mode == "deconv_unmasked" else "Raw MIP",
+        )
+        selected_raw_scale = raw_scale[:2]
+        selected_normalized = normalized[:2]
+        selected_display_images = display_images[:2]
+        selected_display_strides = display_strides[:2]
+
+    column_count = len(column_titles)
+    figure, axes = plt.subplots(
+        2, column_count, figsize=(5 * column_count, 10), constrained_layout=True
     )
-    figure, axes = plt.subplots(2, 3, figsize=(15, 10), constrained_layout=True)
+    axes = np.asarray(axes).reshape(2, column_count)
     for column, title in enumerate(column_titles):
-        axes[0, column].imshow(raw_scale[column])
-        axes[0, column].set_title(f"{title}\nshared raw-intensity display scale")
-        axes[1, column].imshow(normalized[column])
-        axes[1, column].set_title(f"{title}\nindependent P{percentile_low:g}–P{percentile_high:g}")
+        axes[0, column].imshow(selected_raw_scale[column])
+        axes[0, column].set_title(f"{title}\nshared intensity display scale")
+        axes[1, column].imshow(selected_normalized[column])
+        axes[1, column].set_title(
+            f"{title}\nindependent P{percentile_low:g}–P{percentile_high:g}"
+        )
         for row in range(2):
             _add_scale_bar(
                 axes[row, column],
-                image_shape_yx=display_images[column].shape[-2:],
+                image_shape_yx=selected_display_images[column].shape[-2:],
                 x_pixel_size_um=x_pixel_size_um,
-                display_stride=display_strides[column],
+                display_stride=selected_display_strides[column],
                 length_um=scale_bar_um,
             )
     for axis in axes.ravel():
         axis.set_xticks([])
         axis.set_yticks([])
-    figure.suptitle(f"{sample} | {mode} | merged RGB | {scale_bar_um:g} µm scale bars")
+    figure.suptitle(
+        f"{sample} | {mode} | merged RGB | {scale_bar_um:g} µm scale bars"
+    )
     figure.savefig(output_png, dpi=170)
     plt.close(figure)
     return output_png
@@ -612,6 +727,7 @@ def _save_mip_snr(
     *,
     output_dir: Path,
     formula: str,
+    outside_suppression_percent: float,
 ) -> tuple[Path, Path]:
     """Save per-channel SNR comparison as compact CSV and JSON files."""
     import csv
@@ -626,27 +742,77 @@ def _save_mip_snr(
         writer = csv.DictWriter(handle, fieldnames=list(dictionaries[0].keys()))
         writer.writeheader()
         writer.writerows(dictionaries)
+    masked_values = [
+        row.masked_mip_snr for row in rows if row.masked_mip_snr is not None
+    ]
+    if np.isclose(outside_suppression_percent, 100.0):
+        note = (
+            "Masked-MIP SNR is undefined after exact zeroing when background standard "
+            "deviation is zero; raw-target and pre-mask MIP SNR remain directly comparable."
+        )
+    else:
+        note = (
+            f"Outside-mask intensities were suppressed by "
+            f"{outside_suppression_percent:g}%. Masked-MIP SNR is mathematically defined "
+            "but is inflated by this deliberate background attenuation; use raw-target "
+            "and pre-mask MIP SNR for the primary quantitative comparison."
+        )
     payload = {
         "formula": formula,
         "roi_mask": "existing_2.5d_unet_prediction",
-        "note": (
-            "Masked-MIP SNR is undefined after exact zeroing when background standard "
-            "deviation is zero; raw-target and pre-mask MIP SNR remain directly comparable."
-        ),
+        "outside_suppression_percent": float(outside_suppression_percent),
+        "outside_retained_percent": float(100.0 - outside_suppression_percent),
+        "note": note,
         "rows": dictionaries,
         "mean_raw_target_snr": float(np.mean([row.raw_target_snr for row in rows])),
         "mean_mip_before_snr": float(np.mean([row.mip_before_snr for row in rows])),
         "mean_delta_mip_before_vs_raw_target": float(
             np.mean([row.delta_mip_before_vs_raw_target for row in rows])
         ),
+        "mean_masked_mip_snr": (
+            float(np.mean(masked_values)) if masked_values else None
+        ),
     }
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return csv_path, json_path
 
 
+def _safe_percent_tag(value: float) -> str:
+    rounded = f"{float(value):g}"
+    return rounded.replace("-", "m").replace(".", "p")
+
+
+def mode_output_directory_name(cfg: MIP3DConfig) -> str:
+    """Return a collision-safe output directory for the selected product."""
+    mode = _require_mode(cfg.mode)
+    if mode in ("raw_unmasked", "raw_masked"):
+        if mode == "raw_unmasked":
+            return "raw_mip"
+        if np.isclose(cfg.outside_suppression_percent, 100.0):
+            return "raw_mip_masked"
+        return (
+            "raw_mip_suppressed_"
+            f"{_safe_percent_tag(cfg.outside_suppression_percent)}pct"
+        )
+
+    iteration_short = (
+        f"{int(cfg.deconv_iters_blue)}"
+        f"{int(cfg.deconv_iters_green)}"
+        f"{int(cfg.deconv_iters_red)}"
+    )
+    if mode == "deconv_unmasked":
+        return f"deconv_{iteration_short}_mip"
+    if np.isclose(cfg.outside_suppression_percent, 100.0):
+        return f"deconv_{iteration_short}_mip_masked"
+    return (
+        f"deconv_{iteration_short}_mip_suppressed_"
+        f"{_safe_percent_tag(cfg.outside_suppression_percent)}pct"
+    )
+
+
 def _output_sample_dir(cfg: MIP3DConfig, raw_zarr: Path) -> Path:
     output_root = Path(cfg.output_root or cfg.project_root / "results" / "mip_2d")
-    return output_root / MODE_DIRECTORY_NAMES[_require_mode(cfg.mode)] / relative_volume_path(raw_zarr)
+    return output_root / mode_output_directory_name(cfg) / relative_volume_path(raw_zarr)
 
 
 def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
@@ -656,6 +822,15 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
     if int(cfg.level) != 0:
         raise ValueError("The current 3D MIP workflow is fixed to source level 0")
     mode = _require_mode(cfg.mode)
+    _validate_iteration_count(cfg.deconv_iters_blue, "blue iterations")
+    _validate_iteration_count(cfg.deconv_iters_green, "green iterations")
+    _validate_iteration_count(cfg.deconv_iters_red, "red iterations")
+    suppression = float(cfg.outside_suppression_percent)
+    if not np.isfinite(suppression) or not 0.0 <= suppression <= 100.0:
+        raise ValueError(
+            "outside_suppression_percent must be between 0 and 100, "
+            f"got {cfg.outside_suppression_percent}"
+        )
 
     raw_zarr = Path(cfg.raw_zarr).expanduser().resolve()
     raw_root = Path(cfg.raw_root or cfg.project_root / "results" / "img" / "3d_data")
@@ -671,8 +846,14 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
     raw_target_cyx = _read_cyx_slice(raw_array, target_slice)
 
     projection_source_zarr = (
-        resolve_deconvolved_332_zarr(raw_zarr, deconv_root)
-        if mode == "deconv_masked"
+        resolve_deconvolved_zarr(
+            raw_zarr,
+            deconv_root,
+            iters_blue=cfg.deconv_iters_blue,
+            iters_green=cfg.deconv_iters_green,
+            iters_red=cfg.deconv_iters_red,
+        )
+        if mode.startswith("deconv_")
         else raw_zarr
     )
     source_array, source_axes, _source_metadata = _open_level_array(
@@ -686,7 +867,7 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
     )
     mip_before = maximum_intensity_projection_cyx(source_array)
 
-    if mode == "deconv_masked":
+    if mode.startswith("deconv_"):
         mip_before = mip_before.astype(np.float32, copy=False)
         if mip_before.dtype != np.float32:
             raise ValueError("Deconvolved MIP must be float32")
@@ -700,7 +881,11 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
             target_slice_1based=target_slice,
             expected_yx=tuple(int(value) for value in mip_before.shape[1:]),
         )
-        mip_output = apply_zero_background_mask(mip_before, mask_yx)
+        mip_output = apply_background_suppression_mask(
+            mip_before,
+            mask_yx,
+            suppression_percent=cfg.outside_suppression_percent,
+        )
     else:
         mip_output = mip_before.copy()
 
@@ -708,7 +893,7 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         raise ValueError(
             f"Raw MIP dtype changed unexpectedly: {mip_output.dtype} != {raw_array.dtype}"
         )
-    if mode == "deconv_masked" and mip_output.dtype != np.float32:
+    if mode.startswith("deconv_") and mip_output.dtype != np.float32:
         raise ValueError(f"Deconvolved MIP must be float32, got {mip_output.dtype}")
 
     optics = resolve_channel_optics(raw_zarr, level=cfg.level)
@@ -747,17 +932,31 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         "mask_omezarr": str(mask_zarr) if mask_zarr is not None else None,
         "mask_source": "existing_2.5d_unet_target_prediction" if mask_zarr else None,
         "mask_applied_after_projection": bool(mask_zarr),
-        "outside_mask_value": 0 if mask_zarr else None,
-        "deconvolution_model": DECONV_MODEL if mode == "deconv_masked" else None,
+        "outside_mask_suppression_percent": (
+            float(cfg.outside_suppression_percent) if mask_zarr else None
+        ),
+        "outside_mask_retained_fraction": (
+            float(1.0 - cfg.outside_suppression_percent / 100.0)
+            if mask_zarr
+            else None
+        ),
+        "outside_mask_operation": (
+            "multiply_by_retained_fraction" if mask_zarr else None
+        ),
+        "deconvolution_model": DECONV_MODEL if mode.startswith("deconv_") else None,
         "deconvolution_iterations": (
-            {"blue": 3, "green": 3, "red": 2}
-            if mode == "deconv_masked"
+            {
+                "blue": int(cfg.deconv_iters_blue),
+                "green": int(cfg.deconv_iters_green),
+                "red": int(cfg.deconv_iters_red),
+            }
+            if mode.startswith("deconv_")
             else None
         ),
         "stored_normalization": "none",
         "stored_dtype_policy": (
             "float32_from_deconvolution"
-            if mode == "deconv_masked"
+            if mode.startswith("deconv_")
             else "preserve_raw_source_dtype"
         ),
         "display_qc": "merged_rgb_only; shared raw scale and independent percentile normalization",
@@ -794,6 +993,7 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         max_dimension=cfg.qc_max_dimension,
         x_pixel_size_um=_x_pixel_size_um(raw_zarr, level=cfg.level),
         scale_bar_um=cfg.scale_bar_um,
+        outside_suppression_percent=cfg.outside_suppression_percent,
     )
 
     snr_csv: Path | None = None
@@ -803,6 +1003,7 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
             snr_rows,
             output_dir=sample_dir,
             formula="(foreground_mean - background_mean) / (background_sample_sd + epsilon)",
+            outside_suppression_percent=cfg.outside_suppression_percent,
         )
 
     report = {
@@ -852,7 +1053,9 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
 
 
 __all__ = [
-    "DECONV_ITERATION_TAG",
+    "DECONV_DEFAULT_ITERS_BLUE",
+    "DECONV_DEFAULT_ITERS_GREEN",
+    "DECONV_DEFAULT_ITERS_RED",
     "DECONV_MODEL",
     "EXPECTED_Z_COUNT",
     "MIP3DConfig",
@@ -860,9 +1063,13 @@ __all__ = [
     "MIPSNRRow",
     "MIPMode",
     "MODE_DIRECTORY_NAMES",
+    "apply_background_suppression_mask",
     "apply_zero_background_mask",
     "create_mip_for_volume",
+    "deconvolution_iteration_tag",
     "maximum_intensity_projection_cyx",
+    "mode_output_directory_name",
     "resolve_deconvolved_332_zarr",
+    "resolve_deconvolved_zarr",
     "resolve_predicted_mask_zarr",
 ]
