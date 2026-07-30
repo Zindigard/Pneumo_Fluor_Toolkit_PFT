@@ -10,8 +10,9 @@ All 40 Z planes are projected. The saved quantitative image remains in the
 source intensity scale: raw products retain the original dtype, whereas the
 selected deconvolution product is stored as float32. Display normalization is
 used only for the merged-RGB QC figure. Every QC panel receives a calibrated
-2 µm scale bar by default, and per-channel ROI SNR compares the configured raw
-target slice with the unmasked MIP using the predicted 2.5D foreground mask.
+2 µm scale bar by default. ROI SNR is reported for every wavelength channel
+and for a non-normalized merged scalar image defined as the root-sum-square
+of all channels. The predicted 2.5D foreground mask defines signal/background.
 """
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ class MIP3DOutput:
 
 @dataclass(frozen=True)
 class MIPSNRRow:
-    """ROI-SNR comparison for one channel using the predicted 2.5D mask."""
+    """ROI-SNR comparison for one channel or the merged RSS image."""
 
     sample: str
     target_slice_1based: int
@@ -661,6 +662,20 @@ def _save_merged_qc(
     return output_png
 
 
+def _merged_rss_intensity(cyx: np.ndarray) -> np.ndarray:
+    """Return a quantitative merged scalar image without display normalization.
+
+    The merged intensity is the root-sum-square across channels:
+    ``sqrt(sum_c I_c**2)``. This avoids arbitrary RGB luminance weights and
+    retains the original numerical intensity scale, although channels with
+    larger amplitudes contribute more strongly to the merged metric.
+    """
+    values = np.asarray(cyx, dtype=np.float64)
+    if values.ndim != 3 or values.shape[0] < 1:
+        raise ValueError(f"Merged SNR expects CYX data, got {values.shape}")
+    return np.sqrt(np.sum(np.square(values), axis=0, dtype=np.float64))
+
+
 def _calculate_mip_snr_rows(
     *,
     sample: str,
@@ -719,6 +734,47 @@ def _calculate_mip_snr_rows(
                 masked_mip_snr_status=after_status,
             )
         )
+
+    # Add one quantitative merged row. This is not the independently
+    # normalized RGB rendering used in the lower QC row. It is computed from
+    # original-scale channel values as sqrt(sum(channel**2)).
+    raw_merged = _merged_rss_intensity(raw_target_cyx)
+    before_merged = _merged_rss_intensity(mip_before_cyx)
+    after_merged = _merged_rss_intensity(mip_output_cyx)
+    raw_stats = _roi_snr_components(raw_merged, mask_yx, epsilon)
+    before_stats = _roi_snr_components(before_merged, mask_yx, epsilon)
+    after_stats = _roi_snr_components(after_merged, mask_yx, epsilon)
+    after_sd = float(after_stats[4])
+    if after_sd <= epsilon:
+        after_snr = None
+        after_status = "undefined_after_exact_zero_background"
+    else:
+        after_snr = float(after_stats[-1])
+        after_status = "defined"
+    rows.append(
+        MIPSNRRow(
+            sample=sample,
+            target_slice_1based=int(target_slice_1based),
+            channel_index=-1,
+            channel_name="MERGED_RSS_ALL_CHANNELS",
+            signal_pixels=int(raw_stats[0]),
+            background_pixels=int(raw_stats[1]),
+            raw_target_signal_mean=float(raw_stats[2]),
+            raw_target_background_mean=float(raw_stats[3]),
+            raw_target_background_sd=float(raw_stats[4]),
+            raw_target_snr=float(raw_stats[-1]),
+            mip_before_signal_mean=float(before_stats[2]),
+            mip_before_background_mean=float(before_stats[3]),
+            mip_before_background_sd=float(before_stats[4]),
+            mip_before_snr=float(before_stats[-1]),
+            delta_mip_before_vs_raw_target=float(before_stats[-1] - raw_stats[-1]),
+            masked_mip_signal_mean=float(after_stats[2]),
+            masked_mip_background_mean=float(after_stats[3]),
+            masked_mip_background_sd=after_sd,
+            masked_mip_snr=after_snr,
+            masked_mip_snr_status=after_status,
+        )
+    )
     return rows
 
 
@@ -729,7 +785,7 @@ def _save_mip_snr(
     formula: str,
     outside_suppression_percent: float,
 ) -> tuple[Path, Path]:
-    """Save per-channel SNR comparison as compact CSV and JSON files."""
+    """Save per-channel plus merged-RSS SNR as compact CSV and JSON files."""
     import csv
 
     if not rows:
@@ -742,8 +798,17 @@ def _save_mip_snr(
         writer = csv.DictWriter(handle, fieldnames=list(dictionaries[0].keys()))
         writer.writeheader()
         writer.writerows(dictionaries)
+    channel_rows = [row for row in rows if row.channel_index >= 0]
+    merged_rows = [row for row in rows if row.channel_index == -1]
+    if len(merged_rows) != 1:
+        raise ValueError(
+            f"Expected exactly one merged SNR row, received {len(merged_rows)}"
+        )
+    merged_row = merged_rows[0]
     masked_values = [
-        row.masked_mip_snr for row in rows if row.masked_mip_snr is not None
+        row.masked_mip_snr
+        for row in channel_rows
+        if row.masked_mip_snr is not None
     ]
     if np.isclose(outside_suppression_percent, 100.0):
         note = (
@@ -763,15 +828,36 @@ def _save_mip_snr(
         "outside_suppression_percent": float(outside_suppression_percent),
         "outside_retained_percent": float(100.0 - outside_suppression_percent),
         "note": note,
+        "merged_intensity_definition": "sqrt(sum_over_channels(original_scale_intensity**2))",
+        "merged_metric_note": (
+            "The merged SNR is quantitative and non-normalized, but channels with "
+            "larger numerical amplitudes contribute more strongly. It is not the "
+            "independently normalized RGB display image."
+        ),
         "rows": dictionaries,
-        "mean_raw_target_snr": float(np.mean([row.raw_target_snr for row in rows])),
-        "mean_mip_before_snr": float(np.mean([row.mip_before_snr for row in rows])),
+        "mean_raw_target_snr": float(
+            np.mean([row.raw_target_snr for row in channel_rows])
+        ),
+        "mean_mip_before_snr": float(
+            np.mean([row.mip_before_snr for row in channel_rows])
+        ),
         "mean_delta_mip_before_vs_raw_target": float(
-            np.mean([row.delta_mip_before_vs_raw_target for row in rows])
+            np.mean([row.delta_mip_before_vs_raw_target for row in channel_rows])
         ),
         "mean_masked_mip_snr": (
             float(np.mean(masked_values)) if masked_values else None
         ),
+        "merged_raw_target_snr": float(merged_row.raw_target_snr),
+        "merged_mip_before_snr": float(merged_row.mip_before_snr),
+        "merged_delta_mip_before_vs_raw_target": float(
+            merged_row.delta_mip_before_vs_raw_target
+        ),
+        "merged_masked_mip_snr": (
+            float(merged_row.masked_mip_snr)
+            if merged_row.masked_mip_snr is not None
+            else None
+        ),
+        "merged_masked_mip_snr_status": merged_row.masked_mip_snr_status,
     }
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return csv_path, json_path

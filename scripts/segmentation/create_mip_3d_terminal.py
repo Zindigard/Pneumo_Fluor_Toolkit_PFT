@@ -305,7 +305,7 @@ def main() -> int:
     )
     print(f"QC scale bars:        {args.scale_bar_um:g} µm on every panel")
     print(
-        "SNR comparison:       raw target vs pre-mask and suppressed MIP, per channel"
+        "SNR comparison:       raw target vs pre-mask and suppressed MIP, channels + merged RSS"
         if is_masked
         else "SNR comparison:       not calculated without a mask"
     )
