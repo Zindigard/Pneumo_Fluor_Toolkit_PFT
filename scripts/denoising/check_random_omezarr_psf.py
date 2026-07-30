@@ -33,7 +33,7 @@ Check a specified store instead of selecting randomly::
 Run full low-iteration Richardson-Lucy after the successful check::
 
     & $PY scripts\denoising\check_random_omezarr_psf.py `
-      --seed 42 --run-deconvolution --iters 3
+      --seed 42 --run-deconvolution --iters-blue 4 --iters-green 5 --iters-red 3
 """
 
 from __future__ import annotations
@@ -326,7 +326,15 @@ def main() -> int:
         action="store_true",
         help="After a successful check, run full level-0 Richardson-Lucy deconvolution",
     )
-    parser.add_argument("--iters", type=int, default=3, help="Iterations for optional full test deconvolution")
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=3,
+        help="Default iteration count for the optional full test",
+    )
+    parser.add_argument("--iters-blue", type=int, default=None, help="Optional 405 nm blue-channel iteration count")
+    parser.add_argument("--iters-green", type=int, default=None, help="Optional 488 nm green-channel iteration count")
+    parser.add_argument("--iters-red", type=int, default=None, help="Optional 561 nm red-channel iteration count")
     parser.add_argument("--background", type=float, default=0.0)
     parser.add_argument("--filter-epsilon", type=float, default=None)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
@@ -355,6 +363,17 @@ def main() -> int:
         candidate_count = len(candidates)
 
     slices = _parse_slices(args.sample_slices)
+    channel_iterations = {
+        color: value
+        for color, value in (
+            ("blue", args.iters_blue),
+            ("green", args.iters_green),
+            ("red", args.iters_red),
+        )
+        if value is not None
+    }
+    if any(value < 1 for value in channel_iterations.values()):
+        raise ValueError("All per-channel iteration counts must be at least 1")
     print("\nPFT random OME-Zarr and master PSF check")
     print("=" * 72)
     print(f"Available source stores: {candidate_count}")
@@ -417,11 +436,21 @@ def main() -> int:
 
     if args.run_deconvolution:
         print("\nStarting optional full Richardson-Lucy test...")
+        print(f"Default iterations: {args.iters}")
+        print(
+            "Per-channel iterations: "
+            + (
+                ", ".join(f"{color}={value}" for color, value in channel_iterations.items())
+                if channel_iterations
+                else "none; default used for all channels"
+            )
+        )
         result = deconvolve_omezarr_3ch_to_omezarr_skimage(
             in_omezarr=selected_zarr,
             out_root=args.deconv_out_root,
             model=args.model,
             iters=args.iters,
+            channel_iterations=channel_iterations,
             background=args.background,
             level=0,
             overwrite=not args.no_overwrite,
