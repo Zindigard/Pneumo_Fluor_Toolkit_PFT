@@ -15,15 +15,13 @@ The 3D mode discovers level-0 ``image.ome.zarr`` stores below
 Only the selected middle slice is manually labeled. The neighbouring slices
 are loaded as optional visual context, but are not annotated.
 
-The standard target slices are one-based Z10 and Z12::
+The only standard target slice is one-based Z10::
 
-    Z9,  Z10, Z11  -> annotate Z10
-    Z11, Z12, Z13  -> annotate Z12
+    Z9, Z10, Z11 -> annotate Z10
 
 For each selected target, the script saves a strict binary mask as::
 
     results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif
-    results/training_files/U-net/3d_25d/<experiment>/<sample>/z012_mask.tif
 
 Mask semantics are always ``0=background`` and ``1=foreground``. A
 three-colour composite is built from wavelength metadata, with 405 nm shown in
@@ -43,10 +41,10 @@ Open a specific OME-Zarr and target slice
     python scripts/segmentation/labeling.py \
         --mode 3d \
         --zarr "results/img/3d_data/<experiment>/<sample>/image.ome.zarr" \
-        --slice 12
+        --slice 10
 
 The ``--slice`` argument uses one-based biological slice numbering. Therefore,
-``--slice 12`` reads array index 11 and saves ``z012_mask.tif``.
+``--slice 10`` reads array index 9 and saves ``z010_mask.tif``.
 """
 
 from __future__ import annotations
@@ -90,7 +88,7 @@ PREFERRED_IMAGE_NAMES: tuple[str, ...] = (
     "preview_raw.png",
 )
 
-DEFAULT_3D_TARGET_SLICES_1BASED: tuple[int, ...] = (10, 12)
+DEFAULT_3D_TARGET_SLICES_1BASED: tuple[int, ...] = (10,)
 WAVELENGTH_TO_RGB: tuple[tuple[float, int, str], ...] = (
     (405.0, 2, "blue"),
     (488.0, 1, "green"),
@@ -640,7 +638,7 @@ def choose_zarr_3d_interactively(
             f"{completed}/{len(DEFAULT_3D_TARGET_SLICES_1BASED)} target masks"
         )
     if not visible:
-        print("\nAll 3D stacks have masks for Z10 and Z12.")
+        print("\nAll 3D stacks have a mask for Z10.")
         return None
     selected = choose_number("Choose a 3D OME-Zarr stack", labels)
     return None if selected is None else visible[selected]
@@ -965,8 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="slice_1based",
         type=int,
         help=(
-            "One-based middle Z-slice for 3D annotation. Standard targets are "
-            "10 and 12."
+            "One-based middle Z-slice for 3D annotation. The fixed target is Z10."
         ),
     )
     parser.add_argument(
@@ -1070,7 +1067,7 @@ def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
     fixed_slice = args.slice_1based
     if fixed_slice is not None and fixed_slice not in DEFAULT_3D_TARGET_SLICES_1BASED:
         raise SystemExit(
-            f"3D annotation is fixed to Z10 and Z12; received --slice {fixed_slice}."
+            f"3D annotation is fixed to Z10; received --slice {fixed_slice}."
         )
 
     if fixed_zarr is not None and fixed_slice is not None:

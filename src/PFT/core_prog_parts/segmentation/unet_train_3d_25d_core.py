@@ -1,22 +1,20 @@
-"""Training and evaluation for the Z10/Z12 merged-RGB 2.5D U-Net.
+"""Training and evaluation for the Z10-only merged-RGB 2.5D U-Net.
 
-Only two middle slices are manually annotated per selected stack:
+Only one middle slice is manually annotated per selected stack:
 
-* Z9, Z10, Z11 -> target mask at Z10;
-* Z11, Z12, Z13 -> target mask at Z12.
+* Z9, Z10, Z11 -> target mask at Z10.
 
-For each Z position, the microscopy channels are mapped by wavelength to a
-merged RGB image: 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB
-context images are concatenated in Z-major order, producing nine network input
-channels and one binary foreground output. Training and validation use the
-same merged-RGB construction and the same context-wise percentile limits.
+For target Z10, the microscopy channels are mapped by wavelength to a merged
+RGB image: 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB context
+images are concatenated in Z-major order, producing nine network input channels
+and one binary foreground output. Training and validation use the same merged-
+RGB construction and the same context-wise percentile limits.
 
 Manual-mask convention
 ----------------------
 ``results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif``
-``results/training_files/U-net/3d_25d/<experiment>/<sample>/z012_mask.tif``
 
-Unannotated stacks and unannotated Z-slices are never treated as background.
+Unannotated stacks are never treated as background.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from __future__ import annotations
 import csv
 import json
 import random
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -752,7 +751,7 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
         raise ValueError("This thesis workflow requires z_radius=1 (Z-1, Z, Z+1)")
     if tuple(cfg.training_slices_1based) != DEFAULT_TRAINING_SLICES_1BASED:
         raise ValueError(
-            f"This workflow is fixed to Z10 and Z12; received {cfg.training_slices_1based}."
+            f"This workflow is fixed to Z10 only; received {cfg.training_slices_1based}."
         )
     if cfg.channels is not None:
         raise ValueError(
@@ -799,7 +798,9 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
         str(best_model),
         custom_objects={"bce_dice_loss": bce_dice_loss, "dice_coef": dice_coef, "iou_coef": iou_coef},
     )
-    evaluation_dir = cfg.model_root / "evaluation_training_slices"
+    evaluation_dir = cfg.model_root / "evaluation_z010"
+    if evaluation_dir.exists():
+        shutil.rmtree(evaluation_dir)
     partitions = {
         (str(entry.image_zarr.resolve()), entry.slice_1based): "train"
         for entry in train_entries
@@ -814,7 +815,7 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
 
     summary = {
         "dataset": cfg.dataset,
-        "model_contract": "pft_3d_25d_merged_rgb_z10_z12_v1",
+        "model_contract": "pft_3d_25d_merged_rgb_z10_v1",
         "input_definition": "Z-1/Z/Z+1 wavelength-mapped merged RGB images concatenated as 9 channels",
         "model_input_channels": model_channels,
         "z_radius": cfg.z_radius,

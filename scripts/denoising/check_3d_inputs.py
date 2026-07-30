@@ -1,6 +1,6 @@
 """Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
 
-The default manually annotated target slices are Z10 and Z12. Each target is stored as one binary TIFF, for example
+The only manually annotated target slice is Z10, stored as one binary TIFF, for example
 ``results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif``. Only the middle
 slice is annotated; neighbouring slices are read automatically during 2.5D
 training.
@@ -66,7 +66,7 @@ def main() -> int:
     parser.add_argument(
         "--check-masks",
         action="store_true",
-        help="Require Z10 and Z12 masks in the checked sample folders",
+        help="Require the Z10 mask in each checked sample folder",
     )
     parser.add_argument(
         "--annotated-only",

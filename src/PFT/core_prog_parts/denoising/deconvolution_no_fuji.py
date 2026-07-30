@@ -42,7 +42,22 @@ from PFT.core_prog_parts.denoising.psf_creator import (
 )
 
 PSFModel = Literal["BW", "GL", "RW"]
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10,)
+
+# These attributes describe the current derived OME-Zarr and therefore cannot
+# retain the source values under the same keys when dtype, shape, or pyramid
+# properties change. Their original values are preserved in a nested snapshot.
+_OUTPUT_OWNED_ROOT_ATTRS: frozenset[str] = frozenset(
+    {
+        "pft_axes",
+        "pft_level0_shape",
+        "pft_level0_dtype",
+        "pft_multiscale_enabled",
+        "pft_pyramid_max_layer",
+        "pft_pyramid_downscale",
+    }
+)
+_SOURCE_DERIVED_METADATA_KEY = "pft_source_derived_root_metadata"
 
 
 @dataclass(frozen=True)
@@ -228,6 +243,47 @@ def _axes_descriptors(axes: str) -> list[dict[str, str]]:
             item["unit"] = "micrometer"
         output.append(item)
     return output
+
+
+def _prepare_source_metadata_for_derived_store(
+    source_attrs: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate source metadata from attributes owned by the derived store.
+
+    Attributes such as ``pft_level0_dtype`` describe the array currently stored
+    at level 0. A deconvolution output is float32 even when the source is uint16,
+    so copying the source value under the same key would be semantically wrong.
+    The source values are retained together under
+    ``pft_source_derived_root_metadata`` and all non-conflicting attributes keep
+    their original keys.
+    """
+    direct_attrs = dict(source_attrs)
+    derived_snapshot: dict[str, Any] = {}
+    for key in sorted(_OUTPUT_OWNED_ROOT_ATTRS):
+        if key in direct_attrs:
+            derived_snapshot[key] = direct_attrs.pop(key)
+
+    existing_snapshot = direct_attrs.pop(_SOURCE_DERIVED_METADATA_KEY, None)
+    if existing_snapshot is not None:
+        derived_snapshot["upstream_snapshot"] = existing_snapshot
+
+    if derived_snapshot:
+        direct_attrs[_SOURCE_DERIVED_METADATA_KEY] = derived_snapshot
+    return direct_attrs, derived_snapshot
+
+
+def _metadata_mismatches(
+    root: zarr.Group,
+    *,
+    direct_source_attrs: Mapping[str, Any],
+) -> list[str]:
+    """Return source metadata fields not retained in the stored output."""
+    mismatches: list[str] = []
+    for key, expected_value in direct_source_attrs.items():
+        actual_value = root.attrs.get(key)
+        if actual_value != expected_value:
+            mismatches.append(key)
+    return mismatches
 
 
 def _create_output_store(
@@ -593,7 +649,10 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     if not preflight.passed:
         raise ValueError(f"Input OME-Zarr failed pre-deconvolution checks: {preflight_report}")
 
-    source_attrs = copyable_root_metadata(in_omezarr)
+    source_attrs_raw = copyable_root_metadata(in_omezarr)
+    source_attrs, source_derived_metadata = _prepare_source_metadata_for_derived_store(
+        source_attrs_raw
+    )
     base_scale = coordinate_scale_for_level(in_omezarr, level=level)
     chunks_in = tuple(int(value) for value in (array_in.chunks or (1, 1, 256, 256)))
     processing = {
@@ -633,9 +692,12 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
             for item in master_matches
         ],
         "source_root_metadata_preserved": True,
+        "source_output_owned_metadata_preserved_under": (
+            _SOURCE_DERIVED_METADATA_KEY if source_derived_metadata else None
+        ),
         "created_utc": datetime.now(timezone.utc).isoformat(),
     }
-    _, output_arrays = _create_output_store(
+    output_root_group, output_arrays = _create_output_store(
         out_zarr=out_zarr,
         shape_czyx=(c_size, z_size, y_size, x_size),
         chunks_czyx=chunks_in,
@@ -644,6 +706,15 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         source_attrs=source_attrs,
         processing=processing,
     )
+    initial_metadata_mismatches = _metadata_mismatches(
+        output_root_group,
+        direct_source_attrs=source_attrs,
+    )
+    if initial_metadata_mismatches:
+        raise ValueError(
+            "Deconvolved OME-Zarr could not initialize preserved source metadata fields: "
+            + ", ".join(initial_metadata_mismatches)
+        )
 
     statistics: list[VolumeStats] = []
     for channel_index in range(c_size):
@@ -690,11 +761,10 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     # Reopen from disk before validation so reports describe stored values.
     stored_root = zarr.open_group(str(out_zarr), mode="r")
     stored_level0 = stored_root["0"]
-    metadata_mismatches: list[str] = []
-    for key, expected_value in source_attrs.items():
-        actual_value = stored_root.attrs.get(key)
-        if actual_value != expected_value:
-            metadata_mismatches.append(key)
+    metadata_mismatches = _metadata_mismatches(
+        stored_root,
+        direct_source_attrs=source_attrs,
+    )
     if metadata_mismatches:
         raise ValueError(
             "Deconvolved OME-Zarr did not preserve source metadata fields: "

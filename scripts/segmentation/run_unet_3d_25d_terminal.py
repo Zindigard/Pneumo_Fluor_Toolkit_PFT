@@ -1,9 +1,9 @@
-"""Infer Z10 and Z12 masks, combine them, and broadcast to the full Z-stack.
+"""Infer only the Z10 mask and broadcast it to the full Z-stack.
 
-The trained merged-RGB 2.5D U-Net is evaluated only at Z10 and Z12. Their
-binary masks are combined using a pixelwise maximum, equivalent to a logical
-union. The resulting two-dimensional mask is then copied to every Z-slice and
-saved as ``pred_mask.ome.zarr``. Fluorescence intensities are not modified.
+The trained merged-RGB 2.5D U-Net is evaluated only at Z10 using the
+Z9/Z10/Z11 context. The resulting two-dimensional binary mask is copied to
+every Z-slice and saved as ``pred_mask.ome.zarr``. Fluorescence intensities are
+not modified.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _parse_slices(value: str) -> tuple[int, ...]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Infer Z10/Z12 masks, combine by pixelwise maximum, and broadcast to all Z-slices.",
+        description="Infer the Z10 mask and broadcast it to all Z-slices.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--zarr", type=Path, required=True, help="Original image.ome.zarr used for U-Net inference")
@@ -69,18 +69,17 @@ def main() -> int:
         threshold=0.5,
         predict_batch_size=args.predict_batch_size,
         inference_slices_1based=_parse_slices(args.inference_slices),
-        preview_slices_1based=_parse_slices(args.inference_slices),
         save_probability=not args.no_probability,
     )
     result = run_3d_25d_unet_masks(config)
-    print("\nMerged-mask inference completed")
+    print("\nZ10 mask inference completed")
     print(f"Full ZYX mask OME-Zarr: {result.mask_zarr}")
     print(f"Probability OME-Zarr:   {result.probability_zarr}")
-    print(f"Combined 2D mask:       {result.combined_mask_tif}")
+    print(f"Z10 2D mask:            {result.source_mask_tif}")
     print(f"Source-slice products:  {result.source_slice_dir}")
     print(f"QC figures:             {result.preview_dir}")
     print(f"Report:                 {result.report_json}")
-    print("Z10 and Z12 were inferred, combined by pixelwise maximum, and copied to all Z-slices.")
+    print("Only Z10 was inferred from Z9/Z10/Z11 and copied to all Z-slices.")
     print("No fluorescence intensities were modified in this step.")
     return 0
 

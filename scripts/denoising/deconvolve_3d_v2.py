@@ -9,7 +9,7 @@ no 0-1 normalization is applied. ``clip`` is permanently disabled because
 scikit-image clipping would destroy raw fluorescence intensity ranges.
 
 Quality-control PNGs are created only for the planned 2.5D training slices:
-Z10, Z24, and Z30. Each figure contains original, deconvolved, signed-
+Z10. The figure contains original, deconvolved, signed-
 difference, and absolute-difference views. Richardson-Lucy iterations can be
 set independently for the 405 nm blue, 488 nm green, and 561 nm red channels.
 """

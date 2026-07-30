@@ -15,7 +15,7 @@ import zarr
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 12)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10,)
 
 
 def relative_volume_path(image_zarr: str | Path, image_root: str | Path | None = None) -> Path:

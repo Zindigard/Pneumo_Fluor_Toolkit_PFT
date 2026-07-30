@@ -3,7 +3,7 @@ Apply a saved 2.5D U-Net mask to a saved deconvolved OME-Zarr.
 
 The script preserves all deconvolved foreground values, leaves 2% of intensity
 outside the predicted mask, writes a new multiscale float32 OME-Zarr, validates
-stored values, and calculates ROI SNR on the manually annotated training slices
+stored values, and calculates ROI SNR on the manually annotated Z10 slice
 using the same formula as the 2D workflow.
 """
 

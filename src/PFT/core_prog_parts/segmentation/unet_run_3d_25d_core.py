@@ -1,10 +1,9 @@
-"""Z10/Z12 merged-RGB 2.5D U-Net inference and full-stack mask creation.
+"""Z10-only merged-RGB 2.5D U-Net inference and full-stack mask creation.
 
-The network is evaluated only at the two annotated target positions, Z10 and
-Z12. Each prediction uses the wavelength-mapped merged RGB context around its
-middle slice. The two binary masks are combined by pixelwise maximum, which is
-equivalent to a logical union for 0/1 masks. The combined two-dimensional mask
-is then broadcast to every Z-slice and saved as a ZYX OME-Zarr semantic mask.
+The network is evaluated only at target slice Z10. Its input consists of the
+wavelength-mapped merged-RGB context Z9/Z10/Z11. The predicted two-dimensional
+Z10 mask is then broadcast to every Z-slice and saved as a ZYX OME-Zarr
+semantic mask.
 
 No fluorescence intensities are modified in this module. Background attenuation
 is performed later by ``mask_application_3d.py`` on the saved deconvolution
@@ -14,10 +13,11 @@ output.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -51,10 +51,12 @@ from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (
     resolve_rgb_source_channels,
 )
 
+MODEL_CONTRACT = "pft_3d_25d_merged_rgb_z10_v1"
+
 
 @dataclass
 class UNet25DRunConfig:
-    """Configuration for Z10/Z12 mask-only merged-RGB inference."""
+    """Configuration for Z10-only mask inference."""
 
     project_root: Path = find_project_root(Path(__file__).resolve())
     input_zarr: Path | None = None
@@ -68,23 +70,22 @@ class UNet25DRunConfig:
     threshold: float = 0.5
     predict_batch_size: int = 8
     inference_slices_1based: tuple[int, ...] = DEFAULT_TRAINING_SLICES_1BASED
-    preview_slices_1based: tuple[int, ...] = DEFAULT_TRAINING_SLICES_1BASED
     save_probability: bool = True
-    combination_mode: str = "pixelwise_max"
 
 
 @dataclass(frozen=True)
 class UNet25DRunOutput:
-    """Saved products from one combined-mask inference run."""
+    """Saved products from one Z10-only inference run."""
 
     sample: str
     source_zarr: Path
     mask_zarr: Path
     probability_zarr: Path | None
-    combined_mask_tif: Path
+    source_mask_tif: Path
     source_slice_dir: Path
     preview_dir: Path
     report_json: Path
+
 
 
 def load_25d_model(model_path: Path) -> tf.keras.Model:
@@ -101,31 +102,32 @@ def load_25d_model(model_path: Path) -> tf.keras.Model:
     )
 
 
+
 def _validate_model_contract(model_path: Path) -> Path:
-    """Require the training summary produced by the updated merged-RGB code."""
+    """Require a model trained by the Z10-only merged-RGB workflow."""
     summary_path = model_path.parent / "u_net_3d_25d_training_summary.json"
     if not summary_path.is_file():
         raise FileNotFoundError(
-            f"Model contract summary is missing: {summary_path}. Retrain the model with the "
-            "updated Z10/Z12 merged-RGB training script before inference."
+            f"Model contract summary is missing: {summary_path}. Retrain the model "
+            "with the Z10-only merged-RGB training script before inference."
         )
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    expected_contract = "pft_3d_25d_merged_rgb_z10_z12_v1"
-    if summary.get("model_contract") != expected_contract:
+    if summary.get("model_contract") != MODEL_CONTRACT:
         raise ValueError(
             f"Model summary contract is {summary.get('model_contract')!r}, expected "
-            f"{expected_contract!r}. Retrain with the updated workflow."
+            f"{MODEL_CONTRACT!r}. Retrain with the Z10-only workflow."
         )
     if tuple(summary.get("training_slices_1based") or ()) != DEFAULT_TRAINING_SLICES_1BASED:
         raise ValueError(
-            f"Model was not trained on Z10/Z12: {summary.get('training_slices_1based')}"
+            f"Model was not trained only on Z10: {summary.get('training_slices_1based')}"
         )
     if int(summary.get("model_input_channels", -1)) != 9:
         raise ValueError(
-            f"Model summary does not describe a nine-channel merged-RGB input: "
+            "Model summary does not describe a nine-channel merged-RGB input: "
             f"{summary.get('model_input_channels')}"
         )
     return summary_path
+
 
 
 def _zyx_scale(input_zarr: Path, level: int) -> list[float]:
@@ -135,184 +137,107 @@ def _zyx_scale(input_zarr: Path, level: int) -> list[float]:
     return [float(value) for value in full_scale[1:]]
 
 
+
 def _yx_scale(input_zarr: Path, level: int) -> list[float]:
     return _zyx_scale(input_zarr, level)[1:]
 
 
-def _validate_source_slices(
-    slices_1based: Sequence[int],
-    z_count: int,
-) -> tuple[int, int]:
+
+def _validate_source_slice(slices_1based: Sequence[int], z_count: int) -> int:
     slices = tuple(sorted({int(value) for value in slices_1based}))
     if slices != DEFAULT_TRAINING_SLICES_1BASED:
+        raise ValueError(f"This workflow is fixed to Z10 inference; received {slices}.")
+    slice_number = slices[0]
+    if slice_number < 2 or slice_number > z_count - 1:
         raise ValueError(
-            f"This workflow is fixed to Z10 and Z12 inference; received {slices}."
+            f"Z{slice_number} lacks complete Z-1/Z/Z+1 context for a stack with Z={z_count}."
         )
-    for value in slices:
-        if value < 2 or value > z_count - 1:
-            raise ValueError(
-                f"Z{value} lacks complete Z-1/Z/Z+1 context for a stack with Z={z_count}."
-            )
-    return slices[0], slices[1]
+    return slice_number
 
-
-def combine_source_masks_pixelwise_max(
-    masks_by_slice: Mapping[int, np.ndarray],
-) -> np.ndarray:
-    """Combine binary source-slice masks by elementwise maximum.
-
-    For 0/1 masks this is equivalent to a logical union: a foreground pixel in
-    either Z10 or Z12 remains foreground in the combined mask.
-    """
-    if not masks_by_slice:
-        raise ValueError("At least one source-slice mask is required")
-    ordered = [np.asarray(masks_by_slice[key]) for key in sorted(masks_by_slice)]
-    reference_shape = ordered[0].shape
-    for mask in ordered:
-        if mask.ndim != 2 or mask.shape != reference_shape:
-            raise ValueError(
-                f"Source masks must be matching 2D arrays; expected {reference_shape}, got {mask.shape}"
-            )
-        values = np.unique(mask)
-        if not np.all(np.isin(values, (0, 1))):
-            raise ValueError(f"Source masks must be binary 0/1; values={values[:20]}")
-    return np.maximum.reduce(ordered).astype(np.uint8)
-
-
-def combine_source_probabilities_pixelwise_max(
-    probabilities_by_slice: Mapping[int, np.ndarray],
-) -> np.ndarray:
-    """Combine source-slice probability maps by elementwise maximum."""
-    if not probabilities_by_slice:
-        raise ValueError("At least one source-slice probability map is required")
-    ordered = [np.asarray(probabilities_by_slice[key], dtype=np.float32) for key in sorted(probabilities_by_slice)]
-    reference_shape = ordered[0].shape
-    for probability in ordered:
-        if probability.ndim != 2 or probability.shape != reference_shape:
-            raise ValueError(
-                f"Probability maps must be matching 2D arrays; expected {reference_shape}, got {probability.shape}"
-            )
-        if not np.isfinite(probability).all():
-            raise ValueError("Probability maps contain non-finite values")
-    return np.maximum.reduce(ordered).astype(np.float32)
 
 
 def _save_source_slice_products(
     *,
     source_slice_dir: Path,
-    probabilities: dict[int, np.ndarray],
-    masks: dict[int, np.ndarray],
-    combined_probability: np.ndarray,
-    combined_mask: np.ndarray,
+    slice_number: int,
+    probability: np.ndarray,
+    mask: np.ndarray,
 ) -> Path:
-    """Save individual Z10/Z12 products and their combined 2D products."""
+    """Save the Z10 probability map and strict binary mask."""
     source_slice_dir.mkdir(parents=True, exist_ok=True)
-    for slice_number in sorted(probabilities):
-        tiff.imwrite(
-            source_slice_dir / f"z{slice_number:03d}_foreground_probability.tif",
-            probabilities[slice_number].astype(np.float32),
-        )
-        tiff.imwrite(
-            source_slice_dir / f"z{slice_number:03d}_pred_mask.tif",
-            masks[slice_number].astype(np.uint8),
-        )
     tiff.imwrite(
-        source_slice_dir / "combined_probability_pixelwise_max.tif",
-        combined_probability.astype(np.float32),
+        source_slice_dir / f"z{slice_number:03d}_foreground_probability.tif",
+        probability.astype(np.float32),
     )
-    combined_mask_tif = source_slice_dir / "combined_mask_pixelwise_max.tif"
-    tiff.imwrite(combined_mask_tif, combined_mask.astype(np.uint8))
-    return combined_mask_tif
+    source_mask_tif = source_slice_dir / f"z{slice_number:03d}_pred_mask.tif"
+    tiff.imwrite(source_mask_tif, mask.astype(np.uint8))
+    return source_mask_tif
 
 
-def _save_source_mask_previews(
+
+def _save_source_mask_preview(
     *,
     image_czyx,
     training_cfg: UNet25DTrainConfig,
     rgb_source_channels: tuple[int, int, int],
-    probabilities: dict[int, np.ndarray],
-    masks: dict[int, np.ndarray],
-    combined_mask: np.ndarray,
+    slice_number: int,
+    probability: np.ndarray,
+    mask: np.ndarray,
     sample: str,
     output_dir: Path,
     manual_mask_dir: Path | None,
 ) -> list[Path]:
-    """Save Z10/Z12 prediction QC and one combined-mask QC figure."""
+    """Save the Z10 prediction quality-control figure."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
     normalization_cache: dict[tuple[int, int], tuple[float, float]] = {}
-    safe_sample = sample.replace("/", "__").replace("\\", "__")
+    context = make_merged_rgb_context_slice(
+        image_czyx,
+        slice_number - 1,
+        training_cfg,
+        rgb_source_channels,
+        normalization_cache=normalization_cache,
+    )
+    merged_image = context[1]
+    reference = None
+    if manual_mask_dir is not None:
+        reference_path = find_slice_mask(manual_mask_dir, slice_number)
+        if reference_path is not None:
+            reference = read_binary_slice_mask(reference_path, mask.shape)
 
-    merged_images: dict[int, np.ndarray] = {}
-    for slice_number in sorted(probabilities):
-        z_index = slice_number - 1
-        context = make_merged_rgb_context_slice(
-            image_czyx,
-            z_index,
-            training_cfg,
-            rgb_source_channels,
-            normalization_cache=normalization_cache,
-        )
-        merged_images[slice_number] = context[1]
-        reference = None
-        if manual_mask_dir is not None:
-            reference_path = find_slice_mask(manual_mask_dir, slice_number)
-            if reference_path is not None:
-                reference = read_binary_slice_mask(reference_path, masks[slice_number].shape)
-
-        columns = 5 if reference is not None else 4
-        figure, axes = plt.subplots(
-            1, columns, figsize=(4 * columns, 4), constrained_layout=True
-        )
-        axes[0].imshow(merged_images[slice_number])
-        axes[0].set_title(f"Merged RGB Z{slice_number}")
-        axes[1].imshow(probabilities[slice_number], cmap="viridis", vmin=0, vmax=1)
-        axes[1].set_title("Foreground probability")
-        axes[2].imshow(masks[slice_number], cmap="gray", vmin=0, vmax=1)
-        axes[2].set_title("Predicted mask (0.5)")
-        axes[3].imshow(merged_images[slice_number])
-        axes[3].contour(masks[slice_number], levels=[0.5], colors="white", linewidths=0.7)
-        axes[3].set_title("Predicted-mask overlay")
-        if reference is not None:
-            axes[4].imshow(reference, cmap="gray", vmin=0, vmax=1)
-            axes[4].contour(masks[slice_number], levels=[0.5], colors="red", linewidths=0.6)
-            axes[4].set_title("Manual mask + prediction")
-        for axis in axes:
-            axis.set_xticks([])
-            axis.set_yticks([])
-        figure.suptitle(f"{sample} | source inference Z{slice_number:03d}")
-        path = output_dir / f"{safe_sample}__z{slice_number:03d}__predicted_mask_qc.png"
-        figure.savefig(path, dpi=160)
-        plt.close(figure)
-        saved.append(path)
-
-    first, second = sorted(masks)
-    figure, axes = plt.subplots(1, 5, figsize=(20, 4), constrained_layout=True)
-    axes[0].imshow(masks[first], cmap="gray", vmin=0, vmax=1)
-    axes[0].set_title(f"Z{first} predicted mask")
-    axes[1].imshow(masks[second], cmap="gray", vmin=0, vmax=1)
-    axes[1].set_title(f"Z{second} predicted mask")
-    axes[2].imshow(combined_mask, cmap="gray", vmin=0, vmax=1)
-    axes[2].set_title("Combined pixelwise maximum")
-    axes[3].imshow(merged_images[first])
-    axes[3].contour(combined_mask, levels=[0.5], colors="white", linewidths=0.7)
-    axes[3].set_title(f"Combined mask on Z{first}")
-    axes[4].imshow(merged_images[second])
-    axes[4].contour(combined_mask, levels=[0.5], colors="white", linewidths=0.7)
-    axes[4].set_title(f"Combined mask on Z{second}")
+    columns = 5 if reference is not None else 4
+    figure, axes = plt.subplots(
+        1,
+        columns,
+        figsize=(4 * columns, 4),
+        constrained_layout=True,
+    )
+    axes[0].imshow(merged_image)
+    axes[0].set_title(f"Merged RGB Z{slice_number}")
+    axes[1].imshow(probability, cmap="viridis", vmin=0, vmax=1)
+    axes[1].set_title("Foreground probability")
+    axes[2].imshow(mask, cmap="gray", vmin=0, vmax=1)
+    axes[2].set_title("Predicted mask (0.5)")
+    axes[3].imshow(merged_image)
+    axes[3].contour(mask, levels=[0.5], colors="white", linewidths=0.7)
+    axes[3].set_title("Predicted-mask overlay")
+    if reference is not None:
+        axes[4].imshow(reference, cmap="gray", vmin=0, vmax=1)
+        axes[4].contour(mask, levels=[0.5], colors="red", linewidths=0.6)
+        axes[4].set_title("Manual mask + prediction")
     for axis in axes:
         axis.set_xticks([])
         axis.set_yticks([])
-    figure.suptitle(f"{sample} | Z{first}/Z{second} mask combination")
-    combined_path = output_dir / f"{safe_sample}__combined_z{first:03d}_z{second:03d}_mask_qc.png"
-    figure.savefig(combined_path, dpi=160)
+    figure.suptitle(f"{sample} | source inference Z{slice_number:03d}")
+    safe_sample = sample.replace("/", "__").replace("\\", "__")
+    path = output_dir / f"{safe_sample}__z{slice_number:03d}__predicted_mask_qc.png"
+    figure.savefig(path, dpi=160)
     plt.close(figure)
-    saved.append(combined_path)
-    return saved
+    return [path]
+
 
 
 def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
-    """Infer Z10/Z12, combine their masks, and broadcast to the full stack."""
+    """Infer only Z10 and broadcast its binary mask to the full Z-stack."""
     if cfg.input_zarr is None:
         raise ValueError("input_zarr is required")
     input_zarr = Path(cfg.input_zarr).resolve()
@@ -325,8 +250,6 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     )
     if cfg.threshold != 0.5:
         raise ValueError("The agreed mask threshold is fixed at 0.5")
-    if cfg.combination_mode != "pixelwise_max":
-        raise ValueError("The agreed Z10/Z12 combination mode is pixelwise_max")
     if cfg.channels is not None:
         raise ValueError(
             "Merged-RGB inference always uses all three wavelength-mapped channels."
@@ -335,8 +258,9 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     image = open_3d_image_czyx(input_zarr, level=cfg.level)
     if int(image.shape[0]) != 3:
         raise ValueError(f"Merged RGB inference requires C=3, received C={image.shape[0]}")
-    source_slices = _validate_source_slices(
-        cfg.inference_slices_1based, int(image.shape[1])
+    slice_number = _validate_source_slice(
+        cfg.inference_slices_1based,
+        int(image.shape[1]),
     )
     relative_volume = relative_volume_path(input_zarr)
     sample = volume_key(input_zarr)
@@ -346,7 +270,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     if expected_channels != 9:
         raise ValueError(
             f"Merged-RGB model must expect 9 channels, but model input is {expected_channels}. "
-            "Retrain with the updated Z10/Z12 merged-RGB training code."
+            "Retrain with the Z10-only merged-RGB training code."
         )
     rgb_source_channels = resolve_rgb_source_channels(input_zarr, level=cfg.level)
 
@@ -361,73 +285,66 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         z_radius=1,
         training_slices_1based=DEFAULT_TRAINING_SLICES_1BASED,
     )
-    normalization_cache: dict[tuple[int, int], tuple[float, float]] = {}
-    probabilities: dict[int, np.ndarray] = {}
-    masks: dict[int, np.ndarray] = {}
-    for slice_number in source_slices:
-        z_index = slice_number - 1
-        print(
-            f"[U-NET MASK] {sample}: infer Z{slice_number:03d} from "
-            f"Z{slice_number - 1}/Z{slice_number}/Z{slice_number + 1} merged RGB"
-        )
-        probability = predict_25d_probability(
-            model,
-            image,
-            z_index,
-            training_cfg,
-            rgb_source_channels,
-            normalization_cache=normalization_cache,
-        )
-        probabilities[slice_number] = probability
-        masks[slice_number] = (probability >= cfg.threshold).astype(np.uint8)
-
-    combined_probability = combine_source_probabilities_pixelwise_max(probabilities)
-    combined_mask = combine_source_masks_pixelwise_max(masks)
-    if not np.any(combined_mask) or np.all(combined_mask):
-        raise ValueError(
-            "Combined Z10/Z12 mask must contain both foreground and background."
-        )
+    print(
+        f"[U-NET MASK] {sample}: infer Z{slice_number:03d} from "
+        f"Z{slice_number - 1}/Z{slice_number}/Z{slice_number + 1} merged RGB"
+    )
+    probability = predict_25d_probability(
+        model,
+        image,
+        slice_number - 1,
+        training_cfg,
+        rgb_source_channels,
+        normalization_cache={},
+    )
+    mask = (probability >= cfg.threshold).astype(np.uint8)
+    if not np.any(mask) or np.all(mask):
+        raise ValueError("The predicted Z10 mask must contain both foreground and background.")
 
     z_count = int(image.shape[1])
-    mask_zyx = np.broadcast_to(
-        combined_mask[None, ...],
-        (z_count, *combined_mask.shape),
-    ).copy()
+    mask_zyx = np.broadcast_to(mask[None, ...], (z_count, *mask.shape)).copy()
 
     sample_dir = ensure_dir(output_root / relative_volume)
-    source_slice_dir = ensure_dir(sample_dir / "source_slice_predictions")
-    combined_mask_tif = _save_source_slice_products(
+    stale_products = (
+        sample_dir / "source_slice_predictions",
+        sample_dir / "qc_source_slices_and_combination",
+        sample_dir / "combined_foreground_probability.ome.zarr",
+        sample_dir / "source_slice_prediction",
+        sample_dir / "qc_z010_prediction",
+    )
+    for stale_path in stale_products:
+        if stale_path.is_dir():
+            shutil.rmtree(stale_path)
+        elif stale_path.exists():
+            stale_path.unlink()
+    source_slice_dir = ensure_dir(sample_dir / "source_slice_prediction")
+    source_mask_tif = _save_source_slice_products(
         source_slice_dir=source_slice_dir,
-        probabilities=probabilities,
-        masks=masks,
-        combined_probability=combined_probability,
-        combined_mask=combined_mask,
+        slice_number=slice_number,
+        probability=probability,
+        mask=mask,
     )
 
     retained = copyable_root_metadata(input_zarr)
     source_channel_names = retained.pop("channel_names", None)
     source_omero = retained.pop("omero", None)
     processing = {
-        "operation": "unet_3d_25d_z10_z12_combined_foreground_mask",
+        "operation": "unet_3d_25d_z10_foreground_mask",
         "source_omezarr": str(input_zarr),
         "source_level": int(cfg.level),
         "model_path": str(model_path),
         "model_summary_path": str(model_summary_path),
-        "model_contract": "pft_3d_25d_merged_rgb_z10_z12_v1",
-        "inference_slices_1based": list(source_slices),
-        "inference_contexts_1based": {
-            str(value): [value - 1, value, value + 1] for value in source_slices
-        },
-        "input_representation": "wavelength-mapped merged RGB at each context Z",
+        "model_contract": MODEL_CONTRACT,
+        "inference_slice_1based": int(slice_number),
+        "inference_context_1based": [slice_number - 1, slice_number, slice_number + 1],
+        "input_representation": "wavelength-mapped merged RGB at Z9/Z10/Z11",
         "rgb_source_channels": {
             "red": int(rgb_source_channels[0]),
             "green": int(rgb_source_channels[1]),
             "blue": int(rgb_source_channels[2]),
         },
         "rgb_wavelengths_nm": {"red": 561.0, "green": 488.0, "blue": 405.0},
-        "combination_mode": "pixelwise_max",
-        "combination_semantics": "logical union of thresholded Z10 and Z12 masks",
-        "combined_mask_broadcast_to_all_z": True,
+        "source_mask_broadcast_to_all_z": True,
         "broadcast_z_count": z_count,
         "threshold": 0.5,
         "normalization": cfg.normalize,
@@ -454,13 +371,13 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         probability_attrs = dict(retained)
         probability_attrs["pft_processing"] = {
             **processing,
-            "operation": "unet_3d_25d_z10_z12_combined_probability_2d",
+            "operation": "unet_3d_25d_z10_probability_2d",
             "stored_axes": "yx",
             "broadcast_to_z": False,
         }
         probability_zarr = save_ome_zarr(
-            sample_dir / "combined_foreground_probability.ome.zarr",
-            combined_probability,
+            sample_dir / "z010_foreground_probability.ome.zarr",
+            probability,
             "yx",
             overwrite=True,
             pyramid_3d=False,
@@ -474,37 +391,35 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         if cfg.manual_mask_root
         else None
     )
-    preview_dir = sample_dir / "qc_source_slices_and_combination"
-    previews = _save_source_mask_previews(
+    preview_dir = sample_dir / "qc_z010_prediction"
+    previews = _save_source_mask_preview(
         image_czyx=image,
         training_cfg=training_cfg,
         rgb_source_channels=rgb_source_channels,
-        probabilities=probabilities,
-        masks=masks,
-        combined_mask=combined_mask,
+        slice_number=slice_number,
+        probability=probability,
+        mask=mask,
         sample=sample,
         output_dir=preview_dir,
         manual_mask_dir=manual_mask_dir,
     )
 
-    individual_foreground = {
-        str(value): int(np.count_nonzero(masks[value])) for value in source_slices
-    }
+    foreground_pixels = int(np.count_nonzero(mask))
     report = {
         "sample": sample,
         "source_omezarr": str(input_zarr),
         "source_level": cfg.level,
         "model_path": str(model_path),
         "model_summary_path": str(model_summary_path),
+        "model_contract": MODEL_CONTRACT,
         "mask_zarr": str(mask_zarr),
         "probability_zarr": str(probability_zarr) if probability_zarr else None,
-        "combined_mask_tif": str(combined_mask_tif),
+        "source_mask_tif": str(source_mask_tif),
         "source_slice_dir": str(source_slice_dir),
-        "inference_slices_1based": list(source_slices),
-        "individual_foreground_pixels": individual_foreground,
-        "combined_foreground_pixels": int(np.count_nonzero(combined_mask)),
-        "combined_background_pixels": int(combined_mask.size - np.count_nonzero(combined_mask)),
-        "combination_mode": "pixelwise_max",
+        "inference_slice_1based": int(slice_number),
+        "inference_context_1based": [slice_number - 1, slice_number, slice_number + 1],
+        "foreground_pixels": foreground_pixels,
+        "background_pixels": int(mask.size - foreground_pixels),
         "full_mask_shape_zyx": list(mask_zyx.shape),
         "full_mask_dtype": str(mask_zyx.dtype),
         "broadcast_to_all_z": True,
@@ -516,22 +431,21 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     report_json = sample_dir / "u_net_3d_25d_mask_report.json"
     report_json.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     return UNet25DRunOutput(
-        sample,
-        input_zarr,
-        mask_zarr,
-        probability_zarr,
-        combined_mask_tif,
-        source_slice_dir,
-        preview_dir,
-        report_json,
+        sample=sample,
+        source_zarr=input_zarr,
+        mask_zarr=mask_zarr,
+        probability_zarr=probability_zarr,
+        source_mask_tif=source_mask_tif,
+        source_slice_dir=source_slice_dir,
+        preview_dir=preview_dir,
+        report_json=report_json,
     )
 
 
 __all__ = [
+    "MODEL_CONTRACT",
     "UNet25DRunConfig",
     "UNet25DRunOutput",
-    "combine_source_masks_pixelwise_max",
-    "combine_source_probabilities_pixelwise_max",
     "load_25d_model",
     "run_3d_25d_unet_masks",
 ]

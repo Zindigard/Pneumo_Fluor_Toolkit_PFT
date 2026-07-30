@@ -1,13 +1,10 @@
-"""Train and evaluate the sparse 2.5D foreground U-Net on Z10 and Z12.
+"""Train and evaluate the sparse Z10-only 2.5D foreground U-Net.
 
-Each annotated target uses a wavelength-mapped merged RGB context:
-
-* Z9, Z10, Z11 -> manual target mask at Z10;
-* Z11, Z12, Z13 -> manual target mask at Z12.
-
-Each context slice is converted to RGB using 561 nm=red, 488 nm=green, and
-405 nm=blue. The three RGB images are concatenated, giving nine model input
-channels. Only the middle slice has a manual binary target.
+Each annotated target uses the wavelength-mapped merged RGB context
+Z9/Z10/Z11 and the manual target mask at Z10. Each context slice is converted
+to RGB using 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB images
+are concatenated, giving nine model input channels. Only Z10 has a manual
+binary target.
 """
 
 from __future__ import annotations
@@ -47,7 +44,7 @@ def _parse_slices(value: str) -> tuple[int, ...]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Train the PFT merged-RGB 2.5D U-Net from Z10 and Z12 annotations.",
+        description="Train the PFT merged-RGB 2.5D U-Net from Z10 annotations only.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--image-root", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
@@ -95,7 +92,7 @@ def main() -> int:
     print(f"Image root:          {config.image_root}")
     print(f"Mask root:           {config.mask_root}")
     print(f"Target slices:       {config.training_slices_1based}")
-    print("Training contexts:   Z9/Z10/Z11 and Z11/Z12/Z13")
+    print("Training context:    Z9/Z10/Z11 -> target Z10")
     print("Input representation: merged RGB at each context Z")
     print("Colour mapping:      561 nm=red, 488 nm=green, 405 nm=blue")
     print("Model input:         3 RGB images = 9 channels")
