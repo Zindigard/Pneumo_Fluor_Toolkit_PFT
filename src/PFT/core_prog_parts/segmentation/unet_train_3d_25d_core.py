@@ -1,15 +1,22 @@
-"""
-Training and evaluation for the sparse-annotation 2.5D foreground U-Net.
+"""Training and evaluation for the Z10/Z12 merged-RGB 2.5D U-Net.
 
-Each training target is one manually annotated middle Z slice. The model input
-contains the three neighbouring Z positions (Z-1, Z, Z+1) for all selected
-fluorescence channels. For three image channels this produces nine network
-input channels and one binary foreground output.
+Only two middle slices are manually annotated per selected stack:
+
+* Z9, Z10, Z11 -> target mask at Z10;
+* Z11, Z12, Z13 -> target mask at Z12.
+
+For each Z position, the microscopy channels are mapped by wavelength to a
+merged RGB image: 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB
+context images are concatenated in Z-major order, producing nine network input
+channels and one binary foreground output. Training and validation use the
+same merged-RGB construction and the same context-wise percentile limits.
 
 Manual-mask convention
 ----------------------
-``results/training_files/U-net/3d_25d/<sample>/z005_mask.tif``
+``results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif``
+``results/training_files/U-net/3d_25d/<experiment>/<sample>/z012_mask.tif``
 
+Unannotated stacks and unannotated Z-slices are never treated as background.
 """
 
 from __future__ import annotations
@@ -29,9 +36,12 @@ import zarr
 
 from PFT.core_prog_parts.common_paths import ensure_dir, find_project_root
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
+from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 from PFT.core_prog_parts.denoising.validation_3d import (
     DEFAULT_TRAINING_SLICES_1BASED,
+    annotation_sample_dir,
     find_slice_mask,
+    volume_key,
 )
 from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
     bce_dice_loss,
@@ -78,13 +88,14 @@ class UNet25DTrainConfig:
 
 @dataclass(frozen=True)
 class AnnotatedSlice:
-    """One OME-Zarr, target Z index, and binary manual mask."""
+    """One OME-Zarr, target Z index, manual mask, and RGB source mapping."""
 
     image_zarr: Path
     mask_tif: Path
     sample: str
     slice_1based: int
     z_index: int
+    rgb_source_channels: tuple[int, int, int]
 
 
 def _default_image_root(project_root: Path) -> Path:
@@ -146,6 +157,45 @@ def read_binary_slice_mask(mask_path: Path, expected_yx: tuple[int, int]) -> np.
     return output
 
 
+RGB_REFERENCE_WAVELENGTHS_NM: dict[str, float] = {
+    "red": 561.0,
+    "green": 488.0,
+    "blue": 405.0,
+}
+
+
+def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[int, int, int]:
+    """Return source channel indices in RGB order using wavelength metadata.
+
+    The returned tuple is ``(red_source, green_source, blue_source)``. Every
+    required colour must be represented exactly once. A tolerance of 35 nm is
+    used only to accommodate minor metadata variation around 405/488/561 nm.
+    """
+    optics = resolve_channel_optics(image_zarr, level=level)
+    assignments: dict[str, int] = {}
+    for item in optics:
+        colour, target = min(
+            RGB_REFERENCE_WAVELENGTHS_NM.items(),
+            key=lambda pair: abs(float(item.wavelength_nm) - pair[1]),
+        )
+        difference = abs(float(item.wavelength_nm) - target)
+        if difference > 35.0:
+            raise ValueError(
+                f"Channel {item.index} ({item.name}) at {item.wavelength_nm:g} nm cannot be "
+                "mapped safely to the 405/488/561 nm RGB convention."
+            )
+        if colour in assignments:
+            raise ValueError(
+                f"Multiple source channels map to {colour}: existing C{assignments[colour]}, "
+                f"new C{item.index}."
+            )
+        assignments[colour] = int(item.index)
+    missing = [colour for colour in ("red", "green", "blue") if colour not in assignments]
+    if missing:
+        raise ValueError(f"Missing wavelength channel(s) for merged RGB input: {missing}")
+    return assignments["red"], assignments["green"], assignments["blue"]
+
+
 def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
     """Find all required sparse annotations without inventing unlabelled targets."""
     image_root = Path(cfg.image_root or _default_image_root(cfg.project_root))
@@ -157,11 +207,26 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
 
     entries: list[AnnotatedSlice] = []
     missing: list[str] = []
+    selected_samples = 0
     for image_zarr in _find_image_zarrs(image_root):
-        sample = image_zarr.parent.name
-        sample_mask_dir = mask_root / sample
+        sample = volume_key(image_zarr, image_root)
+        sample_mask_dir = annotation_sample_dir(mask_root, image_zarr, image_root)
+
+        # A sample is selected for training only by creating its mask folder.
+        # Unannotated stacks remain available for later inference and are ignored
+        # here rather than being treated as incomplete training data.
+        if not sample_mask_dir.is_dir():
+            continue
+        selected_samples += 1
+
         # Read only array geometry here; image voxels remain lazy.
         array = open_3d_image_czyx(image_zarr, level=cfg.level)
+        if int(array.shape[0]) != 3:
+            raise ValueError(
+                f"Merged RGB training requires exactly three fluorescence channels; "
+                f"received C={array.shape[0]} for {image_zarr}."
+            )
+        rgb_source_channels = resolve_rgb_source_channels(image_zarr, level=cfg.level)
         z_count = int(array.shape[1])
         for slice_number in cfg.training_slices_1based:
             if slice_number < 2 or slice_number > z_count - 1:
@@ -171,9 +236,17 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
             if mask_path is None:
                 missing.append(f"{sample}: missing {sample_mask_dir / f'z{slice_number:03d}_mask.tif'}")
                 continue
-            entries.append(AnnotatedSlice(image_zarr, mask_path, sample, slice_number, slice_number - 1))
+            entries.append(AnnotatedSlice(image_zarr, mask_path, sample, slice_number, slice_number - 1, rgb_source_channels))
+    if selected_samples == 0:
+        raise RuntimeError(
+            f"No selected training samples were found under {mask_root}. "
+            "Create one mask folder per selected stack."
+        )
     if missing:
-        raise FileNotFoundError("Required 2.5D annotations are incomplete:\n" + "\n".join(f"- {item}" for item in missing))
+        raise FileNotFoundError(
+            "Selected 2.5D training samples have incomplete annotations:\n"
+            + "\n".join(f"- {item}" for item in missing)
+        )
     if not entries:
         raise RuntimeError("No annotated 2.5D target slices were found")
     return entries
@@ -203,30 +276,54 @@ def split_annotated_slices(
     return train, validation, "single-volume slice split; biological independence is limited"
 
 
-def _selected_channels(img_czyx: Any, cfg: UNet25DTrainConfig) -> tuple[int, ...]:
-    channels = cfg.channels if cfg.channels is not None else tuple(range(int(img_czyx.shape[0])))
-    for channel in channels:
-        if not 0 <= int(channel) < int(img_czyx.shape[0]):
-            raise IndexError(f"Requested channel {channel}, but C={img_czyx.shape[0]}")
-    return tuple(int(channel) for channel in channels)
-
-
-def _source_plane_keys(img_czyx: Any, z: int, cfg: UNet25DTrainConfig) -> list[tuple[int, int]]:
+def _context_z_indices(img_czyx: Any, z: int, cfg: UNet25DTrainConfig) -> tuple[int, int, int]:
+    """Return the complete Z-1/Z/Z+1 indices for one middle slice."""
+    if cfg.z_radius != 1:
+        raise ValueError("Merged-RGB 2.5D input requires z_radius=1")
     z_total = int(img_czyx.shape[1])
+    if not 1 <= int(z) <= z_total - 2:
+        raise IndexError(
+            f"Middle Z index {z} does not have complete Z-1/Z/Z+1 context for Z={z_total}."
+        )
+    return int(z - 1), int(z), int(z + 1)
+
+
+def _source_plane_keys(
+    img_czyx: Any,
+    z: int,
+    cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
+) -> list[tuple[int, int]]:
+    """Return source plane keys in Z-major then RGB order."""
+    if len(rgb_source_channels) != 3 or len(set(rgb_source_channels)) != 3:
+        raise ValueError(f"Invalid RGB source-channel mapping: {rgb_source_channels}")
+    if any(not 0 <= channel < int(img_czyx.shape[0]) for channel in rgb_source_channels):
+        raise IndexError(
+            f"RGB source mapping {rgb_source_channels} is incompatible with C={img_czyx.shape[0]}"
+        )
     return [
-        (channel, int(np.clip(z + dz, 0, z_total - 1)))
-        for dz in range(-cfg.z_radius, cfg.z_radius + 1)
-        for channel in _selected_channels(img_czyx, cfg)
+        (source_channel, z_position)
+        for z_position in _context_z_indices(img_czyx, z, cfg)
+        for source_channel in rgb_source_channels
     ]
 
 
-def make_25d_input_slice(img_czyx: Any, z: int, cfg: UNet25DTrainConfig) -> np.ndarray:
-    """Read and stack complete Z-neighbourhood planes in HWC order."""
-    planes = [np.asarray(img_czyx[channel, z_position], dtype=np.float32)
-              for channel, z_position in _source_plane_keys(img_czyx, z, cfg)]
+def make_25d_input_slice(
+    img_czyx: Any,
+    z: int,
+    cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
+) -> np.ndarray:
+    """Read the complete Z-1/Z/Z+1 merged-RGB context in HWC order."""
+    planes = [
+        np.asarray(img_czyx[channel, z_position], dtype=np.float32)
+        for channel, z_position in _source_plane_keys(
+            img_czyx, z, cfg, rgb_source_channels
+        )
+    ]
     output = np.stack(planes, axis=-1).astype(np.float32, copy=False)
     if not np.isfinite(output).all():
-        raise ValueError(f"Non-finite values found in the 2.5D input for Z index {z}")
+        raise ValueError(f"Non-finite values found in the merged-RGB 2.5D input for Z index {z}")
     return output
 
 
@@ -238,18 +335,21 @@ def make_25d_input_patch(
     height: int,
     width: int,
     cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
 ) -> np.ndarray:
-    """Read only one 2.5D HWC patch from the OME-Zarr array."""
+    """Read one merged-RGB 2.5D HWC patch from the OME-Zarr array."""
     planes = [
         np.asarray(
             img_czyx[channel, z_position, y0:y0 + height, x0:x0 + width],
             dtype=np.float32,
         )
-        for channel, z_position in _source_plane_keys(img_czyx, z, cfg)
+        for channel, z_position in _source_plane_keys(
+            img_czyx, z, cfg, rgb_source_channels
+        )
     ]
     output = np.stack(planes, axis=-1).astype(np.float32, copy=False)
     if not np.isfinite(output).all():
-        raise ValueError(f"Non-finite values found in the 2.5D patch for Z index {z}")
+        raise ValueError(f"Non-finite values found in the merged-RGB 2.5D patch for Z index {z}")
     return output
 
 
@@ -257,33 +357,51 @@ def _normalization_limits(
     img_czyx: Any,
     z: int,
     cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
     cache: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> list[tuple[float, float]]:
-    """Calculate full-plane channel limits, matching the established 2D workflow."""
+    """Calculate context-wise limits matching the annotation RGB composites.
+
+    For each wavelength channel, percentiles are calculated jointly across the
+    three context planes. The same limits are then applied to that colour in
+    Z-1, Z, and Z+1. This keeps training, validation, and annotation display
+    construction consistent.
+    """
     if cfg.normalize == "scale_uint16":
-        return [(0.0, 65535.0)] * len(_source_plane_keys(img_czyx, z, cfg))
+        return [(0.0, 65535.0)] * 9
     if cfg.normalize != "percentile":
         raise ValueError(f"Unknown normalization mode: {cfg.normalize}")
     cache = cache if cache is not None else {}
-    limits: list[tuple[float, float]] = []
-    for key in _source_plane_keys(img_czyx, z, cfg):
+    z_positions = _context_z_indices(img_czyx, z, cfg)
+    channel_limits: dict[int, tuple[float, float]] = {}
+    for source_channel in rgb_source_channels:
+        key = (int(source_channel), int(z))
         if key not in cache:
-            channel, z_position = key
-            plane = np.asarray(img_czyx[channel, z_position], dtype=np.float32)
-            if not np.isfinite(plane).all():
-                raise ValueError(f"Non-finite values in channel {channel}, Z index {z_position}")
-            low = float(np.percentile(plane, 1.0))
-            high = float(np.percentile(plane, 99.8))
+            context = np.asarray(
+                img_czyx[source_channel, z_positions[0] : z_positions[-1] + 1],
+                dtype=np.float32,
+            )
+            if not np.isfinite(context).all():
+                raise ValueError(
+                    f"Non-finite values in source channel {source_channel}, "
+                    f"context Z{z_positions[0] + 1}..Z{z_positions[-1] + 1}"
+                )
+            low = float(np.percentile(context, 1.0))
+            high = float(np.percentile(context, 99.8))
             cache[key] = (low, high)
-        limits.append(cache[key])
-    return limits
+        channel_limits[source_channel] = cache[key]
+    return [
+        channel_limits[source_channel]
+        for _z_position in z_positions
+        for source_channel in rgb_source_channels
+    ]
 
 
 def _normalize_with_limits(
     image_hwc: np.ndarray,
     limits: Sequence[tuple[float, float]],
 ) -> np.ndarray:
-    """Apply full-plane normalization parameters to a patch or complete slice."""
+    """Apply context-wise RGB normalization to a patch or complete input."""
     image = np.asarray(image_hwc, dtype=np.float32)
     if image.ndim != 3 or image.shape[-1] != len(limits):
         raise ValueError(f"Normalization geometry mismatch: shape={image.shape}, limits={len(limits)}")
@@ -298,6 +416,26 @@ def _normalize_with_limits(
                 1.0,
             )
     return output
+
+
+def make_merged_rgb_context_slice(
+    img_czyx: Any,
+    z: int,
+    cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
+    *,
+    normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
+) -> np.ndarray:
+    """Return normalized Z-1/Z/Z+1 RGB images as ``(3, Y, X, 3)``."""
+    raw = make_25d_input_slice(img_czyx, z, cfg, rgb_source_channels)
+    limits = _normalization_limits(
+        img_czyx, z, cfg, rgb_source_channels, normalization_cache
+    )
+    normalized = _normalize_with_limits(raw, limits)
+    return np.stack(
+        (normalized[..., 0:3], normalized[..., 3:6], normalized[..., 6:9]),
+        axis=0,
+    )
 
 
 def _choose_patch(mask_yx: np.ndarray, cfg: UNet25DTrainConfig, rng: random.Random) -> tuple[int, int]:
@@ -335,8 +473,9 @@ def make_25d_dataset(
     if not entries:
         raise ValueError("Cannot create a dataset from zero annotated slices")
     first_image = open_3d_image_czyx(entries[0].image_zarr, level=cfg.level)
-    selected_channels = _selected_channels(first_image, cfg)
-    model_channels = len(selected_channels) * (2 * cfg.z_radius + 1)
+    if int(first_image.shape[0]) != 3:
+        raise ValueError(f"Merged RGB training requires C=3, received C={first_image.shape[0]}")
+    model_channels = 9
     rng = random.Random(cfg.seed + (0 if training else 10000))
 
     def generator():
@@ -353,10 +492,23 @@ def make_25d_dataset(
             mask = mask_cache[entry.mask_tif]
             y0, x0 = _choose_patch(mask, cfg, rng)
             x_patch = make_25d_input_patch(
-                image, entry.z_index, y0, x0, cfg.patch, cfg.patch, cfg
+                image,
+                entry.z_index,
+                y0,
+                x0,
+                cfg.patch,
+                cfg.patch,
+                cfg,
+                entry.rgb_source_channels,
             )
             per_image_cache = normalization_cache.setdefault(entry.image_zarr, {})
-            limits = _normalization_limits(image, entry.z_index, cfg, per_image_cache)
+            limits = _normalization_limits(
+                image,
+                entry.z_index,
+                cfg,
+                entry.rgb_source_channels,
+                per_image_cache,
+            )
             x_patch = _normalize_with_limits(x_patch, limits)
             y_patch = mask[y0:y0 + cfg.patch, x0:x0 + cfg.patch]
             yield x_patch.astype(np.float32, copy=False), y_patch[..., None].astype(np.float32)
@@ -389,13 +541,16 @@ def predict_25d_probability(
     image_czyx: Any,
     z_index: int,
     cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
     *,
     normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> np.ndarray:
-    """Predict one full middle-slice probability map by memory-efficient tiling."""
+    """Predict one middle-slice probability map from merged-RGB context."""
     height = int(image_czyx.shape[-2])
     width = int(image_czyx.shape[-1])
-    limits = _normalization_limits(image_czyx, z_index, cfg, normalization_cache)
+    limits = _normalization_limits(
+        image_czyx, z_index, cfg, rgb_source_channels, normalization_cache
+    )
     probability = np.zeros((height, width), dtype=np.float32)
     tiles: list[np.ndarray] = []
     coordinates: list[tuple[int, int, int, int]] = []
@@ -416,7 +571,14 @@ def predict_25d_probability(
         for x0 in range(0, width, cfg.patch):
             tile_width = min(cfg.patch, width - x0)
             tile = make_25d_input_patch(
-                image_czyx, z_index, y0, x0, tile_height, tile_width, cfg
+                image_czyx,
+                z_index,
+                y0,
+                x0,
+                tile_height,
+                tile_width,
+                cfg,
+                rgb_source_channels,
             )
             tile = _normalize_with_limits(tile, limits)
             tiles.append(_pad_patch_to_size(tile, cfg.patch))
@@ -445,16 +607,22 @@ def _binary_metrics(reference: np.ndarray, prediction: np.ndarray, epsilon: floa
     }
 
 
-def _display_composite(image_czyx: np.ndarray, z_index: int) -> np.ndarray:
-    central = image_czyx[:, z_index]
-    output = np.zeros((*central.shape[1:], 3), dtype=np.float32)
-    destinations = (2, 1, 0)
-    for channel in range(min(3, central.shape[0])):
-        low, high = np.percentile(central[channel], (1.0, 99.8))
-        if high <= low:
-            high = low + 1.0
-        output[..., destinations[channel]] = np.clip((central[channel] - low) / (high - low), 0.0, 1.0)
-    return output
+def _display_composite(
+    image_czyx: Any,
+    z_index: int,
+    cfg: UNet25DTrainConfig,
+    rgb_source_channels: tuple[int, int, int],
+    normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
+) -> np.ndarray:
+    """Return the normalized merged RGB middle image used by the model."""
+    context = make_merged_rgb_context_slice(
+        image_czyx,
+        z_index,
+        cfg,
+        rgb_source_channels,
+        normalization_cache=normalization_cache,
+    )
+    return context[1]
 
 
 def evaluate_annotated_slices(
@@ -475,9 +643,14 @@ def evaluate_annotated_slices(
             image_cache[entry.image_zarr] = open_3d_image_czyx(entry.image_zarr, level=cfg.level)
         image = image_cache[entry.image_zarr]
         reference = read_binary_slice_mask(entry.mask_tif, image.shape[-2:])
+        per_image_cache = normalization_cache.setdefault(entry.image_zarr, {})
         probability = predict_25d_probability(
-            model, image, entry.z_index, cfg,
-            normalization_cache=normalization_cache.setdefault(entry.image_zarr, {}),
+            model,
+            image,
+            entry.z_index,
+            cfg,
+            entry.rgb_source_channels,
+            normalization_cache=per_image_cache,
         )
         prediction = (probability >= cfg.threshold).astype(np.uint8)
         metrics = _binary_metrics(reference, prediction)
@@ -495,15 +668,15 @@ def evaluate_annotated_slices(
         })
 
         figure, axes = plt.subplots(1, 5, figsize=(18, 4), constrained_layout=True)
-        axes[0].imshow(_display_composite(image, entry.z_index))
-        axes[0].set_title("3-channel middle slice")
+        axes[0].imshow(_display_composite(image, entry.z_index, cfg, entry.rgb_source_channels, per_image_cache))
+        axes[0].set_title("Merged RGB middle slice")
         axes[1].imshow(reference, cmap="gray", vmin=0, vmax=1)
         axes[1].set_title("Manual mask")
         axes[2].imshow(probability, cmap="viridis", vmin=0, vmax=1)
         axes[2].set_title("Foreground probability")
         axes[3].imshow(prediction, cmap="gray", vmin=0, vmax=1)
         axes[3].set_title("Predicted mask")
-        overlay = _display_composite(image, entry.z_index)
+        overlay = _display_composite(image, entry.z_index, cfg, entry.rgb_source_channels, per_image_cache)
         axes[4].imshow(overlay)
         axes[4].contour(prediction, levels=[0.5], colors="white", linewidths=0.6)
         axes[4].contour(reference, levels=[0.5], colors="red", linewidths=0.6)
@@ -512,7 +685,8 @@ def evaluate_annotated_slices(
             axis.set_xticks([])
             axis.set_yticks([])
         figure.suptitle(f"{entry.sample} | Z{entry.slice_1based:03d} | {partition}")
-        figure.savefig(output_dir / f"{entry.sample}__z{entry.slice_1based:03d}__mask_qc.png", dpi=160)
+        safe_sample = entry.sample.replace("/", "__").replace("\\", "__")
+        figure.savefig(output_dir / f"{safe_sample}__z{entry.slice_1based:03d}__mask_qc.png", dpi=160)
         plt.close(figure)
 
     csv_path = output_dir / "u_net_3d_25d_annotation_metrics.csv"
@@ -576,6 +750,15 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
     cfg.model_root = ensure_dir(Path(cfg.model_root or _default_model_root(cfg.project_root)))
     if cfg.z_radius != 1:
         raise ValueError("This thesis workflow requires z_radius=1 (Z-1, Z, Z+1)")
+    if tuple(cfg.training_slices_1based) != DEFAULT_TRAINING_SLICES_1BASED:
+        raise ValueError(
+            f"This workflow is fixed to Z10 and Z12; received {cfg.training_slices_1based}."
+        )
+    if cfg.channels is not None:
+        raise ValueError(
+            "Merged-RGB training always uses all three wavelength-mapped channels; "
+            "do not provide a channel subset."
+        )
     if cfg.threshold != 0.5:
         raise ValueError("The agreed binary threshold is fixed at 0.5")
 
@@ -631,10 +814,12 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
 
     summary = {
         "dataset": cfg.dataset,
-        "input_definition": "three Z positions times selected fluorescence channels",
+        "model_contract": "pft_3d_25d_merged_rgb_z10_z12_v1",
+        "input_definition": "Z-1/Z/Z+1 wavelength-mapped merged RGB images concatenated as 9 channels",
         "model_input_channels": model_channels,
         "z_radius": cfg.z_radius,
-        "selected_image_channels": list(cfg.channels) if cfg.channels is not None else "all",
+        "selected_image_channels": "all three, mapped by wavelength to RGB",
+        "rgb_colour_mapping_nm": {"red": 561.0, "green": 488.0, "blue": 405.0},
         "training_slices_1based": list(cfg.training_slices_1based),
         "threshold": cfg.threshold,
         "annotation_count": len(entries),
@@ -677,7 +862,9 @@ __all__ = [
     "open_3d_image_czyx",
     "make_25d_input_patch",
     "make_25d_input_slice",
+    "make_merged_rgb_context_slice",
     "predict_25d_probability",
+    "resolve_rgb_source_channels",
     "read_binary_slice_mask",
     "train_3d_25d_unet",
 ]

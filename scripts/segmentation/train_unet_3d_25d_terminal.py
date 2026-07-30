@@ -1,9 +1,13 @@
-"""
-Train and evaluate the 2.5D foreground U-Net on sparse manual Z-slice masks.
+"""Train and evaluate the sparse 2.5D foreground U-Net on Z10 and Z12.
 
-Default targets are Z5, Z10, Z15, Z20, Z25, Z30, and Z35. Each target uses
-Z-1/Z/Z+1 from all three fluorescence channels, giving a nine-channel input,
-while only the middle slice has a manual binary mask.
+Each annotated target uses a wavelength-mapped merged RGB context:
+
+* Z9, Z10, Z11 -> manual target mask at Z10;
+* Z11, Z12, Z13 -> manual target mask at Z12.
+
+Each context slice is converted to RGB using 561 nm=red, 488 nm=green, and
+405 nm=blue. The three RGB images are concatenated, giving nine model input
+channels. Only the middle slice has a manual binary target.
 """
 
 from __future__ import annotations
@@ -33,18 +37,17 @@ from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (  # noqa: E
 
 
 def _parse_slices(value: str) -> tuple[int, ...]:
-    return tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
-
-
-def _parse_channels(value: str | None) -> tuple[int, ...] | None:
-    if value is None or value.strip().lower() == "all":
-        return None
-    return tuple(int(item) for item in value.replace(",", " ").split())
+    values = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
+    if values != DEFAULT_TRAINING_SLICES_1BASED:
+        raise ValueError(
+            f"This workflow is fixed to target slices {DEFAULT_TRAINING_SLICES_1BASED}; received {values}."
+        )
+    return values
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Train the PFT 2.5D three-slice foreground U-Net.",
+        description="Train the PFT merged-RGB 2.5D U-Net from Z10 and Z12 annotations.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--image-root", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
@@ -52,7 +55,6 @@ def main() -> int:
     parser.add_argument("--model-root", type=Path, default=PROJECT_ROOT / "models" / "u_net_3d_25d")
     parser.add_argument("--level", type=int, default=0)
     parser.add_argument("--slices", default=",".join(map(str, DEFAULT_TRAINING_SLICES_1BASED)))
-    parser.add_argument("--channels", default="all", help="all or channel indices such as 0,1,2")
     parser.add_argument("--patch", type=int, default=256)
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=50)
@@ -73,7 +75,7 @@ def main() -> int:
         model_root=args.model_root,
         level=args.level,
         training_slices_1based=_parse_slices(args.slices),
-        channels=_parse_channels(args.channels),
+        channels=None,
         patch=args.patch,
         batch=args.batch,
         epochs=args.epochs,
@@ -88,19 +90,21 @@ def main() -> int:
         z_radius=1,
         seed=args.seed,
     )
-    print("\nPFT 2.5D U-Net training")
+    print("\nPFT merged-RGB 2.5D U-Net training")
     print("=" * 72)
-    print(f"Image root:       {config.image_root}")
-    print(f"Mask root:        {config.mask_root}")
-    print(f"Target slices:    {config.training_slices_1based}")
-    print("Z context:        Z-1, Z, Z+1")
-    print(f"Image channels:   {config.channels or 'all'}")
-    print("Mask threshold:   0.5")
+    print(f"Image root:          {config.image_root}")
+    print(f"Mask root:           {config.mask_root}")
+    print(f"Target slices:       {config.training_slices_1based}")
+    print("Training contexts:   Z9/Z10/Z11 and Z11/Z12/Z13")
+    print("Input representation: merged RGB at each context Z")
+    print("Colour mapping:      561 nm=red, 488 nm=green, 405 nm=blue")
+    print("Model input:         3 RGB images = 9 channels")
+    print("Mask threshold:      0.5")
 
     outputs = train_3d_25d_unet(config)
     print("\nCompleted")
     for name, path in outputs.items():
-        print(f"{name:16}: {path}")
+        print(f"{name:20}: {path}")
     return 0
 
 
