@@ -1,15 +1,17 @@
-"""
-Run validated 3D Richardson-Lucy deconvolution without Fiji.
+"""Run validated 3D Richardson-Lucy deconvolution without Fiji.
 
-This script reads one CZYX OME-Zarr pyramid level, validates metadata-matched
-PSFs, performs channel-wise 3D Richardson-Lucy deconvolution, and writes a new
-multiscale OME-Zarr. Stored output values are raw float32 deconvolution values;
+This script reads level 0 of one CZYX OME-Zarr, validates the stack against the
+single reusable three-wavelength master PSF set, performs channel-wise 3D
+Richardson-Lucy deconvolution, and writes a new multiscale OME-Zarr. Channel-to-
+PSF assignment uses wavelength metadata. Stored output values are raw float32
+deconvolution values;
 no 0-1 normalization is applied. ``clip`` is permanently disabled because
 scikit-image clipping would destroy raw fluorescence intensity ranges.
 
 Quality-control PNGs are created only for the planned 2.5D training slices:
-Z5, Z10, Z15, Z20, Z25, Z30, and Z35. Each figure contains original,
-deconvolved, signed-difference, and absolute-difference views.
+Z10, Z24, and Z30. Each figure contains original, deconvolved, signed-
+difference, and absolute-difference views. Richardson-Lucy iterations can be
+set independently for the 405 nm blue, 488 nm green, and 561 nm red channels.
 """
 
 from __future__ import annotations
@@ -72,11 +74,19 @@ def main() -> int:
     parser.add_argument("--root-3d", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
     parser.add_argument("--out-root", type=Path, default=PROJECT_ROOT / "results" / "deconv")
     parser.add_argument(
-        "--level", type=int, default=0,
-        help="Input pyramid level; this becomes output level 0. Use level 0 for final training-mask-compatible processing",
+        "--level", type=int, default=0, choices=(0,),
+        help="Fixed input pyramid level. The reusable master PSFs support only level 0",
     )
     parser.add_argument("--model", choices=("BW", "GL", "RW"), default="BW")
-    parser.add_argument("--iters", type=int, default=5, help="Low Richardson-Lucy iteration count")
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=5,
+        help="Default Richardson-Lucy iteration count used for channels without an explicit override",
+    )
+    parser.add_argument("--iters-blue", type=int, default=None, help="Iteration count for the 405 nm blue channel")
+    parser.add_argument("--iters-green", type=int, default=None, help="Iteration count for the 488 nm green channel")
+    parser.add_argument("--iters-red", type=int, default=None, help="Iteration count for the 561 nm red channel")
     parser.add_argument("--background", type=float, default=0.0, help="Constant background subtracted before RL")
     parser.add_argument("--filter-epsilon", type=float, default=None)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
@@ -90,12 +100,33 @@ def main() -> int:
 
     input_zarr = args.zarr.expanduser().resolve() if args.zarr else _select_zarr(args.root_3d)
     slices = _parse_slices(args.qc_slices)
+    channel_iterations = {
+        color: value
+        for color, value in (
+            ("blue", args.iters_blue),
+            ("green", args.iters_green),
+            ("red", args.iters_red),
+        )
+        if value is not None
+    }
+    if any(value < 1 for value in channel_iterations.values()):
+        raise ValueError("All per-channel iteration counts must be at least 1")
     print("\nPFT 3D Richardson-Lucy deconvolution")
     print("=" * 72)
     print(f"Input:              {input_zarr}")
     print(f"Input level:        {args.level}")
     print(f"PSF model:          {args.model}")
-    print(f"Iterations:         {args.iters}")
+    print("PSF source:         results/psf/master (three reusable wavelength PSFs)")
+    print("Channel mapping:    wavelength metadata; incompatible stacks stop with an error")
+    print(f"Default iterations: {args.iters}")
+    print(
+        "Per-channel iters: "
+        + (
+            ", ".join(f"{color}={value}" for color, value in channel_iterations.items())
+            if channel_iterations
+            else "none; default used for all channels"
+        )
+    )
     print(f"Background:         {args.background}")
     print("Stored normalization: NONE")
     print("Stored dtype:       float32")
@@ -107,6 +138,7 @@ def main() -> int:
         out_root=args.out_root,
         model=args.model,
         iters=args.iters,
+        channel_iterations=channel_iterations,
         background=args.background,
         level=args.level,
         overwrite=not args.no_overwrite,

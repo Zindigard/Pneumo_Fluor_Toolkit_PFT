@@ -162,13 +162,25 @@ def coordinate_scale_for_level(zarr_dir: str | Path, *, level: int) -> list[floa
 
 
 def copyable_root_metadata(zarr_dir: str | Path) -> dict[str, Any]:
-    """Return source metadata that should be retained in derived OME-Zarr files."""
+    """Return all source root metadata that can be retained in a derived store.
+
+    The output OME-Zarr must define its own ``multiscales`` metadata and its own
+    processing record. Every other source root attribute is copied. The original
+    multiscale and processing attributes are retained separately under
+    ``pft_source_multiscales`` and ``pft_source_processing`` so no source metadata
+    are lost during deconvolution.
+    """
     root = zarr.open_group(str(zarr_dir), mode="r")
     retained: dict[str, Any] = {}
-    for key in ("pft_meta", "source_path", "channel_names", "omero"):
+    for key in root.attrs.keys():
         value = root.attrs.get(key)
-        if value is not None:
+        if key == "multiscales":
+            retained["pft_source_multiscales"] = value
+        elif key == "pft_processing":
+            retained["pft_source_processing"] = value
+        else:
             retained[key] = value
+    retained["pft_source_root_metadata_preserved"] = True
     return retained
 
 
