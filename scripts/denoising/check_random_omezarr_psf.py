@@ -1,5 +1,4 @@
-"""
-Randomly verify one 3D OME-Zarr against the reusable master PSF set.
+r"""Randomly verify one 3D OME-Zarr against the reusable master PSF set.
 
 The default mode is a fast, non-destructive preflight check. The script:
 
@@ -16,6 +15,25 @@ same raw-intensity-preserving Richardson-Lucy function as
 ``deconvolve_3d_v2.py``. Full level-0 deconvolution can require substantial RAM
 and processing time; the default compatibility check does not deconvolve.
 
+Examples
+--------
+Fast random compatibility check::
+
+    & $PY scripts\denoising\check_random_omezarr_psf.py
+
+Repeatable random selection::
+
+    & $PY scripts\denoising\check_random_omezarr_psf.py --seed 42
+
+Check a specified store instead of selecting randomly::
+
+    & $PY scripts\denoising\check_random_omezarr_psf.py `
+      --zarr "D:\\...\\image.ome.zarr"
+
+Run full low-iteration Richardson-Lucy after the successful check::
+
+    & $PY scripts\denoising\check_random_omezarr_psf.py `
+      --seed 42 --run-deconvolution --iters-blue 4 --iters-green 5 --iters-red 3
 """
 
 from __future__ import annotations
@@ -212,6 +230,11 @@ def _write_compatibility_report(
             PROJECT_ROOT / "results" / "psf" / "master" / "psf_master_metadata.json"
         ),
         "master_psf_model": master_metadata.get("model"),
+        "compatibility_warnings": list(master_metadata.get("compatibility_warnings") or []),
+        "current_stack_optical_metadata": master_metadata.get("current_stack_optical_metadata"),
+        "resolved_optical_metadata_for_compatibility": master_metadata.get(
+            "resolved_optical_metadata_for_compatibility"
+        ),
         "channel_psf_mapping": mappings,
         "raw_readiness_report_txt": str(readiness_report_txt),
         "raw_readiness_report_json": str(readiness_report_json),
@@ -234,9 +257,19 @@ def _write_compatibility_report(
         f"Sampled slices (1-based): {tuple(sampled_slices)}",
         f"Master PSF model: {master_metadata.get('model')}",
         "",
-        "Channel data samples",
+        "Metadata compatibility notes",
         "-" * 80,
     ]
+    warnings = list(master_metadata.get("compatibility_warnings") or [])
+    if warnings:
+        lines.extend(f"WARNING: {warning}" for warning in warnings)
+    else:
+        lines.append("No master-reference fallbacks were required.")
+    lines.extend([
+        "",
+        "Channel data samples",
+        "-" * 80,
+    ])
     for record in data_statistics:
         lines.append(
             "Channel {channel_index}: min={minimum:.6g}, max={maximum:.6g}, "
@@ -293,7 +326,15 @@ def main() -> int:
         action="store_true",
         help="After a successful check, run full level-0 Richardson-Lucy deconvolution",
     )
-    parser.add_argument("--iters", type=int, default=3, help="Iterations for optional full test deconvolution")
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=3,
+        help="Default iteration count for the optional full test",
+    )
+    parser.add_argument("--iters-blue", type=int, default=None, help="Optional 405 nm blue-channel iteration count")
+    parser.add_argument("--iters-green", type=int, default=None, help="Optional 488 nm green-channel iteration count")
+    parser.add_argument("--iters-red", type=int, default=None, help="Optional 561 nm red-channel iteration count")
     parser.add_argument("--background", type=float, default=0.0)
     parser.add_argument("--filter-epsilon", type=float, default=None)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
@@ -322,6 +363,17 @@ def main() -> int:
         candidate_count = len(candidates)
 
     slices = _parse_slices(args.sample_slices)
+    channel_iterations = {
+        color: value
+        for color, value in (
+            ("blue", args.iters_blue),
+            ("green", args.iters_green),
+            ("red", args.iters_red),
+        )
+        if value is not None
+    }
+    if any(value < 1 for value in channel_iterations.values()):
+        raise ValueError("All per-channel iteration counts must be at least 1")
     print("\nPFT random OME-Zarr and master PSF check")
     print("=" * 72)
     print(f"Available source stores: {candidate_count}")
@@ -368,7 +420,12 @@ def main() -> int:
         readiness_report_json=readiness_json,
     )
 
+    warnings = list(master_metadata.get("compatibility_warnings") or [])
     print("\nPASS")
+    if warnings:
+        print("Metadata note: fixed master-reference values were used for absent fields:")
+        for warning in warnings:
+            print(f"  - {warning}")
     print(f"Compatibility TXT: {txt_path}")
     print(f"Compatibility JSON:{json_path}")
     for match in matches:
@@ -379,11 +436,21 @@ def main() -> int:
 
     if args.run_deconvolution:
         print("\nStarting optional full Richardson-Lucy test...")
+        print(f"Default iterations: {args.iters}")
+        print(
+            "Per-channel iterations: "
+            + (
+                ", ".join(f"{color}={value}" for color, value in channel_iterations.items())
+                if channel_iterations
+                else "none; default used for all channels"
+            )
+        )
         result = deconvolve_omezarr_3ch_to_omezarr_skimage(
             in_omezarr=selected_zarr,
             out_root=args.deconv_out_root,
             model=args.model,
             iters=args.iters,
+            channel_iterations=channel_iterations,
             background=args.background,
             level=0,
             overwrite=not args.no_overwrite,

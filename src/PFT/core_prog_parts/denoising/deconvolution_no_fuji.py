@@ -44,19 +44,6 @@ from PFT.core_prog_parts.denoising.psf_creator import (
 PSFModel = Literal["BW", "GL", "RW"]
 DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
 
-# These attributes describe the current OME-Zarr store rather than immutable
-# microscope/source metadata. A derived deconvolution store must replace them
-# with values describing its own float32 pyramid. Their original values are
-# retained under ``pft_source_store_fields`` for complete provenance.
-OUTPUT_OWNED_ROOT_ATTRIBUTES: frozenset[str] = frozenset({
-    "pft_axes",
-    "pft_level0_shape",
-    "pft_level0_dtype",
-    "pft_multiscale_enabled",
-    "pft_pyramid_max_layer",
-    "pft_pyramid_downscale",
-})
-
 
 @dataclass(frozen=True)
 class VolumeStats:
@@ -607,23 +594,6 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         raise ValueError(f"Input OME-Zarr failed pre-deconvolution checks: {preflight_report}")
 
     source_attrs = copyable_root_metadata(in_omezarr)
-
-    # Store-derived fields such as ``pft_level0_dtype`` must change for the
-    # deconvolved output. Preserve their original values as source provenance,
-    # but do not copy them back as if they described the new float32 store.
-    source_store_fields = {
-        key: source_attrs.pop(key)
-        for key in sorted(OUTPUT_OWNED_ROOT_ATTRIBUTES)
-        if key in source_attrs
-    }
-    source_attrs["pft_source_store_fields"] = source_store_fields
-    source_attrs["pft_source_selected_array"] = {
-        "level": int(level),
-        "array_path": str(meta["array_path"]),
-        "shape": [int(value) for value in array_in.shape],
-        "dtype": str(array_in.dtype),
-    }
-
     base_scale = coordinate_scale_for_level(in_omezarr, level=level)
     chunks_in = tuple(int(value) for value in (array_in.chunks or (1, 1, 256, 256)))
     processing = {
@@ -727,7 +697,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
             metadata_mismatches.append(key)
     if metadata_mismatches:
         raise ValueError(
-            "Deconvolved OME-Zarr did not preserve immutable source metadata fields: "
+            "Deconvolved OME-Zarr did not preserve source metadata fields: "
             + ", ".join(metadata_mismatches)
         )
     stored_stats: list[VolumeStats] = []
