@@ -1,5 +1,39 @@
-"""
-Create  original vs U-Net microscopy figures.
+#!/usr/bin/env python
+"""Create publication-ready original-versus-U-Net-filtered microscopy figures.
+
+The script supports both PFT two-dimensional datasets:
+
+* ``2d_time``: HADA displayed in blue.
+* ``2d_wga_dapi``: DAPI displayed in blue and WGA displayed in green.
+
+The final U-Net image is read from:
+
+    <inference-root>/<sample>/foreground_filtered.ome.zarr
+
+The corresponding original image is read from:
+
+    results/img/<dataset>/<sample>/image.ome.zarr
+
+Display normalization
+---------------------
+Display limits are calculated independently for each fluorescence channel from
+the ORIGINAL image using P1-P99.8 by default. The same limits are then applied
+to the final U-Net-filtered image. This prevents independent contrast stretching
+from visually restoring depleted background pixels.
+
+Scale bars
+----------
+The X pixel size is read from the OME-NGFF coordinate transformations of the
+original OME-Zarr. A manual ``--pixel-size-um`` override is available. By
+default, figure creation fails when a valid physical pixel size is unavailable,
+because exporting a publication figure without the requested scale bar would be
+misleading.
+
+Examples
+--------
+Interactive selection:
+
+    python scripts/segmentation/create_unet_before_after_plot.py
 
 One 2d_time sample:
 

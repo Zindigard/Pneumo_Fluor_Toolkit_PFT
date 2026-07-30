@@ -1,6 +1,33 @@
-"""
-Interactively inspect one 2D U-Net inference result in napari.
+"""Interactively inspect one 2D U-Net inference result in napari.
 
+The viewer supports both ``2d_time`` and ``2d_wga_dapi``. It discovers
+completed inference runs under ``results/U-net``, lets the user select one
+sample, and displays a clear comparison between the source image, the exact
+percentile-normalized U-Net input, and the saved background-suppressed result.
+
+Normalization is performed only in memory for visualization. The saved
+``foreground_filtered.ome.zarr`` remains in the original filtered intensity
+scale and dtype.
+
+Examples
+--------
+Interactive selection::
+
+    python scripts/segmentation/view_unet_inference_result.py
+
+Open one specific result::
+
+    python scripts/segmentation/view_unet_inference_result.py \
+        --dataset 2d_time \
+        --output-root results/U-net/2d_time_v2_fixedval \
+        --sample WT_HADA_NHS_120min_ROI2_SIM
+
+List available samples::
+
+    python scripts/segmentation/view_unet_inference_result.py \
+        --dataset 2d_time \
+        --output-root results/U-net/2d_time_v2_fixedval \
+        --list
 """
 
 from __future__ import annotations

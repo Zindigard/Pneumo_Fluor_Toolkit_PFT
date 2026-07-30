@@ -1,5 +1,4 @@
-"""
-Run 2D U-Net inference and save a non-normalized enhanced OME-Zarr.
+"""Run 2D U-Net inference and save a non-normalized enhanced OME-Zarr.
 
 The predicted mask is applied to the original filtered image, not to the
 normalized network tensor. By default, pixels outside the mask are depleted by

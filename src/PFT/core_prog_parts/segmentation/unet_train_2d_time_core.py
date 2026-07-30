@@ -1,13 +1,42 @@
-"""
-Core training implementation for 2D U-Net foreground/background detection.
+"""Core training implementation for 2D U-Net foreground/background detection.
 
 This module is used for both supported 2D datasets:
 
+``2d_time``
+    One fluorescence channel per time frame.
+
+``2d_wga_dapi``
+    Two fluorescence channels, DAPI and WGA, processed together as one input.
+
+The network performs semantic binary classification. Every pixel is assigned a
+foreground probability and is compared with a hand-labelled reference mask.
+Positive instance labels in a reference TIFF are converted to semantic
+foreground by the rule ``mask > 0``.
+
+Input policy
+------------
+The input is the intensity-preserving output of the local-threshold filter. Do
+not save a separate normalized training dataset. The complete image is
+normalized inside this module, independently per channel, before patches are
+sampled. The default percentile normalization maps P1 to 0 and P99.8 to 1.
+Training and inference must use the same normalization method.
+
+Where to change parameters
+--------------------------
 The main adjustable values are collected in :class:`UNet2DTrainConfig`. They
 can be changed through the terminal launcher or when constructing the config in
 Python. The class documentation explains the expected effect of increasing or
 decreasing every parameter.
 
+Important consistency rules
+---------------------------
+* ``patch`` must be a multiple of 16 because the U-Net contains four pooling
+  stages.
+* Inference must use the same ``patch`` and ``normalize`` values as training.
+* Changing ``base_filters`` changes the architecture. A model trained with one
+  value cannot be loaded into a differently constructed architecture.
+* Validation splitting is performed at sample level, not at patch level, to
+  reduce information leakage between training and validation data.
 """
 
 from __future__ import annotations
