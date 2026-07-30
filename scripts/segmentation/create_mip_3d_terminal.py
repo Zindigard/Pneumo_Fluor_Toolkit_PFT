@@ -1,5 +1,4 @@
-"""
-Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
+"""Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
 
 Interactive mode allows selection of:
 
@@ -129,6 +128,8 @@ def _write_summary(rows: list[dict[str, str]], output_root: Path, mode: str) -> 
         "mask_zarr",
         "output_zarr",
         "qc_png",
+        "snr_csv",
+        "snr_json",
         "output_dtype",
         "error",
     ]
@@ -190,6 +191,12 @@ def main() -> int:
         default=PROJECT_ROOT / "results" / "mip_2d",
     )
     parser.add_argument("--level", type=int, choices=(0,), default=0)
+    parser.add_argument(
+        "--scale-bar-um",
+        type=float,
+        default=2.0,
+        help="Physical scale-bar length drawn on every QC panel",
+    )
     parser.add_argument("--no-overwrite", action="store_true")
     parser.add_argument("--stop-on-error", action="store_true")
     args = parser.parse_args()
@@ -234,6 +241,8 @@ def main() -> int:
         if mode == "deconv_masked"
         else "Deconvolution:       not used"
     )
+    print(f"QC scale bars:       {args.scale_bar_um:g} µm on every panel")
+    print("SNR comparison:      raw target slice vs MIP before mask, per channel")
     print(f"Output root:         {output_root / MODE_DIRECTORY_NAMES[mode]}")
 
     rows: list[dict[str, str]] = []
@@ -267,6 +276,8 @@ def main() -> int:
                 "mask_zarr": "",
                 "output_zarr": "",
                 "qc_png": "",
+                "snr_csv": "",
+                "snr_json": "",
                 "output_dtype": "",
                 "error": f"{type(error).__name__}: {error}",
             })
@@ -285,6 +296,7 @@ def main() -> int:
                     output_root=output_root,
                     level=args.level,
                     overwrite=not args.no_overwrite,
+                    scale_bar_um=args.scale_bar_um,
                 )
             )
             rows.append({
@@ -298,12 +310,16 @@ def main() -> int:
                 "mask_zarr": str(result.mask_zarr) if result.mask_zarr else "",
                 "output_zarr": str(result.output_zarr),
                 "qc_png": str(result.qc_png),
+                "snr_csv": str(result.snr_csv) if result.snr_csv else "",
+                "snr_json": str(result.snr_json) if result.snr_json else "",
                 "output_dtype": result.output_dtype,
                 "error": "",
             })
             print(f"PASS OME-Zarr: {result.output_zarr}")
             print(f"QC merged RGB: {result.qc_png}")
             print(f"Stored dtype: {result.output_dtype}")
+            if result.snr_csv is not None:
+                print(f"SNR comparison: {result.snr_csv}")
         except Exception as error:
             failures += 1
             rows.append({
@@ -317,6 +333,8 @@ def main() -> int:
                 "mask_zarr": "",
                 "output_zarr": "",
                 "qc_png": "",
+                "snr_csv": "",
+                "snr_json": "",
                 "output_dtype": "",
                 "error": f"{type(error).__name__}: {error}",
             })

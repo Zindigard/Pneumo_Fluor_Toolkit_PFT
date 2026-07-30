@@ -1,10 +1,18 @@
-"""
-Create 2D maximum-intensity projections from PFT 3D OME-Zarr volumes.
+"""Create 2D maximum-intensity projections from PFT 3D OME-Zarr volumes.
+
+The workflow supports three products:
+
+* a raw, unmasked MIP for subsequent purely 2D segmentation;
+* a raw MIP masked by the existing per-volume 2.5D U-Net prediction;
+* a Richardson-Lucy-deconvolved MIP (BW, blue/green/red iterations 3/3/2)
+  masked by the same 2.5D prediction.
 
 All 40 Z planes are projected. The saved quantitative image remains in the
 source intensity scale: raw products retain the original dtype, whereas the
 selected deconvolution product is stored as float32. Display normalization is
-used only for the merged-RGB QC figure.
+used only for the merged-RGB QC figure. Every QC panel receives a calibrated
+2 µm scale bar by default, and per-channel ROI SNR compares the configured raw
+target slice with the unmasked MIP using the predicted 2.5D foreground mask.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -63,6 +72,8 @@ class MIP3DConfig:
     qc_percentile_low: float = 1.0
     qc_percentile_high: float = 99.8
     qc_max_dimension: int = 1400
+    scale_bar_um: float = 2.0
+    snr_epsilon: float = 1e-12
 
 
 @dataclass(frozen=True)
@@ -77,10 +88,72 @@ class MIP3DOutput:
     output_zarr: Path
     qc_png: Path
     report_json: Path
+    snr_csv: Path | None
+    snr_json: Path | None
     target_slice_1based: int
     output_dtype: str
     output_shape_cyx: tuple[int, int, int]
 
+
+@dataclass(frozen=True)
+class MIPSNRRow:
+    """ROI-SNR comparison for one channel using the predicted 2.5D mask."""
+
+    sample: str
+    target_slice_1based: int
+    channel_index: int
+    channel_name: str
+    signal_pixels: int
+    background_pixels: int
+    raw_target_signal_mean: float
+    raw_target_background_mean: float
+    raw_target_background_sd: float
+    raw_target_snr: float
+    mip_before_signal_mean: float
+    mip_before_background_mean: float
+    mip_before_background_sd: float
+    mip_before_snr: float
+    delta_mip_before_vs_raw_target: float
+    masked_mip_signal_mean: float
+    masked_mip_background_mean: float
+    masked_mip_background_sd: float
+    masked_mip_snr: float | None
+    masked_mip_snr_status: str
+
+
+def _roi_snr_components(
+    image: np.ndarray,
+    foreground_mask: np.ndarray,
+    epsilon: float = 1e-12,
+) -> tuple[int, int, float, float, float, float]:
+    """Use the current PFT ROI-SNR formula without modifying stored intensities."""
+    values = np.asarray(image, dtype=np.float64)
+    mask = np.asarray(foreground_mask, dtype=bool)
+    if values.ndim != 2 or mask.ndim != 2 or values.shape != mask.shape:
+        raise ValueError(
+            f"ROI SNR expects matching 2D image/mask, got {values.shape} and {mask.shape}"
+        )
+    if not np.isfinite(epsilon) or epsilon <= 0:
+        raise ValueError(f"epsilon must be finite and positive, got {epsilon}")
+    finite = np.isfinite(values)
+    signal = values[mask & finite]
+    background = values[(~mask) & finite]
+    if signal.size < 1:
+        raise ValueError("ROI SNR requires at least one finite foreground pixel")
+    if background.size < 2:
+        raise ValueError("ROI SNR requires at least two finite background pixels")
+    signal_mean = float(np.mean(signal))
+    background_mean = float(np.mean(background))
+    background_sd = float(np.std(background, ddof=1))
+    snr = float((signal_mean - background_mean) / (background_sd + epsilon))
+    return (
+        int(signal.size),
+        int(background.size),
+        signal_mean,
+        background_mean,
+        background_sd,
+        snr,
+    )
 
 
 RGB_REFERENCE_WAVELENGTHS_NM: dict[str, float] = {
@@ -338,13 +411,71 @@ def _independently_normalized_rgb(
     return output
 
 
-def _downsample_cyx_for_qc(cyx: np.ndarray, max_dimension: int) -> np.ndarray:
-    """Reduce display-only arrays by integer stride while retaining the full saved MIP."""
+def _downsample_cyx_for_qc(
+    cyx: np.ndarray, max_dimension: int
+) -> tuple[np.ndarray, int]:
+    """Return a display-only CYX array and its integer spatial stride."""
     if max_dimension < 256:
         raise ValueError("qc_max_dimension must be at least 256 pixels")
     largest = max(int(cyx.shape[-2]), int(cyx.shape[-1]))
     stride = max(1, int(np.ceil(largest / float(max_dimension))))
-    return cyx[:, ::stride, ::stride]
+    return cyx[:, ::stride, ::stride], stride
+
+
+def _x_pixel_size_um(source_zarr: Path, *, level: int) -> float:
+    """Read the physical X sampling in micrometres from OME-Zarr metadata."""
+    metadata = extract_ome_zarr_meta_for_compare(source_zarr, level=level)
+    axes = str(metadata.get("axes") or "").lower()
+    voxel_size_um = metadata.get("voxel_size_um")
+    if "x" not in axes or not isinstance(voxel_size_um, dict):
+        raise ValueError(
+            f"Physical X sampling is missing from OME-Zarr metadata: axes={axes!r}, "
+            f"voxel_size_um={voxel_size_um!r}"
+        )
+    raw_value = voxel_size_um.get("x")
+    if raw_value is None:
+        raise ValueError(f"voxel_size_um.x is missing in {source_zarr}")
+    value = float(raw_value)
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError(f"Invalid X pixel size {value} µm in {source_zarr}")
+    return value
+
+
+def _add_scale_bar(
+    axis: Any,
+    *,
+    image_shape_yx: tuple[int, int],
+    x_pixel_size_um: float,
+    display_stride: int,
+    length_um: float,
+) -> None:
+    """Draw a physically calibrated scale bar in the lower-right corner."""
+    if not np.isfinite(length_um) or length_um <= 0:
+        raise ValueError(f"scale-bar length must be positive, got {length_um}")
+    if display_stride < 1:
+        raise ValueError(f"display_stride must be >=1, got {display_stride}")
+    height, width = (int(v) for v in image_shape_yx)
+    bar_pixels = float(length_um) / (float(x_pixel_size_um) * float(display_stride))
+    if bar_pixels <= 1 or bar_pixels >= width * 0.8:
+        raise ValueError(
+            f"A {length_um:g} µm scale bar is not suitable for width={width}, "
+            f"x_pixel_size={x_pixel_size_um:g} µm, stride={display_stride}"
+        )
+    x_end = width * 0.94
+    x_start = x_end - bar_pixels
+    y = height * 0.92
+    axis.plot([x_start, x_end], [y, y], color="black", linewidth=6, solid_capstyle="butt")
+    axis.plot([x_start, x_end], [y, y], color="white", linewidth=3, solid_capstyle="butt")
+    label = axis.text(
+        (x_start + x_end) / 2.0,
+        y - height * 0.025,
+        f"{length_um:g} µm",
+        color="white",
+        fontsize=9,
+        ha="center",
+        va="bottom",
+    )
+    label.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground="black")])
 
 
 def _save_merged_qc(
@@ -360,13 +491,17 @@ def _save_merged_qc(
     percentile_low: float,
     percentile_high: float,
     max_dimension: int,
+    x_pixel_size_um: float,
+    scale_bar_um: float,
 ) -> Path:
     """Save merged-only raw-scale and normalized MIP comparisons."""
     output_png.parent.mkdir(parents=True, exist_ok=True)
-    display_images = [
+    downsampled = [
         _downsample_cyx_for_qc(image, max_dimension)
         for image in (raw_target_cyx, mip_before_cyx, mip_output_cyx)
     ]
+    display_images = [item[0] for item in downsampled]
+    display_strides = [item[1] for item in downsampled]
     raw_scale = _raw_scale_rgb(
         display_images,
         rgb_source_channels,
@@ -394,13 +529,119 @@ def _save_merged_qc(
         axes[0, column].set_title(f"{title}\nshared raw-intensity display scale")
         axes[1, column].imshow(normalized[column])
         axes[1, column].set_title(f"{title}\nindependent P{percentile_low:g}–P{percentile_high:g}")
+        for row in range(2):
+            _add_scale_bar(
+                axes[row, column],
+                image_shape_yx=display_images[column].shape[-2:],
+                x_pixel_size_um=x_pixel_size_um,
+                display_stride=display_strides[column],
+                length_um=scale_bar_um,
+            )
     for axis in axes.ravel():
         axis.set_xticks([])
         axis.set_yticks([])
-    figure.suptitle(f"{sample} | {mode} | merged RGB only")
+    figure.suptitle(f"{sample} | {mode} | merged RGB | {scale_bar_um:g} µm scale bars")
     figure.savefig(output_png, dpi=170)
     plt.close(figure)
     return output_png
+
+
+def _calculate_mip_snr_rows(
+    *,
+    sample: str,
+    target_slice_1based: int,
+    raw_target_cyx: np.ndarray,
+    mip_before_cyx: np.ndarray,
+    mip_output_cyx: np.ndarray,
+    mask_yx: np.ndarray,
+    channel_names: Sequence[str],
+    epsilon: float,
+) -> list[MIPSNRRow]:
+    """Compare raw-target and MIP ROI SNR with the current thesis formula."""
+    if raw_target_cyx.shape != mip_before_cyx.shape or mip_before_cyx.shape != mip_output_cyx.shape:
+        raise ValueError(
+            f"SNR arrays must have identical CYX geometry: raw={raw_target_cyx.shape}, "
+            f"before={mip_before_cyx.shape}, after={mip_output_cyx.shape}"
+        )
+    if len(channel_names) != int(raw_target_cyx.shape[0]):
+        raise ValueError(
+            f"Expected {raw_target_cyx.shape[0]} channel names, received {len(channel_names)}"
+        )
+
+    rows: list[MIPSNRRow] = []
+    for channel_index, channel_name in enumerate(channel_names):
+        raw_stats = _roi_snr_components(raw_target_cyx[channel_index], mask_yx, epsilon)
+        before_stats = _roi_snr_components(mip_before_cyx[channel_index], mask_yx, epsilon)
+        after_stats = _roi_snr_components(mip_output_cyx[channel_index], mask_yx, epsilon)
+        after_sd = float(after_stats[4])
+        if after_sd <= epsilon:
+            after_snr: float | None = None
+            after_status = "undefined_after_exact_zero_background"
+        else:
+            after_snr = float(after_stats[-1])
+            after_status = "defined"
+        rows.append(
+            MIPSNRRow(
+                sample=sample,
+                target_slice_1based=int(target_slice_1based),
+                channel_index=int(channel_index),
+                channel_name=str(channel_name),
+                signal_pixels=int(raw_stats[0]),
+                background_pixels=int(raw_stats[1]),
+                raw_target_signal_mean=float(raw_stats[2]),
+                raw_target_background_mean=float(raw_stats[3]),
+                raw_target_background_sd=float(raw_stats[4]),
+                raw_target_snr=float(raw_stats[-1]),
+                mip_before_signal_mean=float(before_stats[2]),
+                mip_before_background_mean=float(before_stats[3]),
+                mip_before_background_sd=float(before_stats[4]),
+                mip_before_snr=float(before_stats[-1]),
+                delta_mip_before_vs_raw_target=float(before_stats[-1] - raw_stats[-1]),
+                masked_mip_signal_mean=float(after_stats[2]),
+                masked_mip_background_mean=float(after_stats[3]),
+                masked_mip_background_sd=after_sd,
+                masked_mip_snr=after_snr,
+                masked_mip_snr_status=after_status,
+            )
+        )
+    return rows
+
+
+def _save_mip_snr(
+    rows: Sequence[MIPSNRRow],
+    *,
+    output_dir: Path,
+    formula: str,
+) -> tuple[Path, Path]:
+    """Save per-channel SNR comparison as compact CSV and JSON files."""
+    import csv
+
+    if not rows:
+        raise ValueError("At least one SNR row is required")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / "snr_raw_target_vs_mip.csv"
+    json_path = output_dir / "snr_raw_target_vs_mip.json"
+    dictionaries = [asdict(row) for row in rows]
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(dictionaries[0].keys()))
+        writer.writeheader()
+        writer.writerows(dictionaries)
+    payload = {
+        "formula": formula,
+        "roi_mask": "existing_2.5d_unet_prediction",
+        "note": (
+            "Masked-MIP SNR is undefined after exact zeroing when background standard "
+            "deviation is zero; raw-target and pre-mask MIP SNR remain directly comparable."
+        ),
+        "rows": dictionaries,
+        "mean_raw_target_snr": float(np.mean([row.raw_target_snr for row in rows])),
+        "mean_mip_before_snr": float(np.mean([row.mip_before_snr for row in rows])),
+        "mean_delta_mip_before_vs_raw_target": float(
+            np.mean([row.delta_mip_before_vs_raw_target for row in rows])
+        ),
+    }
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return csv_path, json_path
 
 
 def _output_sample_dir(cfg: MIP3DConfig, raw_zarr: Path) -> Path:
@@ -470,6 +711,21 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
     if mode == "deconv_masked" and mip_output.dtype != np.float32:
         raise ValueError(f"Deconvolved MIP must be float32, got {mip_output.dtype}")
 
+    optics = resolve_channel_optics(raw_zarr, level=cfg.level)
+    channel_names = [item.name for item in optics]
+    snr_rows: list[MIPSNRRow] = []
+    if mask_yx is not None:
+        snr_rows = _calculate_mip_snr_rows(
+            sample=sample,
+            target_slice_1based=target_slice,
+            raw_target_cyx=raw_target_cyx,
+            mip_before_cyx=mip_before,
+            mip_output_cyx=mip_output,
+            mask_yx=mask_yx,
+            channel_names=channel_names,
+            epsilon=cfg.snr_epsilon,
+        )
+
     sample_dir = _output_sample_dir(cfg, raw_zarr)
     if sample_dir.exists() and cfg.overwrite:
         shutil.rmtree(sample_dir)
@@ -505,6 +761,9 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
             else "preserve_raw_source_dtype"
         ),
         "display_qc": "merged_rgb_only; shared raw scale and independent percentile normalization",
+        "qc_scale_bar_um": float(cfg.scale_bar_um),
+        "snr_formula": "(foreground_mean - background_mean) / (background_sample_sd + epsilon)",
+        "snr_roi_mask": "existing_2.5d_unet_prediction" if mask_zarr else None,
         "created_utc": datetime.now(timezone.utc).isoformat(),
     }
     output_attrs = dict(retained)
@@ -533,7 +792,18 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         percentile_low=cfg.qc_percentile_low,
         percentile_high=cfg.qc_percentile_high,
         max_dimension=cfg.qc_max_dimension,
+        x_pixel_size_um=_x_pixel_size_um(raw_zarr, level=cfg.level),
+        scale_bar_um=cfg.scale_bar_um,
     )
+
+    snr_csv: Path | None = None
+    snr_json: Path | None = None
+    if snr_rows:
+        snr_csv, snr_json = _save_mip_snr(
+            snr_rows,
+            output_dir=sample_dir,
+            formula="(foreground_mean - background_mean) / (background_sample_sd + epsilon)",
+        )
 
     report = {
         "sample": sample,
@@ -543,6 +813,10 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         "mask_zarr": str(mask_zarr) if mask_zarr else None,
         "output_zarr": str(output_zarr),
         "qc_png": str(qc_png),
+        "scale_bar_um": float(cfg.scale_bar_um),
+        "snr_csv": str(snr_csv) if snr_csv else None,
+        "snr_json": str(snr_json) if snr_json else None,
+        "snr_rows": [asdict(row) for row in snr_rows],
         "target_slice_1based": int(target_slice),
         "source_shape_czyx": [int(value) for value in source_array.shape],
         "source_dtype": str(np.dtype(source_array.dtype)),
@@ -569,6 +843,8 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         output_zarr=output_zarr,
         qc_png=qc_png,
         report_json=report_json,
+        snr_csv=snr_csv,
+        snr_json=snr_json,
         target_slice_1based=int(target_slice),
         output_dtype=str(mip_output.dtype),
         output_shape_cyx=tuple(int(value) for value in mip_output.shape),
@@ -581,6 +857,7 @@ __all__ = [
     "EXPECTED_Z_COUNT",
     "MIP3DConfig",
     "MIP3DOutput",
+    "MIPSNRRow",
     "MIPMode",
     "MODE_DIRECTORY_NAMES",
     "apply_zero_background_mask",
