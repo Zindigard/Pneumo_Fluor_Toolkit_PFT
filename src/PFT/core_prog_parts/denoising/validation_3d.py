@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -348,9 +349,12 @@ def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> t
     ]
     for item in report.checks:
         lines.append(f"{item.status:<8} | {item.name} | {item.detail}")
-    safe_id = report.sample.replace("/", "__").replace("\\", "__")
-    text_path = output_dir / f"{safe_id}__3d_input_check.txt"
-    json_path = output_dir / f"{safe_id}__3d_input_check.json"
+    # Keep report names compact because the deconvolution output directory can
+    # already be long on Windows. A stable digest prevents collisions when
+    # several reports are written into the same directory.
+    report_id = hashlib.sha1(report.sample.encode("utf-8")).hexdigest()[:10]
+    text_path = output_dir / f"3d_input_check_{report_id}.txt"
+    json_path = output_dir / f"3d_input_check_{report_id}.json"
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps({**asdict(report), "passed": report.passed}, indent=2), encoding="utf-8")
     return text_path, json_path
