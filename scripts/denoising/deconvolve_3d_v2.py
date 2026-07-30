@@ -1,14 +1,15 @@
-"""
-Run validated 3D Richardson-Lucy deconvolution without Fiji.
+"""Run validated 3D Richardson-Lucy deconvolution without Fiji.
 
-This script reads one CZYX OME-Zarr pyramid level, validates metadata-matched
-PSFs, performs channel-wise 3D Richardson-Lucy deconvolution, and writes a new
-multiscale OME-Zarr. Stored output values are raw float32 deconvolution values;
+This script reads level 0 of one CZYX OME-Zarr, validates the stack against the
+single reusable three-wavelength master PSF set, performs channel-wise 3D
+Richardson-Lucy deconvolution, and writes a new multiscale OME-Zarr. Channel-to-
+PSF assignment uses wavelength metadata. Stored output values are raw float32
+deconvolution values;
 no 0-1 normalization is applied. ``clip`` is permanently disabled because
 scikit-image clipping would destroy raw fluorescence intensity ranges.
 
 Quality-control PNGs are created only for the planned 2.5D training slices:
-Z5, Z10, Z15, Z20, Z25, Z30, and Z35. Each figure contains original,
+Z10, Z24, and Z30. Each figure contains original,
 deconvolved, signed-difference, and absolute-difference views.
 """
 
@@ -72,8 +73,8 @@ def main() -> int:
     parser.add_argument("--root-3d", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
     parser.add_argument("--out-root", type=Path, default=PROJECT_ROOT / "results" / "deconv")
     parser.add_argument(
-        "--level", type=int, default=0,
-        help="Input pyramid level; this becomes output level 0. Use level 0 for final training-mask-compatible processing",
+        "--level", type=int, default=0, choices=(0,),
+        help="Fixed input pyramid level. The reusable master PSFs support only level 0",
     )
     parser.add_argument("--model", choices=("BW", "GL", "RW"), default="BW")
     parser.add_argument("--iters", type=int, default=5, help="Low Richardson-Lucy iteration count")
@@ -95,6 +96,8 @@ def main() -> int:
     print(f"Input:              {input_zarr}")
     print(f"Input level:        {args.level}")
     print(f"PSF model:          {args.model}")
+    print("PSF source:         results/psf/master (three reusable wavelength PSFs)")
+    print("Channel mapping:    wavelength metadata; incompatible stacks stop with an error")
     print(f"Iterations:         {args.iters}")
     print(f"Background:         {args.background}")
     print("Stored normalization: NONE")

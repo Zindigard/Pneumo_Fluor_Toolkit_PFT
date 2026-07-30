@@ -1,5 +1,4 @@
-"""
-Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
+"""Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
 
 The selected input pyramid level is deconvolved channel by channel and written
 as level 0 of a new multiscale OME-Zarr. Numeric fluorescence values are saved
@@ -36,13 +35,14 @@ from PFT.core_prog_parts.denoising.validation_3d import (
     write_readiness_report,
 )
 from PFT.core_prog_parts.denoising.psf_creator import (
-    PSFJob,
-    plan_psf_jobs_for_image,
-    validate_psf_for_job,
+    MASTER_LEVEL,
+    MasterPSFMatch,
+    validate_master_psf_file,
+    validate_stack_against_master_psfs,
 )
 
 PSFModel = Literal["BW", "GL", "RW"]
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (5, 10, 15, 20, 25, 30, 35)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
 
 
 @dataclass(frozen=True)
@@ -102,16 +102,15 @@ def _prepare_image_for_rl(image_zyx: np.ndarray, background: float) -> np.ndarra
     return np.maximum(image, np.float32(0.0))
 
 
-def _load_normalized_psf(job: PSFJob) -> np.ndarray:
-    validation = validate_psf_for_job(job)
+def _load_normalized_psf(match: MasterPSFMatch) -> np.ndarray:
+    """Load one validated reusable master PSF for a wavelength-matched channel."""
+    validation = validate_master_psf_file(match.psf_path, normalize_if_needed=True)
     if not validation.suitable:
         raise ValueError(
-            f"PSF is missing or incompatible with the selected image: {job.out_tif}\n"
+            f"Master PSF is missing or invalid: {match.psf_path}\n"
             + "\n".join(f"- {issue}" for issue in validation.issues)
         )
-    psf = np.asarray(tiff.imread(str(job.out_tif)), dtype=np.float32)
-    # The validator already requires sum=1. This division corrects only tiny
-    # floating-point drift, not an unsuitable PSF.
+    psf = np.asarray(tiff.imread(str(match.psf_path)), dtype=np.float32)
     psf /= np.float32(psf.sum(dtype=np.float64))
     return psf
 
@@ -223,14 +222,32 @@ def _robust_limits(reference: np.ndarray) -> tuple[float, float]:
     return float(low), float(high)
 
 
-def _rgb_composite(cyx: np.ndarray, limits: Sequence[tuple[float, float]]) -> np.ndarray:
+def _rgb_destination_for_wavelength(wavelength_nm: float) -> tuple[int, str]:
+    """Return RGB destination index and display name for one channel wavelength."""
+    references = ((405.0, 2, "blue"), (488.0, 1, "green"), (561.0, 0, "red"))
+    reference, destination, color = min(
+        references,
+        key=lambda item: abs(float(wavelength_nm) - item[0]),
+    )
+    if abs(float(wavelength_nm) - reference) > 20.0:
+        raise ValueError(f"Cannot assign display color to wavelength {wavelength_nm:g} nm")
+    return destination, color
+
+
+def _rgb_composite(
+    cyx: np.ndarray,
+    limits: Sequence[tuple[float, float]],
+    destinations: Sequence[int],
+) -> np.ndarray:
     c_size, y_size, x_size = cyx.shape
     output = np.zeros((y_size, x_size, 3), dtype=np.float32)
-    # PFT convention: channel 0 blue, channel 1 green, channel 2 red.
-    destinations = (2, 1, 0)
+    if len(destinations) < c_size:
+        raise ValueError("RGB destination mapping is incomplete")
     for channel in range(min(c_size, 3)):
         low, high = limits[channel]
-        output[..., destinations[channel]] = np.clip((cyx[channel] - low) / (high - low), 0.0, 1.0)
+        output[..., destinations[channel]] = np.clip(
+            (cyx[channel] - low) / (high - low), 0.0, 1.0
+        )
     return output
 
 
@@ -258,6 +275,15 @@ def save_selected_slice_qc(
     c_size, z_size, _, _ = raw.shape
     saved: list[Path] = []
     channel_names = raw_meta.get("channel_names") or [f"channel {index}" for index in range(c_size)]
+    optics = resolve_channel_optics(original_zarr, level=original_level)
+    if len(optics) != c_size:
+        raise ValueError(f"Resolved {len(optics)} channel colors for C={c_size}")
+    color_mapping = [_rgb_destination_for_wavelength(item.wavelength_nm) for item in optics]
+    rgb_destinations = [item[0] for item in color_mapping]
+    channel_labels = [
+        f"{channel_names[index]} ({color_mapping[index][1]}, {optics[index].wavelength_nm:g} nm)"
+        for index in range(c_size)
+    ]
 
     for slice_number in slices_1based:
         z_index = slice_number - 1
@@ -274,8 +300,8 @@ def save_selected_slice_qc(
         if rows == 1:
             axes = axes[None, :]
 
-        raw_rgb = _rgb_composite(raw_cyx, limits)
-        dec_rgb = _rgb_composite(dec_cyx, limits)
+        raw_rgb = _rgb_composite(raw_cyx, limits, rgb_destinations)
+        dec_rgb = _rgb_composite(dec_cyx, limits, rgb_destinations)
         signed_mean = signed.mean(axis=0)
         absolute_mean = absolute.mean(axis=0)
         signed_limit = float(np.percentile(np.abs(signed_mean), 99.5)) or 1.0
@@ -297,7 +323,7 @@ def save_selected_slice_qc(
             figure.colorbar(image, ax=axes[row, 2], fraction=0.046)
             image = axes[row, 3].imshow(absolute[channel], cmap="magma")
             figure.colorbar(image, ax=axes[row, 3], fraction=0.046)
-            axes[row, 0].set_ylabel(str(channel_names[channel]))
+            axes[row, 0].set_ylabel(channel_labels[channel])
 
         for column, title in enumerate(("Original", "Deconvolved", "Signed difference", "Absolute difference")):
             axes[0, column].set_title(title)
@@ -369,7 +395,9 @@ def _write_reports(
         f"Output OME-Zarr: {run_info['output_omezarr']}",
         f"Input level: {run_info['input_level']}",
         f"PSF model: {run_info['psf_model']}",
+        "PSF policy: reusable level-0 master set, matched by wavelength metadata",
         f"Iterations: {run_info['iterations']}",
+        f"Source metadata preserved: {run_info.get('metadata_preserved_for_segmentation')}",
         "Stored numeric normalization: NONE",
         "Stored dtype: float32",
         "",
@@ -424,6 +452,11 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     if pyramid_max_layer < 0:
         raise ValueError("pyramid_max_layer must be non-negative")
 
+    if level != MASTER_LEVEL:
+        raise ValueError(
+            "The reusable master PSFs are defined only for OME-Zarr level 0; "
+            f"received level={level}"
+        )
     meta = extract_ome_zarr_meta_for_compare(in_omezarr, level=level)
     axes = str(meta.get("axes") or "").lower()
     if axes != "czyx":
@@ -435,21 +468,17 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     c_size, z_size, y_size, x_size = (int(value) for value in array_in.shape)
 
     project_root = find_project_root(Path(__file__).resolve())
-    jobs = plan_psf_jobs_for_image(
+    master_matches, master_metadata = validate_stack_against_master_psfs(
         project_root=project_root,
         zarr_dir=in_omezarr,
         level=level,
-        models=(model,),
+        model=model,
         channel_wavelength_nm=channel_wavelength_nm,
+        normalize_psfs=True,
     )
-    jobs_by_index = {job.channel_index: job for job in jobs}
-    optics = resolve_channel_optics(
-        in_omezarr,
-        level=level,
-        explicit_wavelength_nm=channel_wavelength_nm,
-    )
-    if len(optics) != c_size:
-        raise ValueError(f"Resolved {len(optics)} channels for C={c_size}")
+    matches_by_index = {match.channel_index: match for match in master_matches}
+    if len(matches_by_index) != c_size:
+        raise ValueError(f"Resolved {len(matches_by_index)} master PSF mappings for C={c_size}")
 
     sample = in_omezarr.parent.name
     out_dir = out_root / f"{sample}__SK_RL__PSF{model}__iter{iters}__sourceL{level}"
@@ -486,7 +515,27 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "stored_dtype": "float32",
         "normalization_applied_to_stored_intensities": False,
         "output_level0_represents_source_level": int(level),
-        "channel_wavelengths": [asdict(item) for item in optics],
+        "master_psf_reference_omezarr": master_metadata.get("reference_omezarr"),
+        "master_psf_metadata_schema": master_metadata.get("schema"),
+        "master_psf_channel_matching": "wavelength metadata",
+        "master_psf_compatibility_warnings": list(
+            master_metadata.get("compatibility_warnings") or []
+        ),
+        "resolved_optical_metadata_for_psf_compatibility": master_metadata.get(
+            "resolved_optical_metadata_for_compatibility"
+        ),
+        "channel_psf_mapping": [asdict(item) | {"psf_path": str(item.psf_path)} for item in master_matches],
+        "channel_display_colors": [
+            {
+                "channel_index": item.channel_index,
+                "channel_name": item.channel_name,
+                "wavelength_nm": item.wavelength_nm,
+                "display_color": item.display_color,
+                "display_color_hex": item.display_color_hex,
+            }
+            for item in master_matches
+        ],
+        "source_root_metadata_preserved": True,
         "created_utc": datetime.now(timezone.utc).isoformat(),
     }
     _, output_arrays = _create_output_store(
@@ -501,16 +550,22 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
 
     statistics: list[VolumeStats] = []
     for channel_index in range(c_size):
-        channel_name = optics[channel_index].name
-        job = jobs_by_index[channel_index]
-        psf = _load_normalized_psf(job)
+        match = matches_by_index[channel_index]
+        channel_name = match.channel_name
+        psf = _load_normalized_psf(match)
         volume_raw = np.asarray(array_in[channel_index], dtype=np.float32)
         prepared = _prepare_image_for_rl(volume_raw, background=background)
         statistics.append(_volume_stats("input", channel_index, channel_name, prepared))
         if any(psf_size > image_size for psf_size, image_size in zip(psf.shape, prepared.shape)):
             raise ValueError(f"PSF {psf.shape} is larger than channel volume {prepared.shape}")
-        print(f"[DECONV] channel {channel_index}: {channel_name}; wavelength={optics[channel_index].wavelength_nm:g} nm")
-        print(f"         input={prepared.shape} {prepared.dtype}; PSF={psf.shape}; iterations={iters}")
+        print(
+            f"[DECONV] channel {channel_index}: {channel_name}; "
+            f"wavelength={match.wavelength_nm:g} nm; color={match.display_color}"
+        )
+        print(
+            f"         input={prepared.shape} {prepared.dtype}; "
+            f"master PSF={match.psf_path.name} {psf.shape}; iterations={iters}"
+        )
         deconvolved = np.asarray(
             richardson_lucy(
                 image=prepared,
@@ -537,10 +592,27 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     # Reopen from disk before validation so reports describe stored values.
     stored_root = zarr.open_group(str(out_zarr), mode="r")
     stored_level0 = stored_root["0"]
+    metadata_mismatches: list[str] = []
+    for key, expected_value in source_attrs.items():
+        actual_value = stored_root.attrs.get(key)
+        if actual_value != expected_value:
+            metadata_mismatches.append(key)
+    if metadata_mismatches:
+        raise ValueError(
+            "Deconvolved OME-Zarr did not preserve source metadata fields: "
+            + ", ".join(metadata_mismatches)
+        )
     stored_stats: list[VolumeStats] = []
     for channel_index in range(c_size):
         stored = np.asarray(stored_level0[channel_index], dtype=np.float32)
-        stored_stats.append(_volume_stats("stored_deconvolved", channel_index, optics[channel_index].name, stored))
+        stored_stats.append(
+            _volume_stats(
+                "stored_deconvolved",
+                channel_index,
+                matches_by_index[channel_index].channel_name,
+                stored,
+            )
+        )
         reference = next(item for item in statistics if item.stage == "deconvolved" and item.channel_index == channel_index)
         if not np.allclose(
             [reference.minimum, reference.maximum, reference.mean, reference.sum],
@@ -572,6 +644,17 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "filter_epsilon": filter_epsilon,
         "normalization_applied_to_stored_intensities": False,
         "metadata_preserved_for_segmentation": True,
+        "preserved_source_metadata_fields": sorted(source_attrs),
+        "master_psf_mapping": [
+            {
+                "channel_index": item.channel_index,
+                "channel_name": item.channel_name,
+                "wavelength_nm": item.wavelength_nm,
+                "display_color": item.display_color,
+                "psf_path": str(item.psf_path),
+            }
+            for item in master_matches
+        ],
         "preview_slices_1based": list(preview_slices_1based),
     }
     report_txt, report_json, stats_csv = _write_reports(

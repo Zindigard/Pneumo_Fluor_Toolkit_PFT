@@ -15,7 +15,7 @@ import zarr
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (5, 10, 15, 20, 25, 30, 35)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
 
 
 @dataclass(frozen=True)

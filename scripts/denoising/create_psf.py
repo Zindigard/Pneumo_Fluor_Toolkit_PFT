@@ -1,14 +1,50 @@
 """
-Create and validate metadata-matched PSFs for a 3D OME-Zarr image.
+Generate one reusable three-channel master PSF set for all 3D stacks.
 
-The script must know where ImageJ/Fiji and PSF Generator are installed. Pass
-``--imagej-dir`` and ``--psf-creator-dir`` on a new computer. The latter can be
-a directory containing ``PSF_Generator.jar`` or the JAR file itself.
+The script reads level-0 metadata from one reference ``image.ome.zarr`` and
+creates exactly three normalized PSFs, one for each channel wavelength. The
+master PSFs are stored once in ``results/psf/master`` and are reused by every
+compatible stack during deconvolution.
 
-Examples
---------
-python scripts/denoising/create_psf.py --zarr D:/.../image.ome.zarr --level 2 \
-    --models BW --imagej-dir D:/Fiji.app \
+On a new computer, provide both paths explicitly:
+
+* ``--imagej-dir``: ImageJ/Fiji installation folder containing Java and JARs;
+* ``--psf-creator-dir``: PSF Generator folder or ``PSF_Generator.jar``.
+
+The default wavelength set produces:
+
+* ``psf_405nm_L0.tif`` for the blue channel;
+* ``psf_488nm_L0.tif`` for the green channel;
+* ``psf_561nm_L0.tif`` for the red channel;
+* ``psf_master_metadata.json`` containing the reference microscope metadata.
+u need to set location of imagej and plugin and they should exist.
+$FIJI = "D:\Thesis\Pneumo_Fluor_Toolkit_PFT\.cache\fiji\Fiji"
+$PY = (Get-Command python).Source
+$PSFGEN = "D:\Thesis\Pneumo_Fluor_Toolkit_PFT\.cache\fiji\Fiji\plugins\PSF_Generator.jar"
+$REF = (
+    Get-ChildItem `
+        "results\img\3d_data" `
+        -Recurse `
+        -Directory `
+        -Filter "image.ome.zarr" |
+    Sort-Object FullName |
+    Select-Object -First 1
+).FullName
+plus create reference for master psf and then run the script with the following command
+
+& $PY scripts\denoising\create_psf.py `
+    --reference-zarr "$REF" `
+    --model BW `
+    --imagej-dir "$FIJI" `
+    --psf-creator-dir "$PSFGEN"
+master psf will be provided but if not use the above command to create master psf. 
+
+Example
+-------
+python scripts/denoising/create_psf.py \
+    --reference-zarr D:/.../image.ome.zarr \
+    --model BW \
+    --imagej-dir D:/Fiji.app \
     --psf-creator-dir D:/PSFGenerator
 """
 
@@ -33,10 +69,10 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PFT.core_prog_parts.denoising.psf_creator import (  # noqa: E402
-    _available_levels,
+    MASTER_LEVEL,
     _parse_models_arg,
-    _prompt_level,
-    generate_psfs_for_image,
+    generate_or_reuse_master_psfs,
+    master_psf_directory,
 )
 
 
@@ -49,24 +85,40 @@ def _find_first_image_omezarr(root: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate or reuse metadata-matched, normalized 3D PSFs.",
+        description="Generate or reuse one level-0 master PSF per channel wavelength.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--zarr", type=Path, default=None, help="Input image.ome.zarr")
+    parser.add_argument(
+        "--reference-zarr", "--zarr",
+        dest="reference_zarr",
+        type=Path,
+        default=None,
+        help="Reference level-0 image.ome.zarr used once to define the master PSF set",
+    )
     parser.add_argument(
         "--root-3d",
         type=Path,
         default=PROJECT_ROOT / "results" / "img" / "3d_data",
-        help="Search root used when --zarr is omitted",
+        help="Search root used when --reference-zarr is omitted",
     )
-    parser.add_argument("--models", default="BW", help="BW, GL, RW, or comma-separated values")
+    parser.add_argument(
+        "--model",
+        default="BW",
+        choices=("BW", "GL", "RW"),
+        help="Single active theoretical PSF model for all three master wavelengths",
+    )
     parser.add_argument("--accuracy", default="Best", help="PSFGenerator accuracy setting")
-    parser.add_argument("--level", type=int, default=None, help="OME-Zarr level; prompts when omitted")
+    parser.add_argument(
+        "--level",
+        type=int,
+        default=MASTER_LEVEL,
+        help="Fixed master level. Only level 0 is accepted",
+    )
     parser.add_argument(
         "--imagej-dir",
         type=Path,
         default=None,
-        help="ESSENTIAL external path: ImageJ/Fiji installation folder containing Java and jars",
+        help="ESSENTIAL external path: ImageJ/Fiji installation folder containing Java and JARs",
     )
     parser.add_argument(
         "--psf-creator-dir",
@@ -74,50 +126,55 @@ def main() -> int:
         default=None,
         help="ESSENTIAL external path: PSF Generator folder or PSF_Generator.jar",
     )
-    parser.add_argument("--no-reuse", action="store_true", help="Regenerate even when a suitable PSF exists")
+    parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Replace the complete master set after an intentional metadata or model change",
+    )
+    parser.add_argument(
+        "--no-reuse",
+        action="store_true",
+        help="Regenerate all three PSFs even when the existing compatible files are valid",
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress Java output")
     args = parser.parse_args()
 
-    zarr_dir = args.zarr or _find_first_image_omezarr(args.root_3d)
-    zarr_dir = zarr_dir.expanduser().resolve()
-    if not zarr_dir.is_dir():
-        raise FileNotFoundError(zarr_dir)
+    if args.level != MASTER_LEVEL:
+        raise ValueError("The reusable master PSF set is defined only for OME-Zarr level 0")
+    reference_zarr = args.reference_zarr or _find_first_image_omezarr(args.root_3d)
+    reference_zarr = reference_zarr.expanduser().resolve()
+    if not reference_zarr.is_dir():
+        raise FileNotFoundError(reference_zarr)
+    model = _parse_models_arg(args.model)[0]
 
-    levels = _available_levels(zarr_dir)
-    level = _prompt_level(levels, default=0) if args.level is None else int(args.level)
-    if level not in levels:
-        raise ValueError(f"Level {level} is unavailable; choose from {levels}")
-    models = _parse_models_arg(args.models)
-
-    print("\nPFT 3D PSF generation")
+    print("\nPFT reusable master PSF generation")
     print("=" * 72)
-    print(f"OME-Zarr:          {zarr_dir}")
-    print(f"Pyramid level:     {level}")
-    print(f"Models:            {', '.join(models)}")
-    print(f"ImageJ/Fiji:       {args.imagej_dir or 'project-managed default'}")
-    print(f"PSF Generator:     {args.psf_creator_dir or 'ImageJ plugins/default'}")
-    print("Existing PSF use:  validate and reuse" if not args.no_reuse else "Existing PSF use:  regenerate")
+    print(f"Reference OME-Zarr: {reference_zarr}")
+    print("Reference level:    0")
+    print(f"PSF model:          {model}")
+    print("Channel matching:   wavelength metadata")
+    print("Display convention: 405 nm blue, 488 nm green, 561 nm red")
+    print(f"ImageJ/Fiji:        {args.imagej_dir or 'project-managed default'}")
+    print(f"PSF Generator:      {args.psf_creator_dir or 'ImageJ plugins/default'}")
+    print(f"Master directory:   {master_psf_directory(PROJECT_ROOT)}")
 
-    outputs = generate_psfs_for_image(
-        zarr_dir=zarr_dir,
+    outputs = generate_or_reuse_master_psfs(
+        reference_zarr=reference_zarr,
         start_path=SCRIPT_FILE,
-        level=level,
-        models=models,
+        model=model,
         accuracy=args.accuracy,
         quiet=args.quiet,
         imagej_dir=args.imagej_dir,
         psf_creator_dir=args.psf_creator_dir,
         reuse_existing=not args.no_reuse,
+        regenerate=args.regenerate,
     )
 
-    print("\nValidated PSFs")
-    for (model, channel, selected_level), path in sorted(outputs.items()):
-        print(f"  L{selected_level} | {model} | {channel} -> {path}")
-    report_path = (
-        PROJECT_ROOT / "results" / "psf" /
-        f"psf_generation_report__{zarr_dir.parent.name}__L{level}.txt"
-    )
-    print(f"\nAudit report: {report_path}")
+    print("\nValidated reusable master PSFs")
+    for wavelength, path in sorted(outputs.items()):
+        color = "blue" if wavelength < 450 else "green" if wavelength < 530 else "red"
+        print(f"  {wavelength:g} nm | {color:5s} -> {path}")
+    print(f"\nMaster metadata: {master_psf_directory(PROJECT_ROOT) / 'psf_master_metadata.json'}")
     return 0
 
 

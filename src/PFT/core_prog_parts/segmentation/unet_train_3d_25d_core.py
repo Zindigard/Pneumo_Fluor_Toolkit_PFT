@@ -1,13 +1,15 @@
-"""
-Training and evaluation for the sparse-annotation 2.5D foreground U-Net.
+"""Training and evaluation for the sparse-annotation 2.5D foreground U-Net.
 
 Each training target is one manually annotated middle Z slice. The model input
 contains the three neighbouring Z positions (Z-1, Z, Z+1) for all selected
 fluorescence channels. For three image channels this produces nine network
 input channels and one binary foreground output.
 
+Manual-mask convention
+----------------------
+``results/training_files/U-net/3d_25d/<sample>/z010_mask.tif``
 
-The default target slices are Z5, Z10, Z15, Z20, Z25, Z30, and Z35, using
+The default target slices are Z10, Z24, and Z30, using
 one-based slice numbers. Unannotated slices are never treated as background.
 """
 
@@ -156,9 +158,18 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
 
     entries: list[AnnotatedSlice] = []
     missing: list[str] = []
+    selected_samples = 0
     for image_zarr in _find_image_zarrs(image_root):
         sample = image_zarr.parent.name
         sample_mask_dir = mask_root / sample
+
+        # A sample is selected for training only by creating its mask folder.
+        # Unannotated stacks remain available for later inference and are ignored
+        # here rather than being treated as incomplete training data.
+        if not sample_mask_dir.is_dir():
+            continue
+        selected_samples += 1
+
         # Read only array geometry here; image voxels remain lazy.
         array = open_3d_image_czyx(image_zarr, level=cfg.level)
         z_count = int(array.shape[1])
@@ -171,8 +182,16 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
                 missing.append(f"{sample}: missing {sample_mask_dir / f'z{slice_number:03d}_mask.tif'}")
                 continue
             entries.append(AnnotatedSlice(image_zarr, mask_path, sample, slice_number, slice_number - 1))
+    if selected_samples == 0:
+        raise RuntimeError(
+            f"No selected training samples were found under {mask_root}. "
+            "Create one mask folder per selected stack."
+        )
     if missing:
-        raise FileNotFoundError("Required 2.5D annotations are incomplete:\n" + "\n".join(f"- {item}" for item in missing))
+        raise FileNotFoundError(
+            "Selected 2.5D training samples have incomplete annotations:\n"
+            + "\n".join(f"- {item}" for item in missing)
+        )
     if not entries:
         raise RuntimeError("No annotated 2.5D target slices were found")
     return entries

@@ -1,6 +1,10 @@
 """
 2.5D U-Net inference that saves probabilities and masks only.
 
+The network is applied to the original normalized input distribution used for
+training. It does not modify or suppress fluorescence intensities. Background
+attenuation is performed later by the separate 3D mask-application module on
+the saved Richardson-Lucy output.
 """
 
 from __future__ import annotations

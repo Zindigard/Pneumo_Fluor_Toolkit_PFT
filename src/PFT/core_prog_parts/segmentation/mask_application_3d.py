@@ -1,9 +1,13 @@
 """
 Apply a saved 2.5D U-Net mask to saved 3D deconvolution output.
 
+This module performs the agreed final post-processing step only after both
+independent branches are complete:
+
 * original OME-Zarr -> 2.5D U-Net -> saved binary mask;
 * original raw intensities -> Richardson-Lucy -> saved float32 OME-Zarr.
 
+Foreground voxels retain 100% of the deconvolved intensity.
 """
 
 from __future__ import annotations
