@@ -281,8 +281,9 @@ def _save_source_mask_preview(
     if reference is None:
         title += " | no reference mask: metrics skipped"
     figure.suptitle(title)
-    safe_sample = sample.replace("/", "__").replace("\\", "__")
-    path = output_dir / f"{safe_sample}__z{slice_number:03d}__predicted_mask_qc.png"
+    # The sample is already encoded by the parent output directories.  Keep the
+    # PNG basename compact to remain below the legacy Windows MAX_PATH limit.
+    path = output_dir / f"z{slice_number:03d}_predicted_mask_qc.png"
     figure.savefig(path, dpi=160)
     plt.close(figure)
     return [path]
