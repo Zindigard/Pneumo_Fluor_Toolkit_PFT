@@ -79,6 +79,7 @@ def main() -> int:
     print("=" * 72)
     print(f"Model contract:      {MODEL_CONTRACT}")
     print("Target policy:       one configured target slice per annotated volume")
+    print("Missing masks:       skipped with a warning; never treated as background")
     print("Training context:    Z-1/Z/Z+1 merged RGB -> target Z")
     print("Model input:         9 channels")
     print(f"Image root:          {config.image_root}")

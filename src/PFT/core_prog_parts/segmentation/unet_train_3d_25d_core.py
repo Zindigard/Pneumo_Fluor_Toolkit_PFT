@@ -15,7 +15,8 @@ import csv
 import json
 import random
 import shutil
-from dataclasses import asdict, dataclass
+import warnings
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -78,6 +79,7 @@ class UNet25DTrainConfig:
     fg_min_ratio: float = 0.02
     bg_max_ratio: float = 0.01
     max_tries: int = 100
+    skipped_reference_masks: list[str] = field(default_factory=list, init=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -191,7 +193,7 @@ def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[in
 
 
 def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
-    """Find all required sparse annotations without inventing unlabelled targets."""
+    """Find valid sparse annotations and skip missing reference masks with warnings."""
     image_root = Path(cfg.image_root or _default_image_root(cfg.project_root))
     mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root))
     if not image_root.is_dir():
@@ -200,18 +202,24 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
         raise FileNotFoundError(f"3D mask root does not exist: {mask_root}")
 
     entries: list[AnnotatedSlice] = []
-    missing: list[str] = []
+    invalid_context: list[str] = []
+    skipped_missing_masks: list[str] = []
+    cfg.skipped_reference_masks = []
     selected_samples = 0
     for image_zarr in _find_image_zarrs(image_root):
         sample = volume_key(image_zarr, image_root)
         sample_mask_dir = annotation_sample_dir(mask_root, image_zarr, image_root)
-
-        # A sample is selected for training only by creating its mask folder.
-        # Unannotated stacks remain available for later inference and are ignored
-        # here rather than being treated as incomplete training data.
-        if not sample_mask_dir.is_dir():
-            continue
         selected_samples += 1
+
+        # Every mapped source stack is a potential training sample. A missing
+        # annotation folder or target TIFF excludes only that sample.
+        if not sample_mask_dir.is_dir():
+            slice_number = target_slice_for_volume(image_zarr, image_root)
+            skipped_missing_masks.append(
+                f"{sample}: missing annotation folder and target mask "
+                f"{sample_mask_dir / f'z{slice_number:03d}_mask.tif'}"
+            )
+            continue
 
         # Read only array geometry here; image voxels remain lazy.
         array = open_3d_image_czyx(image_zarr, level=cfg.level)
@@ -224,13 +232,13 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
         z_count = int(array.shape[1])
         slice_number = target_slice_for_volume(image_zarr, image_root)
         if slice_number < 2 or slice_number > z_count - 1:
-            missing.append(
+            invalid_context.append(
                 f"{sample}: configured Z{slice_number} has no complete Z-1/Z/Z+1 context for Z={z_count}"
             )
             continue
         mask_path = find_slice_mask(sample_mask_dir, slice_number)
         if mask_path is None:
-            missing.append(
+            skipped_missing_masks.append(
                 f"{sample}: missing configured target mask "
                 f"{sample_mask_dir / f'z{slice_number:03d}_mask.tif'}"
             )
@@ -250,13 +258,23 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
             f"No selected training samples were found under {mask_root}. "
             "Create one mask folder per selected stack."
         )
-    if missing:
-        raise FileNotFoundError(
-            "Selected 2.5D training samples have incomplete annotations:\n"
-            + "\n".join(f"- {item}" for item in missing)
+    if invalid_context:
+        raise ValueError(
+            "Selected 2.5D samples have invalid target-slice contexts:\n"
+            + "\n".join(f"- {item}" for item in invalid_context)
         )
+    for item in skipped_missing_masks:
+        warnings.warn(
+            f"Skipping 2.5D training sample without reference mask: {item}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    cfg.skipped_reference_masks = list(skipped_missing_masks)
     if not entries:
-        raise RuntimeError("No annotated 2.5D target slices were found")
+        raise RuntimeError(
+            "No valid annotated 2.5D target slices were found after skipping samples "
+            "without reference masks."
+        )
     return entries
 
 
@@ -831,6 +849,8 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
         "training_targets_by_sample": {entry.sample: entry.slice_1based for entry in entries},
         "threshold": cfg.threshold,
         "annotation_count": len(entries),
+        "skipped_missing_reference_count": len(cfg.skipped_reference_masks),
+        "skipped_missing_references": list(cfg.skipped_reference_masks),
         "train_annotation_count": len(train_entries),
         "validation_annotation_count": len(validation_entries),
         "split_note": split_note,

@@ -177,6 +177,16 @@ class ReadinessReport:
     def passed(self) -> bool:
         return not any(item.status == "FAIL" for item in self.checks)
 
+    @property
+    def has_warnings(self) -> bool:
+        return any(item.status == "WARN" for item in self.checks)
+
+    @property
+    def status(self) -> str:
+        if not self.passed:
+            return "FAIL"
+        return "PASS_WITH_WARNINGS" if self.has_warnings else "PASS"
+
 
 def find_slice_mask(mask_sample_dir: Path, slice_1based: int) -> Path | None:
     """Find one binary target-slice mask using supported standard names."""
@@ -228,7 +238,7 @@ def check_3d_sample(
     expected_channels: int = 3,
     require_masks: bool = True,
 ) -> ReadinessReport:
-    """Validate one 3D OME-Zarr and its sparse manual training masks."""
+    """Validate one 3D OME-Zarr and warn when a manual target mask is absent."""
     image_zarr = Path(image_zarr).resolve()
     sample = volume_key(image_zarr)
     if training_slices_1based is None:
@@ -304,14 +314,26 @@ def check_3d_sample(
 
     if require_masks:
         if mask_root is None:
-            checks.append(CheckItem("manual mask root", "FAIL", "mask_root was not provided"))
+            checks.append(CheckItem("manual mask root", "WARN", "mask_root was not provided"))
         else:
             mask_sample_dir = annotation_sample_dir(mask_root, image_zarr)
-            checks.append(CheckItem("manual mask folder", "PASS" if mask_sample_dir.is_dir() else "FAIL", str(mask_sample_dir)))
+            checks.append(
+                CheckItem(
+                    "manual mask folder",
+                    "PASS" if mask_sample_dir.is_dir() else "WARN",
+                    str(mask_sample_dir),
+                )
+            )
             for slice_number in training_slices_1based:
                 path = find_slice_mask(mask_sample_dir, slice_number)
                 if path is None:
-                    checks.append(CheckItem(f"manual mask Z{slice_number}", "FAIL", "missing binary TIFF"))
+                    checks.append(
+                        CheckItem(
+                            f"manual mask Z{slice_number}",
+                            "WARN",
+                            "missing binary TIFF; sample will be skipped during training and metrics",
+                        )
+                    )
                     continue
                 try:
                     mask = np.asarray(tiff.imread(str(path)))
@@ -334,7 +356,7 @@ def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> t
     """Write human-readable TXT and machine-readable JSON reports."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    status = "PASS" if report.passed else "FAIL"
+    status = report.status
     lines = [
         "PFT 3D processing readiness report",
         "=" * 80,
@@ -356,7 +378,18 @@ def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> t
     text_path = output_dir / f"3d_input_check_{report_id}.txt"
     json_path = output_dir / f"3d_input_check_{report_id}.json"
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    json_path.write_text(json.dumps({**asdict(report), "passed": report.passed}, indent=2), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(
+            {
+                **asdict(report),
+                "passed": report.passed,
+                "has_warnings": report.has_warnings,
+                "status": report.status,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return text_path, json_path
 
 

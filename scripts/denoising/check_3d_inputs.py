@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument(
         "--check-masks",
         action="store_true",
-        help="Require the configured per-volume target mask in each checked sample folder",
+        help="Check configured target masks; missing folders or masks produce warnings, not failures",
     )
     parser.add_argument(
         "--annotated-only",
@@ -89,6 +89,7 @@ def main() -> int:
             )
 
     failures = 0
+    warnings_count = 0
     for zarr_path in zarrs:
         target_slice = target_slice_for_volume(zarr_path)
         report = check_3d_sample(
@@ -99,11 +100,15 @@ def main() -> int:
             require_masks=require_masks,
         )
         text_path, json_path = write_readiness_report(report, args.out)
-        status = "PASS" if report.passed else "FAIL"
+        status = report.status
         failures += int(not report.passed)
+        warnings_count += int(report.has_warnings)
         print(f"[{status}] {report.sample} -> {text_path}")
         print(f"       JSON -> {json_path}")
-    print(f"\nChecked {len(zarrs)} sample(s); failures={failures}")
+    print(
+        f"\nChecked {len(zarrs)} sample(s); "
+        f"samples_with_warnings={warnings_count}; failures={failures}"
+    )
     return 1 if failures else 0
 
 

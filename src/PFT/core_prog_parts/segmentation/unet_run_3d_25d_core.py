@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import warnings
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +81,9 @@ class UNet25DRunOutput:
     source_slice_dir: Path
     preview_dir: Path
     report_json: Path
+    reference_mask_tif: Path | None
+    reference_metrics_status: str
+    reference_metrics: dict[str, float] | None
 
 
 
@@ -151,6 +155,58 @@ def _validate_target_slice(slice_number: int, z_count: int) -> int:
     return slice_number
 
 
+def _binary_metrics(
+    reference: np.ndarray,
+    prediction: np.ndarray,
+    epsilon: float = 1e-12,
+) -> dict[str, float]:
+    """Calculate binary overlap metrics when a manual reference mask exists."""
+    reference_bool = reference.astype(bool)
+    prediction_bool = prediction.astype(bool)
+    intersection = float(np.count_nonzero(reference_bool & prediction_bool))
+    union = float(np.count_nonzero(reference_bool | prediction_bool))
+    reference_count = float(np.count_nonzero(reference_bool))
+    prediction_count = float(np.count_nonzero(prediction_bool))
+    false_positive = float(np.count_nonzero(~reference_bool & prediction_bool))
+    false_negative = float(np.count_nonzero(reference_bool & ~prediction_bool))
+    return {
+        "iou": intersection / (union + epsilon),
+        "dice": 2.0 * intersection / (reference_count + prediction_count + epsilon),
+        "precision": intersection / (intersection + false_positive + epsilon),
+        "recall": intersection / (intersection + false_negative + epsilon),
+    }
+
+
+def _load_optional_reference_mask(
+    *,
+    manual_mask_dir: Path | None,
+    slice_number: int,
+    expected_yx: tuple[int, int],
+    sample: str,
+) -> tuple[Path | None, np.ndarray | None, str]:
+    """Load a reference mask if present; otherwise warn and skip metrics."""
+    if manual_mask_dir is None:
+        warnings.warn(
+            f"{sample}: no manual-mask root was provided; reference metrics are skipped.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None, None, "skipped_no_manual_mask_root"
+
+    reference_path = find_slice_mask(manual_mask_dir, slice_number)
+    if reference_path is None:
+        warnings.warn(
+            f"{sample}: reference mask Z{slice_number:03d} is missing; inference continues "
+            "and Dice/IoU/precision/recall are skipped.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None, None, "skipped_missing_reference_mask"
+
+    reference = read_binary_slice_mask(reference_path, expected_yx)
+    return reference_path, reference, "calculated"
+
+
 
 def _save_source_slice_products(
     *,
@@ -181,7 +237,8 @@ def _save_source_mask_preview(
     mask: np.ndarray,
     sample: str,
     output_dir: Path,
-    manual_mask_dir: Path | None,
+    reference: np.ndarray | None,
+    reference_metrics: dict[str, float] | None,
 ) -> list[Path]:
     """Save the configured target-slice prediction quality-control figure."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -194,12 +251,6 @@ def _save_source_mask_preview(
         normalization_cache=normalization_cache,
     )
     merged_image = context[1]
-    reference = None
-    if manual_mask_dir is not None:
-        reference_path = find_slice_mask(manual_mask_dir, slice_number)
-        if reference_path is not None:
-            reference = read_binary_slice_mask(reference_path, mask.shape)
-
     columns = 5 if reference is not None else 4
     figure, axes = plt.subplots(
         1,
@@ -219,11 +270,17 @@ def _save_source_mask_preview(
     if reference is not None:
         axes[4].imshow(reference, cmap="gray", vmin=0, vmax=1)
         axes[4].contour(mask, levels=[0.5], colors="red", linewidths=0.6)
-        axes[4].set_title("Manual mask + prediction")
+        axes[4].set_title(
+            "Manual + prediction\n"
+            f"IoU={reference_metrics['iou']:.3f}, Dice={reference_metrics['dice']:.3f}"
+        )
     for axis in axes:
         axis.set_xticks([])
         axis.set_yticks([])
-    figure.suptitle(f"{sample} | source inference Z{slice_number:03d}")
+    title = f"{sample} | source inference Z{slice_number:03d}"
+    if reference is None:
+        title += " | no reference mask: metrics skipped"
+    figure.suptitle(title)
     safe_sample = sample.replace("/", "__").replace("\\", "__")
     path = output_dir / f"{safe_sample}__z{slice_number:03d}__predicted_mask_qc.png"
     figure.savefig(path, dpi=160)
@@ -390,6 +447,17 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         if cfg.manual_mask_root
         else None
     )
+    reference_mask_tif, reference, reference_metrics_status = _load_optional_reference_mask(
+        manual_mask_dir=manual_mask_dir,
+        slice_number=slice_number,
+        expected_yx=mask.shape,
+        sample=sample,
+    )
+    reference_metrics = (
+        _binary_metrics(reference, mask)
+        if reference is not None
+        else None
+    )
     preview_dir = sample_dir / f"qc_z{slice_number:03d}_prediction"
     previews = _save_source_mask_preview(
         image_czyx=image,
@@ -400,7 +468,8 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         mask=mask,
         sample=sample,
         output_dir=preview_dir,
-        manual_mask_dir=manual_mask_dir,
+        reference=reference,
+        reference_metrics=reference_metrics,
     )
 
     foreground_pixels = int(np.count_nonzero(mask))
@@ -423,6 +492,9 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         "full_mask_dtype": str(mask_zyx.dtype),
         "broadcast_to_all_z": True,
         "threshold": 0.5,
+        "reference_mask_tif": str(reference_mask_tif) if reference_mask_tif else None,
+        "reference_metrics_status": reference_metrics_status,
+        "reference_metrics": reference_metrics,
         "intensity_modification_performed": False,
         "preview_files": [str(path) for path in previews],
         "configuration": asdict(cfg),
@@ -438,6 +510,9 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         source_slice_dir=source_slice_dir,
         preview_dir=preview_dir,
         report_json=report_json,
+        reference_mask_tif=reference_mask_tif,
+        reference_metrics_status=reference_metrics_status,
+        reference_metrics=reference_metrics,
     )
 
 

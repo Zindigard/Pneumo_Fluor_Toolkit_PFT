@@ -65,6 +65,16 @@ def main() -> int:
     print(f"Target-slice products:  {result.source_slice_dir}")
     print(f"QC figures:             {result.preview_dir}")
     print(f"Report:                 {result.report_json}")
+    if result.reference_metrics is None:
+        print(f"Reference metrics:      SKIPPED ({result.reference_metrics_status})")
+    else:
+        print(
+            "Reference metrics:      "
+            f"IoU={result.reference_metrics['iou']:.4f}; "
+            f"Dice={result.reference_metrics['dice']:.4f}; "
+            f"precision={result.reference_metrics['precision']:.4f}; "
+            f"recall={result.reference_metrics['recall']:.4f}"
+        )
     print("No fluorescence intensities were modified in this step.")
     return 0
 
