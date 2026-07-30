@@ -1,4 +1,5 @@
-"""Create and validate one reusable master PSF set for the 3D dataset.
+"""
+Create and validate one reusable master PSF set for the 3D dataset.
 
 The project assumes that all 3D stacks were acquired and reconstructed with the
 same microscope configuration. Therefore, PSFs are generated once from one
@@ -12,14 +13,11 @@ The master set contains exactly three normalized PSFs:
 * approximately 561 nm, displayed as red.
 
 Every stack is validated against the reference metadata before a master PSF is
-used. Processing stops when a present acquisition value conflicts with the
-master reference. Some converted OME-Zarr stores omit refractive-index fields;
-in that case the fixed master-reference values are reused with an explicit
-warning. Channel-to-PSF assignment is performed by wavelength, not by channel
+used. Processing stops when voxel sampling, objective numerical aperture,
+refractive indices, spatial dimensions, channel count, or wavelength mapping do
+not match. Channel-to-PSF assignment is performed by wavelength, not by channel
 name or array order.
 
-External software requirements
-------------------------------
 PSF generation requires:
 
 * an ImageJ/Fiji installation containing Java and ImageJ JAR files;
@@ -770,34 +768,10 @@ def validate_stack_against_master_psfs(
             f"current={current_shape_zyx}"
         )
     issues.extend(_compare_voxel_metadata(master, current_meta))
-
-    # Optical values are essential for creating the master PSFs, but some source
-    # CZI files do not repeat the immersion/sample refractive indices in every
-    # converted OME-Zarr. A missing value is therefore treated as unavailable
-    # metadata, not as evidence of an acquisition mismatch. In that case the
-    # fixed value from the master reference is reused and recorded explicitly.
-    # A present value that differs from the master reference still stops the run.
-    compatibility_warnings: list[str] = []
-    resolved_optical_metadata: dict[str, Any] = {}
     for key in ("objective_na", "refractive_index_immersion", "refractive_index_sample"):
-        reference_value = master.get(key)
-        current_value = current_meta.get(key)
-        if reference_value is None:
+        if not _value_close(master.get(key), current_meta.get(key), atol=1e-5, rtol=1e-5):
             issues.append(
-                f"master PSF metadata does not define required optical value {key}"
-            )
-            continue
-        if current_value is None:
-            resolved_optical_metadata[key] = reference_value
-            compatibility_warnings.append(
-                f"{key} is absent from the current OME-Zarr; "
-                f"using fixed master-reference value {reference_value}"
-            )
-            continue
-        resolved_optical_metadata[key] = current_value
-        if not _value_close(reference_value, current_value, atol=1e-5, rtol=1e-5):
-            issues.append(
-                f"{key} mismatch: reference={reference_value}, current={current_value}"
+                f"{key} mismatch: reference={master.get(key)}, current={current_meta.get(key)}"
             )
 
     current_optics = resolve_channel_optics(
@@ -839,21 +813,7 @@ def validate_stack_against_master_psfs(
         raise ValueError(
             f"OME-Zarr stack is incompatible with the reusable master PSF set:\n{formatted}"
         )
-
-    # Return a report copy rather than mutating the on-disk master metadata.
-    report_metadata = dict(master)
-    report_metadata["compatibility_warnings"] = compatibility_warnings
-    report_metadata["current_stack_optical_metadata"] = {
-        "objective_na": current_meta.get("objective_na"),
-        "refractive_index_immersion": current_meta.get("refractive_index_immersion"),
-        "refractive_index_sample": current_meta.get("refractive_index_sample"),
-    }
-    report_metadata["resolved_optical_metadata_for_compatibility"] = resolved_optical_metadata
-    report_metadata["missing_current_optics_policy"] = (
-        "Use the fixed master-reference value only when the current OME-Zarr value is absent; "
-        "stop when a present value differs."
-    )
-    return matches, report_metadata
+    return matches, master
 
 
 def generate_or_reuse_master_psfs(

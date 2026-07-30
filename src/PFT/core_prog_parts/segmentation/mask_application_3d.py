@@ -1,5 +1,4 @@
-"""
-Apply a saved 2.5D U-Net mask to saved 3D deconvolution output.
+"""Apply a saved 2.5D U-Net mask to saved 3D deconvolution output.
 
 This module performs the agreed final post-processing step only after both
 independent branches are complete:
@@ -7,7 +6,9 @@ independent branches are complete:
 * original OME-Zarr -> 2.5D U-Net -> saved binary mask;
 * original raw intensities -> Richardson-Lucy -> saved float32 OME-Zarr.
 
-Foreground voxels retain 100% of the deconvolved intensity.
+Foreground voxels retain 100% of the deconvolved intensity. Background voxels
+retain 2% by default. ROI SNR is calculated from saved images using the same
+formula as the 2D workflow and only on manually annotated target slices.
 """
 
 from __future__ import annotations
@@ -32,7 +33,10 @@ from PFT.core_prog_parts.denoising.deconvolution_no_fuji import (
 from PFT.core_prog_parts.denoising.metadata_3d import copyable_root_metadata
 from PFT.core_prog_parts.denoising.validation_3d import (
     DEFAULT_TRAINING_SLICES_1BASED,
+    annotation_sample_dir,
     find_slice_mask,
+    relative_volume_path,
+    volume_key,
 )
 from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import read_binary_slice_mask
 
@@ -146,7 +150,7 @@ def _save_previews(
     sample: str,
     output_dir: Path,
     slices_1based: Sequence[int],
-    manual_mask_root: Path | None,
+    manual_mask_dir: Path | None,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
@@ -170,7 +174,7 @@ def _save_previews(
         axes[3].set_title("Masked minus deconvolved")
         axes[4].imshow(_display_composite(deconv_cyx))
         axes[4].contour(mask_zyx[z_index], levels=[0.5], colors="white", linewidths=0.7)
-        reference_path = find_slice_mask(manual_mask_root / sample, slice_number) if manual_mask_root else None
+        reference_path = find_slice_mask(manual_mask_dir, slice_number) if manual_mask_dir else None
         if reference_path is not None:
             reference = read_binary_slice_mask(reference_path, mask_zyx.shape[-2:])
             axes[4].contour(reference, levels=[0.5], colors="red", linewidths=0.7)
@@ -181,7 +185,8 @@ def _save_previews(
             axis.set_xticks([])
             axis.set_yticks([])
         figure.suptitle(f"{sample} | Z{slice_number:03d}")
-        path = output_dir / f"{sample}__z{slice_number:03d}__mask_application_qc.png"
+        safe_sample = sample.replace("/", "__").replace("\\", "__")
+        path = output_dir / f"{safe_sample}__z{slice_number:03d}__mask_application_qc.png"
         figure.savefig(path, dpi=160)
         plt.close(figure)
         paths.append(path)
@@ -195,7 +200,7 @@ def _calculate_snr_rows(
     raw_level: int,
     deconvolved: zarr.Array,
     masked: zarr.Array,
-    manual_mask_root: Path,
+    manual_mask_dir: Path,
     channel_names: Sequence[str],
     slices_1based: Sequence[int],
     epsilon: float,
@@ -210,7 +215,7 @@ def _calculate_snr_rows(
         )
     rows: list[SNRRow] = []
     for slice_number in slices_1based:
-        mask_path = find_slice_mask(manual_mask_root / sample, slice_number)
+        mask_path = find_slice_mask(manual_mask_dir, slice_number)
         if mask_path is None:
             continue
         z_index = slice_number - 1
@@ -308,8 +313,10 @@ def apply_saved_mask_to_deconvolution(
             "refusing to combine arrays using shape alone."
         )
 
-    sample = Path(source_raw).parent.name
-    output_dir = output_root / sample
+    source_raw_path = Path(source_raw).resolve()
+    relative_volume = relative_volume_path(source_raw_path)
+    sample = volume_key(source_raw_path)
+    output_dir = output_root / relative_volume
     output_zarr = output_dir / "image.ome.zarr"
     if output_dir.exists() and overwrite:
         shutil.rmtree(output_dir)
@@ -384,7 +391,11 @@ def apply_saved_mask_to_deconvolution(
         sample=sample,
         output_dir=preview_dir,
         slices_1based=slices_1based,
-        manual_mask_root=Path(manual_mask_root) if manual_mask_root else None,
+        manual_mask_dir=(
+            annotation_sample_dir(Path(manual_mask_root), source_raw_path)
+            if manual_mask_root
+            else None
+        ),
     )
 
     snr_csv: Path | None = None
@@ -394,11 +405,11 @@ def apply_saved_mask_to_deconvolution(
     if manual_mask_root is not None and source_raw is not None:
         snr_rows = _calculate_snr_rows(
             sample=sample,
-            raw_zarr=Path(source_raw),
+            raw_zarr=source_raw_path,
             raw_level=source_level,
             deconvolved=deconv,
             masked=stored_level0,
-            manual_mask_root=Path(manual_mask_root),
+            manual_mask_dir=annotation_sample_dir(Path(manual_mask_root), source_raw_path),
             channel_names=channel_names,
             slices_1based=slices_1based,
             epsilon=epsilon,

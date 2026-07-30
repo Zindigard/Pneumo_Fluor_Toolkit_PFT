@@ -15,7 +15,54 @@ import zarr
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 12)
+
+
+def relative_volume_path(image_zarr: str | Path, image_root: str | Path | None = None) -> Path:
+    """Return a stable experiment/sample path for one source OME-Zarr.
+
+    The preferred source layout is ``<image_root>/<experiment>/<sample>/image.ome.zarr``.
+    When ``image_root`` is omitted, the nearest ancestor named ``3d_data`` is
+    used. Falling back to the sample folder keeps the helper usable for custom
+    external inputs.
+    """
+    image_zarr = Path(image_zarr).resolve()
+    sample_dir = image_zarr.parent
+    if image_root is not None:
+        root = Path(image_root).resolve()
+        try:
+            relative = sample_dir.relative_to(root)
+        except ValueError as error:
+            raise ValueError(
+                f"OME-Zarr {image_zarr} is not located below image root {root}"
+            ) from error
+        if not relative.parts:
+            raise ValueError(f"OME-Zarr has no experiment/sample path below {root}: {image_zarr}")
+        return relative
+
+    for ancestor in sample_dir.parents:
+        if ancestor.name == "3d_data":
+            return sample_dir.relative_to(ancestor)
+    return Path(sample_dir.name)
+
+
+def volume_key(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
+    """Return a unique forward-slash experiment/sample identifier."""
+    return relative_volume_path(image_zarr, image_root).as_posix()
+
+
+def volume_file_id(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
+    """Return a filesystem-safe identifier for reports and QC filenames."""
+    return "__".join(relative_volume_path(image_zarr, image_root).parts)
+
+
+def annotation_sample_dir(
+    mask_root: str | Path,
+    image_zarr: str | Path,
+    image_root: str | Path | None = None,
+) -> Path:
+    """Return the collision-free manual-mask folder for one source volume."""
+    return Path(mask_root) / relative_volume_path(image_zarr, image_root)
 
 
 @dataclass(frozen=True)
@@ -93,7 +140,7 @@ def check_3d_sample(
 ) -> ReadinessReport:
     """Validate one 3D OME-Zarr and its sparse manual training masks."""
     image_zarr = Path(image_zarr).resolve()
-    sample = image_zarr.parent.name
+    sample = volume_key(image_zarr)
     checks: list[CheckItem] = []
     if not image_zarr.is_dir():
         return ReadinessReport(sample, str(image_zarr), level, (CheckItem("OME-Zarr exists", "FAIL", str(image_zarr)),))
@@ -149,7 +196,7 @@ def check_3d_sample(
         if mask_root is None:
             checks.append(CheckItem("manual mask root", "FAIL", "mask_root was not provided"))
         else:
-            mask_sample_dir = Path(mask_root) / sample
+            mask_sample_dir = annotation_sample_dir(mask_root, image_zarr)
             checks.append(CheckItem("manual mask folder", "PASS" if mask_sample_dir.is_dir() else "FAIL", str(mask_sample_dir)))
             for slice_number in training_slices_1based:
                 path = find_slice_mask(mask_sample_dir, slice_number)
@@ -192,8 +239,9 @@ def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> t
     ]
     for item in report.checks:
         lines.append(f"{item.status:<8} | {item.name} | {item.detail}")
-    text_path = output_dir / f"{report.sample}__3d_input_check.txt"
-    json_path = output_dir / f"{report.sample}__3d_input_check.json"
+    safe_id = report.sample.replace("/", "__").replace("\\", "__")
+    text_path = output_dir / f"{safe_id}__3d_input_check.txt"
+    json_path = output_dir / f"{safe_id}__3d_input_check.json"
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps({**asdict(report), "passed": report.passed}, indent=2), encoding="utf-8")
     return text_path, json_path
@@ -203,7 +251,11 @@ __all__ = [
     "CheckItem",
     "DEFAULT_TRAINING_SLICES_1BASED",
     "ReadinessReport",
+    "annotation_sample_dir",
     "check_3d_sample",
     "find_slice_mask",
+    "relative_volume_path",
+    "volume_file_id",
+    "volume_key",
     "write_readiness_report",
 ]

@@ -1,19 +1,14 @@
-"""Core inference and quantitative evaluation for the 2D U-Net.
+"""
+Core inference and quantitative evaluation for the 2D U-Net.
 
 The module loads a trained dataset-specific model, applies the same complete-
 image normalization used during training, predicts foreground probabilities in
-non-overlapping tiles, and reconstructs the original image dimensions. It can
-save the binary mask, probability map, and a non-normalized background-
-suppressed OME-Zarr image. Pixels inside the predicted foreground mask retain
-their filtered intensities, whereas pixels outside the mask are attenuated by
-98% by default and therefore retain 2% of their original intensity. ROI-SNR is
-calculated only after this attenuated image has been saved.
+non-overlapping tiles, and reconstructs the original image dimensions.
 
 The most important adjustable values are defined in :class:`UNetRunConfig`.
-Inference is not a second training stage. Parameters such as ``threshold``,
-``predict_batch_size``, and ``outside_mask_depletion`` can be changed without
-retraining, while ``patch`` and ``normalize`` must remain consistent with the
-trained model.
+Inference is not a second training stage. Parameters such as ``threshold`` and
+``predict_batch_size`` can be changed without retraining, while ``patch`` and
+``normalize`` must remain consistent with the trained model.
 """
 
 from __future__ import annotations
@@ -25,7 +20,6 @@ import json
 from typing import Any
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 import tensorflow as tf
 
@@ -43,12 +37,6 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
     ome_zarr_to_hwc_frames_2d,
     read_binary_mask_2d,
     soft_dice_coef,
-)
-
-
-BLUE_FLUORESCENCE_CMAP = LinearSegmentedColormap.from_list(
-    "pft_blue_fluorescence",
-    [(0.0, (0.0, 0.0, 0.0)), (1.0, (0.0, 0.0, 1.0))],
 )
 
 
@@ -86,25 +74,6 @@ class UNetRunConfig:
         Number of tiles predicted together. Increasing it improves GPU
         throughput until memory is saturated. Decrease it when inference causes
         an out-of-memory error. It should not materially change predictions.
-    outside_mask_depletion:
-        Fraction of the original filtered intensity removed outside the predicted
-        mask. The default ``0.98`` removes 98% and leaves a residual intensity
-        fraction of ``0.02``. Foreground pixels are not rescaled.
-
-        Approximate effect of changing this value:
-
-        * ``0.00``: no background attenuation; the saved image equals the
-          filtered input.
-        * ``0.90``: 90% attenuation; 10% of outside-mask intensity remains.
-        * ``0.98``: requested default; 2% remains.
-        * ``1.00``: complete removal; outside-mask pixels become zero.
-
-        Increasing depletion generally raises measured SNR because the residual
-        background mean and standard deviation decrease. However, it also makes
-        false-negative mask errors more consequential because real signal that
-        falls outside the predicted mask is strongly attenuated. Therefore, the
-        value should be fixed before final quantitative analysis and reported in
-        Methods. It changes post-processing only and does not require retraining.
 
     model_path, input_root, out_root, raw_root, mask_root:
         Optional path overrides. ``raw_root`` is used for before-filtering SNR,
@@ -114,22 +83,12 @@ class UNetRunConfig:
         Save the floating-point foreground probability map. Disabling it reduces
         disk use but removes the data needed for later threshold experiments.
     save_foreground_image:
-        Save the non-normalized, background-suppressed OME-Zarr image. The input
-        dtype and axis order are retained. Pixels inside the predicted mask keep
-        their original filtered values; pixels outside the mask are multiplied
-        by ``1 - outside_mask_depletion``. This output must be enabled when SNR
-        is calculated because SNR is intentionally measured from the saved file.
+        Save an intensity-preserving copy in which predicted background pixels
+        are set to zero. Disabling it saves disk space.
     compute_metrics:
         Calculate IoU, Dice, and available ROI-SNR values when references exist.
-        SNR before is calculated from the raw image. SNR after is calculated by
-        reloading the saved background-suppressed OME-Zarr image, which confirms
-        that the reported metric corresponds to the actual stored result.
-    strict_metrics:
-        When ``False`` (default), samples without a hand-labelled reference mask
-        are still processed and saved, but their quantitative metrics are marked
-        as unavailable. When ``True``, a missing reference mask raises an error.
-        The non-strict default permits complete-dataset inference while keeping
-        metric coverage explicit in ``unet_2d_metrics_coverage.csv``.
+        It does not change the predicted mask, but disabling it shortens post-
+        processing and omits quantitative evaluation files.
     epsilon:
         Small numerical constant used only to prevent division by zero in
         metrics. It should remain very small and does not normally need tuning.
@@ -144,9 +103,6 @@ class UNetRunConfig:
     normalize: str = "percentile"
     predict_batch_size: int = 8
 
-    # Post-processing. A value of 0.98 leaves 2% outside the predicted mask.
-    outside_mask_depletion: float = 0.98
-
     # Optional path overrides.
     model_path: Path | None = None
     input_root: Path | None = None
@@ -158,7 +114,6 @@ class UNetRunConfig:
     save_probability: bool = True
     save_foreground_image: bool = True
     compute_metrics: bool = True
-    strict_metrics: bool = False
     epsilon: float = 1e-12
 
 
@@ -170,13 +125,6 @@ def validate_run_config(cfg: UNetRunConfig) -> None:
         raise ValueError("threshold must be in [0,1]")
     if cfg.predict_batch_size <= 0:
         raise ValueError("predict_batch_size must be positive")
-    if not 0.0 <= cfg.outside_mask_depletion <= 1.0:
-        raise ValueError("outside_mask_depletion must be in [0,1]")
-    if cfg.compute_metrics and not cfg.save_foreground_image:
-        raise ValueError(
-            "SNR is calculated from the saved background-suppressed OME-Zarr; "
-            "save_foreground_image must be True when compute_metrics is True"
-        )
     if cfg.epsilon <= 0:
         raise ValueError("epsilon must be positive")
 
@@ -358,49 +306,13 @@ def apply_foreground_mask_to_input(
     input_array: np.ndarray,
     input_axes: str,
     masks: list[np.ndarray],
-    outside_mask_depletion: float = 0.98,
 ) -> np.ndarray:
-    """Attenuate intensities outside the predicted foreground mask.
-
-    Pixels inside the predicted mask are copied without rescaling. Pixels
-    outside the mask are multiplied by ``1 - outside_mask_depletion``. With the
-    default depletion of ``0.98``, 2% of the original filtered intensity remains
-    outside the mask.
-
-    The operation is performed on the original, non-normalized filtered array.
-    Integer inputs are rounded to the nearest representable value and returned
-    in the original integer dtype. Floating-point inputs retain their original
-    floating dtype. Consequently, the saved OME-Zarr has the same axes and dtype
-    as the filtered source rather than the temporary normalized U-Net tensor.
-
-    Parameters
-    ----------
-    input_array:
-        Original filtered image array loaded from OME-Zarr.
-    input_axes:
-        Axis order associated with ``input_array``.
-    masks:
-        One predicted binary YX mask per input frame.
-    outside_mask_depletion:
-        Removed fraction outside the mask. ``0`` leaves the image unchanged,
-        ``0.98`` leaves 2%, and ``1`` sets outside-mask pixels to zero.
-    """
-    if not 0.0 <= outside_mask_depletion <= 1.0:
-        raise ValueError("outside_mask_depletion must be in [0,1]")
-
+    """Set predicted background pixels to zero without changing foreground values."""
     mask_stack = np.stack(masks, axis=0)
     broadcast = _broadcast_masks_to_input(mask_stack, input_axes, input_array.shape)
-    residual_fraction = 1.0 - float(outside_mask_depletion)
-
-    working = np.asarray(input_array, dtype=np.float64)
-    attenuated = np.where(broadcast > 0, working, working * residual_fraction)
-
-    source_dtype = np.asarray(input_array).dtype
-    if np.issubdtype(source_dtype, np.integer):
-        limits = np.iinfo(source_dtype)
-        attenuated = np.rint(attenuated)
-        attenuated = np.clip(attenuated, limits.min, limits.max)
-    return attenuated.astype(source_dtype, copy=False)
+    return np.where(broadcast > 0, input_array, np.zeros((), dtype=input_array.dtype)).astype(
+        input_array.dtype, copy=False
+    )
 
 
 def binary_iou(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 1e-12) -> float:
@@ -440,58 +352,8 @@ def roi_snr(image: np.ndarray, reference_mask: np.ndarray, epsilon: float = 1e-1
     return float((signal_mean - background_mean) / (background_sd + epsilon))
 
 
-def _normalized_hwc_with_reference(
-    target_hwc: np.ndarray,
-    reference_hwc: np.ndarray,
-    *,
-    p_low: float = 1.0,
-    p_high: float = 99.8,
-) -> np.ndarray:
-    """Normalize target channels using percentile limits from a reference image.
-
-    This is used only for QC visualization. In particular, a completely
-    zeroed background can make P99.8 of the sparse final image equal zero.
-    Deriving limits from the filtered input prevents the valid foreground from
-    being displayed as an entirely black panel.
-    """
-    target = np.asarray(target_hwc, dtype=np.float32)
-    reference = np.asarray(reference_hwc, dtype=np.float32)
-    if target.ndim == 2:
-        target = target[..., None]
-    if reference.ndim == 2:
-        reference = reference[..., None]
-    if target.shape != reference.shape:
-        raise ValueError(
-            f"Target/reference display shapes differ: {target.shape} versus {reference.shape}"
-        )
-
-    normalized = np.empty_like(target, dtype=np.float32)
-    for channel in range(target.shape[-1]):
-        reference_plane = reference[..., channel]
-        lo = float(np.percentile(reference_plane, p_low))
-        hi = float(np.percentile(reference_plane, p_high))
-        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-            finite = reference_plane[np.isfinite(reference_plane)]
-            if finite.size == 0:
-                lo, hi = 0.0, 1.0
-            else:
-                lo = float(np.min(finite))
-                hi = float(np.max(finite))
-                if hi <= lo:
-                    hi = lo + 1.0
-        normalized[..., channel] = np.clip(
-            (target[..., channel] - lo) / (hi - lo + 1e-8),
-            0.0,
-            1.0,
-        )
-    return normalized
-
-
-def _display_from_normalized_hwc(normalized_hwc: np.ndarray) -> np.ndarray:
-    """Compose an already normalized HWC fluorescence image for display."""
-    normalized = np.asarray(normalized_hwc, dtype=np.float32)
-    if normalized.ndim == 2:
-        return normalized
+def _display_image(hwc: np.ndarray) -> np.ndarray:
+    normalized = normalize_image01(hwc, "percentile")
     if normalized.shape[-1] == 1:
         return normalized[..., 0]
     if normalized.shape[-1] == 2:
@@ -502,100 +364,31 @@ def _display_from_normalized_hwc(normalized_hwc: np.ndarray) -> np.ndarray:
     return normalized[..., :3]
 
 
-def _display_image(hwc: np.ndarray) -> np.ndarray:
-    return _display_from_normalized_hwc(normalize_image01(hwc, "percentile"))
-
-
-def _display_image_with_reference(
-    target_hwc: np.ndarray,
-    reference_hwc: np.ndarray,
-) -> np.ndarray:
-    """Display target with percentile limits derived from reference."""
-    return _display_from_normalized_hwc(
-        _normalized_hwc_with_reference(target_hwc, reference_hwc)
-    )
-
-
 def _save_preview(
     raw_hwc: np.ndarray | None,
     filtered_hwc: np.ndarray,
     probability: np.ndarray,
     prediction: np.ndarray,
-    suppressed_hwc: np.ndarray,
+    foreground_hwc: np.ndarray,
     reference: np.ndarray | None,
-    outside_mask_depletion: float,
     path: Path,
     sample: str,
 ) -> Path:
-    """Save inference QC including the actual non-normalized final output.
-
-    Display normalization is applied only for visualization. It does not alter
-    the saved OME-Zarr or the arrays used for SNR calculation. For the one-channel
-    2d_time dataset, every image, probability, and mask panel uses a black-to-blue
-    fluorescence colour map. No grayscale or magma panel is used in that QC figure.
-    """
-    figure, axes = plt.subplots(2, 4, figsize=(17, 8), dpi=160)
-    depletion_percent = 100.0 * outside_mask_depletion
-    residual_percent = 100.0 * (1.0 - outside_mask_depletion)
-    filtered_display = _display_image(filtered_hwc)
-    # Use the filtered input's percentile limits for the saved result. This is
-    # essential when 100% outside-mask depletion makes almost all output pixels
-    # exactly zero; independent P99.8 normalization can otherwise yield a fully
-    # black but misleading QC panel.
-    suppressed_display = _display_image_with_reference(
-        suppressed_hwc,
-        filtered_hwc,
-    )
-    residual_display = (
-        suppressed_display[..., 0]
-        if suppressed_display.ndim == 3
-        else suppressed_display
-    )
-    residual_display = np.where(prediction > 0, 0.0, residual_display)
-
-    single_channel = int(filtered_hwc.shape[-1]) == 1
-    scalar_cmap = BLUE_FLUORESCENCE_CMAP if single_channel else "gray"
-    probability_cmap = BLUE_FLUORESCENCE_CMAP if single_channel else "magma"
-
-    panels: list[tuple[str, np.ndarray, object | None]] = [
+    figure, axes = plt.subplots(2, 3, figsize=(13, 8), dpi=160)
+    panels: list[tuple[str, np.ndarray, str | None]] = [
+        ("Raw image", _display_image(raw_hwc if raw_hwc is not None else filtered_hwc), None),
+        ("Filtered input, display normalized", _display_image(filtered_hwc), None),
+        ("Exact U-Net normalized input", _display_image(normalize_image01(filtered_hwc, "percentile")), None),
+        ("Foreground probability", probability, "magma"),
+        ("Predicted foreground mask", prediction, "gray"),
         (
-            "Raw image",
-            _display_image(raw_hwc if raw_hwc is not None else filtered_hwc),
-            scalar_cmap if single_channel else None,
-        ),
-        (
-            "Filtered input, display normalized",
-            filtered_display,
-            scalar_cmap if single_channel else None,
-        ),
-        (
-            "Exact normalized U-Net input",
-            _display_image(normalize_image01(filtered_hwc, "percentile")),
-            scalar_cmap if single_channel else None,
-        ),
-        ("Foreground probability", probability, probability_cmap),
-        ("Predicted foreground mask", prediction, scalar_cmap),
-        (
-            f"Saved output: {depletion_percent:.1f}% outside-mask depletion",
-            suppressed_display,
-            scalar_cmap if single_channel else None,
-        ),
-        (
-            "Reference mask" if reference is not None else "No reference mask",
-            reference if reference is not None else np.zeros_like(prediction),
-            scalar_cmap,
-        ),
-        (
-            f"Residual outside mask: {residual_percent:.1f}%",
-            residual_display,
-            scalar_cmap,
+            "Reference mask" if reference is not None else "Foreground-only output",
+            reference if reference is not None else _display_image(foreground_hwc),
+            "gray" if reference is not None else None,
         ),
     ]
     for axis, (title, image, cmap) in zip(axes.ravel(), panels):
-        if single_channel:
-            axis.imshow(image, cmap=cmap, vmin=0.0, vmax=1.0)
-        else:
-            axis.imshow(image, cmap=cmap)
+        axis.imshow(image, cmap=cmap)
         axis.set_title(title)
         axis.axis("off")
     figure.suptitle(f"2D U-Net inference QC: {sample}")
@@ -633,20 +426,7 @@ def run_2d_unet_on_omezarr(
     cfg: UNetRunConfig,
     model: tf.keras.Model | None = None,
 ) -> tuple[UNetInferenceOutput, list[dict[str, Any]]]:
-    """Run one complete 2D sample and save the final background-suppressed image.
-
-    Processing order is intentionally fixed:
-
-    1. Normalize only the temporary network input and predict probabilities.
-    2. Threshold probabilities to obtain binary semantic masks.
-    3. Apply the masks to the original non-normalized filtered OME-Zarr array.
-    4. Remove ``cfg.outside_mask_depletion`` of the intensity outside masks.
-    5. Save the attenuated array as OME-Zarr with source axes and dtype.
-    6. Reload the saved OME-Zarr and calculate SNR from that stored result.
-
-    This order prevents accidental SNR calculation from normalized tensors or
-    from an in-memory array that differs from the saved quantitative output.
-    """
+    """Run one complete 2D OME-Zarr sample and save masks, image, QC, and metrics."""
     zarr_path = Path(zarr_path)
     sample = _sample_name_from_zarr(zarr_path)
     model = model or load_unet_model(Path(cfg.model_path))
@@ -658,42 +438,7 @@ def run_2d_unet_on_omezarr(
     masks = [(probability >= cfg.threshold).astype(np.uint8) for probability in probabilities]
 
     input_array, input_axes = _load_array_and_axes(zarr_path, cfg.level)
-    suppressed_array = apply_foreground_mask_to_input(
-        input_array,
-        input_axes,
-        masks,
-        outside_mask_depletion=cfg.outside_mask_depletion,
-    )
-
-    # Numerical integrity checks: the mask application must never alter values
-    # inside the predicted foreground. With complete depletion, every value
-    # outside the mask must be exactly zero. These checks verify the quantitative
-    # array independently of any display normalization.
-    mask_stack_for_check = np.stack(masks, axis=0)
-    broadcast_for_check = _broadcast_masks_to_input(
-        mask_stack_for_check,
-        input_axes,
-        input_array.shape,
-    )
-    inside_for_check = np.broadcast_to(
-        broadcast_for_check > 0,
-        input_array.shape,
-    )
-    if not np.array_equal(
-        suppressed_array[inside_for_check],
-        np.asarray(input_array)[inside_for_check],
-    ):
-        raise RuntimeError(
-            f"Foreground-intensity integrity check failed for {sample}: "
-            "values inside the predicted mask were modified."
-        )
-    if cfg.outside_mask_depletion == 1.0 and np.any(
-        suppressed_array[~inside_for_check] != 0
-    ):
-        raise RuntimeError(
-            f"Zero-background integrity check failed for {sample}: "
-            "nonzero values remain outside the predicted mask."
-        )
+    foreground_array = apply_foreground_mask_to_input(input_array, input_axes, masks)
 
     sample_dir = ensure_dir(Path(cfg.out_root) / sample)
     mask_array, mask_axes = _mask_stack_and_axes(masks)
@@ -732,21 +477,17 @@ def run_2d_unet_on_omezarr(
     if cfg.save_foreground_image:
         foreground_zarr = save_ome_zarr(
             sample_dir / "foreground_filtered.ome.zarr",
-            suppressed_array,
+            foreground_array,
             input_axes,
             overwrite=True,
             pyramid_3d=False,
             pyramid_max_layer=0,
             extra_attrs={
                 "pft_processing": {
-                    "operation": "unet_background_attenuation",
+                    "operation": "unet_background_suppression",
                     "source_filtered": str(zarr_path),
                     "predicted_mask": str(mask_zarr),
-                    "outside_mask_depletion_fraction": cfg.outside_mask_depletion,
-                    "outside_mask_residual_fraction": 1.0 - cfg.outside_mask_depletion,
-                    "inside_mask_intensity_scale": 1.0,
                     "normalization_applied_to_saved_intensities": False,
-                    "saved_dtype": str(input_array.dtype),
                 }
             },
         )
@@ -760,100 +501,64 @@ def run_2d_unet_on_omezarr(
     )
     reference = read_binary_mask_2d(mask_path) if mask_path.is_file() else None
 
-    # Reload the saved output before SNR calculation. This guarantees that SNR
-    # is calculated from the exact stored dtype and rounded integer values.
-    if foreground_zarr is not None:
-        suppressed_frames = ome_zarr_to_hwc_frames_2d(
-            foreground_zarr,
-            dataset=cfg.dataset,
-            level=0,
-        )
-    else:
-        # This branch is available only when metrics are disabled. It supports
-        # QC previews without writing the optional output image.
-        suppressed_frames = [
-            apply_foreground_mask_to_input(
-                filtered_frame,
-                "yxc",
-                [prediction],
-                outside_mask_depletion=cfg.outside_mask_depletion,
-            )
-            for filtered_frame, prediction in zip(filtered_frames, masks)
-        ]
-
-    if len(suppressed_frames) != len(filtered_frames):
-        raise ValueError(
-            f"Saved/filtered frame-count mismatch for {sample}: "
-            f"saved={len(suppressed_frames)}, filtered={len(filtered_frames)}"
-        )
-
     metric_rows: list[dict[str, Any]] = []
     if cfg.compute_metrics:
-        if foreground_zarr is None:
-            raise RuntimeError(
-                "SNR requires the saved background-suppressed OME-Zarr output"
-            )
         if reference is None:
-            message = (
-                f"Reference mask is missing for {sample}; inference outputs were saved, "
-                "but IoU, Dice, and ROI-SNR metrics were skipped."
+            raise FileNotFoundError(
+                f"Cannot compute IoU/SNR because reference mask is missing: {mask_path}"
             )
-            if cfg.strict_metrics:
-                raise FileNotFoundError(f"{message} Expected: {mask_path}")
-            print(f"[METRICS SKIPPED] {message}")
-        else:
-            if len(raw_frames) != len(filtered_frames):
-                raise ValueError(
-                    f"Raw/filtered frame-count mismatch for {sample}: raw={len(raw_frames)}, "
-                    f"filtered={len(filtered_frames)}"
+        if len(raw_frames) != len(filtered_frames):
+            raise ValueError(
+                f"Raw/filtered frame-count mismatch for {sample}: raw={len(raw_frames)}, "
+                f"filtered={len(filtered_frames)}"
+            )
+        if reference.shape != filtered_frames[0].shape[:2]:
+            raise ValueError(
+                f"Reference mask shape {reference.shape} does not match image YX "
+                f"{filtered_frames[0].shape[:2]} for {sample}"
+            )
+
+        for frame_index, (raw_frame, filtered_frame, prediction) in enumerate(
+            zip(raw_frames, filtered_frames, masks)
+        ):
+            foreground_frame = filtered_frame * prediction[..., None]
+            iou = binary_iou(reference, prediction, cfg.epsilon)
+            dice = binary_dice(reference, prediction, cfg.epsilon)
+            for channel_index in range(filtered_frame.shape[-1]):
+                snr_before = roi_snr(raw_frame[..., channel_index], reference, cfg.epsilon)
+                snr_after = roi_snr(
+                    foreground_frame[..., channel_index], reference, cfg.epsilon
                 )
-            if reference.shape != filtered_frames[0].shape[:2]:
-                raise ValueError(
-                    f"Reference mask shape {reference.shape} does not match image YX "
-                    f"{filtered_frames[0].shape[:2]} for {sample}"
+                metric_rows.append(
+                    {
+                        "dataset": cfg.dataset,
+                        "sample": sample,
+                        "frame_index": frame_index,
+                        "channel_index": channel_index,
+                        "iou": iou,
+                        "dice": dice,
+                        "snr_before": snr_before,
+                        "snr_after": snr_after,
+                        "delta_snr": snr_after - snr_before,
+                        "raw_zarr": str(raw_path),
+                        "filtered_zarr": str(zarr_path),
+                        "reference_mask": str(mask_path),
+                        "predicted_mask": str(mask_zarr),
+                        "foreground_output": str(foreground_zarr or ""),
+                    }
                 )
 
-            for frame_index, (raw_frame, filtered_frame, suppressed_frame, prediction) in enumerate(
-                zip(raw_frames, filtered_frames, suppressed_frames, masks)
-            ):
-                iou = binary_iou(reference, prediction, cfg.epsilon)
-                dice = binary_dice(reference, prediction, cfg.epsilon)
-                for channel_index in range(filtered_frame.shape[-1]):
-                    snr_before = roi_snr(raw_frame[..., channel_index], reference, cfg.epsilon)
-                    snr_after = roi_snr(
-                        suppressed_frame[..., channel_index], reference, cfg.epsilon
-                    )
-                    metric_rows.append(
-                        {
-                            "dataset": cfg.dataset,
-                            "sample": sample,
-                            "frame_index": frame_index,
-                            "channel_index": channel_index,
-                            "iou": iou,
-                            "dice": dice,
-                            "snr_before": snr_before,
-                            "snr_after": snr_after,
-                            "delta_snr": snr_after - snr_before,
-                            "outside_mask_depletion": cfg.outside_mask_depletion,
-                            "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
-                            "raw_zarr": str(raw_path),
-                            "filtered_zarr": str(zarr_path),
-                            "reference_mask": str(mask_path),
-                            "predicted_mask": str(mask_zarr),
-                            "background_suppressed_output": str(foreground_zarr),
-                            # Retained for compatibility with earlier result readers.
-                            "foreground_output": str(foreground_zarr),
-                        }
-                    )
-
+    foreground_frames = [
+        filtered_frame * prediction[..., None]
+        for filtered_frame, prediction in zip(filtered_frames, masks)
+    ]
     preview_png = _save_preview(
         raw_frames[0] if raw_frames else None,
         filtered_frames[0],
         probabilities[0],
         masks[0],
-        suppressed_frames[0],
+        foreground_frames[0],
         reference,
-        cfg.outside_mask_depletion,
         sample_dir / "unet_inference_qc.png",
         sample,
     )
@@ -884,10 +589,6 @@ def run_2d_unet_on_omezarr(
                     "dataset": cfg.dataset,
                     "sample": sample,
                     "threshold": cfg.threshold,
-                    "outside_mask_depletion": cfg.outside_mask_depletion,
-                    "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
-                    "snr_after_source": str(foreground_zarr),
-                    "snr_after_source_is_saved_omezarr": True,
                     "iou_mean": iou_mean,
                     "iou_standard_deviation": iou_sd,
                     "dice_mean": dice_mean,
@@ -979,21 +680,6 @@ def run_dataset(
         for output in outputs
     ]
     _write_csv(cfg.out_root / "unet_2d_inference_manifest.csv", manifest_rows)
-
-    metric_coverage_rows = [
-        {
-            "dataset": output.dataset,
-            "sample": output.sample,
-            "metrics_available": output.metrics_json is not None,
-            "metrics_json": str(output.metrics_json) if output.metrics_json else "",
-            "predicted_mask": str(output.mask_zarr),
-            "foreground_filtered": str(output.foreground_zarr) if output.foreground_zarr else "",
-            "qc_preview": str(output.preview_png),
-        }
-        for output in outputs
-    ]
-    _write_csv(cfg.out_root / "unet_2d_metrics_coverage.csv", metric_coverage_rows)
-
     if all_metric_rows:
         metrics_csv = cfg.out_root / "unet_2d_inference_metrics.csv"
         _write_csv(metrics_csv, all_metric_rows)
@@ -1042,8 +728,6 @@ def run_dataset(
                     "snr_after_mean": after_mean,
                     "snr_after_standard_deviation": after_sd,
                     "delta_snr": after_mean - before_mean,
-                    "outside_mask_depletion": cfg.outside_mask_depletion,
-                    "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
                 }
             )
         summary_csv = cfg.out_root / "unet_2d_per_sample_summary.csv"
@@ -1056,17 +740,10 @@ def run_dataset(
             f"Model: {cfg.model_path}",
             f"Input root: {cfg.input_root}",
             f"Samples processed: {len(outputs)}",
-            f"Samples with quantitative metrics: {sum(output.metrics_json is not None for output in outputs)}",
-            f"Samples without reference metrics: {sum(output.metrics_json is None for output in outputs)}",
             "Normalization: complete image, per channel, P1-P99.8 mapped to [0,1]",
             f"Prediction threshold: {cfg.threshold}",
-            f"Outside-mask depletion: {100.0 * cfg.outside_mask_depletion:.1f}%",
-            f"Outside-mask residual intensity: {100.0 * (1.0 - cfg.outside_mask_depletion):.1f}%",
-            "Saved enhanced image: foreground_filtered.ome.zarr; source dtype and axes retained",
-            "Saved image normalization: none; only temporary U-Net inputs are normalized",
             "SNR formula: (mean_signal - mean_background) / (background_sample_SD + epsilon)",
-            "SNR after is calculated after reloading the saved background-suppressed OME-Zarr.",
-            "The same hand-labelled reference mask defines signal/background ROIs before and after.",
+            "The same hand-labelled mask is applied to raw and foreground-only images.",
             "",
             "Sample | IoU mean | Dice mean | SNR before | SNR after | Delta SNR",
         ]

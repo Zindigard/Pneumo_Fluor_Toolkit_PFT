@@ -2,13 +2,11 @@
 
 The script supports two independent annotation workflows.
 
-Mask semantics are always ``0=background`` and ``1=foreground``.
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,7 +45,7 @@ PREFERRED_IMAGE_NAMES: tuple[str, ...] = (
     "preview_raw.png",
 )
 
-DEFAULT_3D_TARGET_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
+DEFAULT_3D_TARGET_SLICES_1BASED: tuple[int, ...] = (10, 12)
 WAVELENGTH_TO_RGB: tuple[tuple[float, int, str], ...] = (
     (405.0, 2, "blue"),
     (488.0, 1, "green"),
@@ -422,7 +420,7 @@ def choose_image_interactively(sample_dir: Path) -> Path:
 def save_annotation_outputs_2d(
     project_root: Path,
     dataset: str,
-    sample: str,
+    zarr_path: Path,
     source_image_path: Path,
     image: np.ndarray,
     mask: np.ndarray,
@@ -526,45 +524,57 @@ def find_3d_zarrs(project_root: Path) -> list[Path]:
 
 
 def sample_name_for_zarr(zarr_path: Path) -> str:
-    """Return the sample folder name used by the 2.5D training code."""
+    """Return the leaf sample folder name for display."""
     return zarr_path.parent.name
 
 
-def mask_dir_3d(project_root: Path, sample: str) -> Path:
-    return project_root / "results" / "training_files" / "U-net" / "3d_25d" / sample
+def relative_volume_path_3d(project_root: Path, zarr_path: Path) -> Path:
+    """Return the collision-free experiment/sample path below results/img/3d_data."""
+    image_root = (project_root / "results" / "img" / "3d_data").resolve()
+    sample_dir = Path(zarr_path).resolve().parent
+    try:
+        relative = sample_dir.relative_to(image_root)
+    except ValueError as error:
+        raise ValueError(
+            f"OME-Zarr is outside the configured 3D image root {image_root}: {zarr_path}"
+        ) from error
+    if len(relative.parts) < 2:
+        raise ValueError(
+            "3D annotation expects <experiment>/<sample>/image.ome.zarr below "
+            f"{image_root}; received {relative}"
+        )
+    return relative
 
 
-def mask_path_3d(project_root: Path, sample: str, slice_1based: int) -> Path:
-    return mask_dir_3d(project_root, sample) / f"z{slice_1based:03d}_mask.tif"
+def volume_key_3d(project_root: Path, zarr_path: Path) -> str:
+    """Return a unique experiment/sample identifier for display and splitting."""
+    return relative_volume_path_3d(project_root, zarr_path).as_posix()
 
 
-def completed_target_count(project_root: Path, sample: str) -> int:
+def mask_dir_3d(project_root: Path, zarr_path: Path) -> Path:
+    return (
+        project_root
+        / "results"
+        / "training_files"
+        / "U-net"
+        / "3d_25d"
+        / relative_volume_path_3d(project_root, zarr_path)
+    )
+
+
+def mask_path_3d(project_root: Path, zarr_path: Path, slice_1based: int) -> Path:
+    return mask_dir_3d(project_root, zarr_path) / f"z{slice_1based:03d}_mask.tif"
+
+
+def completed_target_count(project_root: Path, zarr_path: Path) -> int:
     return sum(
-        mask_path_3d(project_root, sample, z).exists()
+        mask_path_3d(project_root, zarr_path, z).exists()
         for z in DEFAULT_3D_TARGET_SLICES_1BASED
     )
 
 
 def relative_zarr_label(project_root: Path, zarr_path: Path) -> str:
-    image_root = project_root / "results" / "img" / "3d_data"
-    try:
-        relative = zarr_path.parent.relative_to(image_root)
-    except ValueError:
-        relative = zarr_path.parent
-    return str(relative)
-
-
-def ensure_unique_sample_name(zarr_path: Path, all_zarrs: Sequence[Path]) -> None:
-    """Stop if two stores would write to the same sample mask directory."""
-    names = Counter(sample_name_for_zarr(path) for path in all_zarrs)
-    sample = sample_name_for_zarr(zarr_path)
-    if names[sample] > 1:
-        collisions = [str(path) for path in all_zarrs if sample_name_for_zarr(path) == sample]
-        raise ValueError(
-            "The selected sample name is not unique across 3D experiments, while "
-            "the current training code uses sample-name folders. Resolve the naming "
-            f"collision before annotation for {sample!r}:\n- " + "\n- ".join(collisions)
-        )
+    return volume_key_3d(project_root, zarr_path)
 
 
 def choose_zarr_3d_interactively(
@@ -576,8 +586,7 @@ def choose_zarr_3d_interactively(
     visible: list[Path] = []
     labels: list[str] = []
     for path in stores:
-        sample = sample_name_for_zarr(path)
-        completed = completed_target_count(project_root, sample)
+        completed = completed_target_count(project_root, path)
         if not include_completed and completed == len(DEFAULT_3D_TARGET_SLICES_1BASED):
             continue
         visible.append(path)
@@ -586,7 +595,7 @@ def choose_zarr_3d_interactively(
             f"{completed}/{len(DEFAULT_3D_TARGET_SLICES_1BASED)} target masks"
         )
     if not visible:
-        print("\nAll 3D stacks have masks for Z10, Z24, and Z30.")
+        print("\nAll 3D stacks have masks for Z10 and Z12.")
         return None
     selected = choose_number("Choose a 3D OME-Zarr stack", labels)
     return None if selected is None else visible[selected]
@@ -594,19 +603,19 @@ def choose_zarr_3d_interactively(
 
 def choose_target_slice_interactively(
     project_root: Path,
-    sample: str,
+    zarr_path: Path,
     *,
     include_completed: bool,
 ) -> int | None:
     slices = list(DEFAULT_3D_TARGET_SLICES_1BASED)
     if not include_completed:
-        slices = [z for z in slices if not mask_path_3d(project_root, sample, z).exists()]
+        slices = [z for z in slices if not mask_path_3d(project_root, zarr_path, z).exists()]
     if not slices:
-        print(f"\nAll target masks already exist for {sample}.")
+        print(f"\nAll target masks already exist for {volume_key_3d(project_root, zarr_path)}.")
         return None
     labels = []
     for z in slices:
-        state = "MASK EXISTS" if mask_path_3d(project_root, sample, z).exists() else "MASK MISSING"
+        state = "MASK EXISTS" if mask_path_3d(project_root, zarr_path, z).exists() else "MASK MISSING"
         labels.append(f"Z{z} | input context Z{z-1}, Z{z}, Z{z+1} | {state}")
     selected = choose_number("Choose the middle Z-slice to annotate", labels)
     return None if selected is None else slices[selected]
@@ -749,8 +758,8 @@ def save_annotation_outputs_3d(
     outline_thickness: int,
 ) -> Path:
     """Save one sparse 2.5D target mask and slice-specific QC files."""
-    sample = sample_name_for_zarr(zarr_path)
-    output_dir = mask_dir_3d(project_root, sample)
+    sample = volume_key_3d(project_root, zarr_path)
+    output_dir = mask_dir_3d(project_root, zarr_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"z{slice_1based:03d}"
     output_mask = output_dir / f"{prefix}_mask.tif"
@@ -804,7 +813,7 @@ def save_annotation_outputs_3d(
         f"{channel_lines}\n"
         "Display normalization computed jointly across Z-1/Z/Z+1:\n"
         f"{normalization_lines}\n"
-        "Display normalization affects only annotation previews, not training image data.\n"
+        "The same context-wise percentile normalization and wavelength-to-RGB mapping are used during training and validation; only the uint8 conversion is preview-specific.\n"
     )
     (output_dir / f"{prefix}_labeling_record.txt").write_text(record, encoding="utf-8")
     return output_mask
@@ -821,11 +830,9 @@ def process_one_sample_3d(
 ) -> Path | None:
     """Open one OME-Zarr target slice in napari and save its binary mask."""
     zarr_path = Path(zarr_path).resolve()
-    all_zarrs = find_3d_zarrs(project_root)
-    ensure_unique_sample_name(zarr_path, all_zarrs)
-    sample = sample_name_for_zarr(zarr_path)
+    sample = volume_key_3d(project_root, zarr_path)
 
-    output_mask = mask_path_3d(project_root, sample, slice_1based)
+    output_mask = mask_path_3d(project_root, zarr_path, slice_1based)
     if not confirm_existing_mask(output_mask):
         print("Mask correction cancelled.")
         return None
@@ -914,7 +921,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help=(
             "One-based middle Z-slice for 3D annotation. Standard targets are "
-            "10, 24, and 30."
+            "10 and 12."
         ),
     )
     parser.add_argument(
@@ -1016,6 +1023,10 @@ def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
 
     fixed_zarr = args.zarr.resolve() if args.zarr is not None else None
     fixed_slice = args.slice_1based
+    if fixed_slice is not None and fixed_slice not in DEFAULT_3D_TARGET_SLICES_1BASED:
+        raise SystemExit(
+            f"3D annotation is fixed to Z10 and Z12; received --slice {fixed_slice}."
+        )
 
     if fixed_zarr is not None and fixed_slice is not None:
         process_one_sample_3d(
@@ -1035,10 +1046,10 @@ def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
         )
         if zarr_path is None:
             return
-        sample = sample_name_for_zarr(zarr_path)
+        sample = volume_key_3d(project_root, zarr_path)
         slice_1based = fixed_slice or choose_target_slice_interactively(
             project_root,
-            sample,
+            zarr_path,
             include_completed=args.show_completed,
         )
         if slice_1based is None:

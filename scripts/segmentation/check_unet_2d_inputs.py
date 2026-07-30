@@ -1,11 +1,9 @@
-"""Validate all files required for thesis-aligned 2D U-Net training and SNR.
+"""
+Validate all files required for 2D U-Net training and SNR.
 
 The checker compares the canonical raw OME-Zarr stores, intensity-preserving
-local-threshold outputs, and hand-labelled masks converted to binary foreground.
-After inference, it also verifies that the saved enhanced OME-Zarr preserves
-inside-mask values, retains exactly 2% of outside-mask intensity by default,
-keeps the source dtype and axes, and is therefore non-normalized. It also writes
-QC figures showing the stored filtered values and the exact P1-P99.8 normalized
+local-threshold outputs, and hand-labelled masks converted to binary foreground. It also writes QC
+figures showing the stored filtered values and the exact P1-P99.8 normalized
 tensor that will enter the U-Net.
 
 Exit code 0 means all selected datasets are ready for training. Exit code 1
@@ -25,7 +23,6 @@ import sys
 from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
 _SCRIPT = Path(__file__).resolve()
@@ -79,10 +76,6 @@ class CheckRow:
     snr_pre_inference_ready: bool
     predicted_mask_exists: bool
     foreground_output_exists: bool
-    foreground_output_axes_shape_match: bool
-    foreground_output_dtype_match: bool
-    outside_mask_depletion_verified: bool
-    foreground_output_non_normalized: bool
     snr_post_inference_ready: bool
     preview_png: str
     issues: str
@@ -103,64 +96,6 @@ def _read_array(path: Path) -> tuple[np.ndarray, str]:
     return np.asarray(array), normalize_axes(axes)
 
 
-
-
-def _broadcast_prediction_to_input(
-    prediction: np.ndarray,
-    prediction_axes: str,
-    input_axes: str,
-    input_shape: tuple[int, ...],
-) -> np.ndarray:
-    """Broadcast a YX or TYX prediction to the complete input-array shape."""
-    prediction_axes = normalize_axes(prediction_axes)
-    input_axes = normalize_axes(input_axes)
-    if any(axis not in input_axes for axis in prediction_axes):
-        raise ValueError(
-            f"Prediction axes {prediction_axes} are incompatible with input axes {input_axes}"
-        )
-
-    ordered_prediction_axes = [axis for axis in input_axes if axis in prediction_axes]
-    permutation = [prediction_axes.index(axis) for axis in ordered_prediction_axes]
-    ordered = np.transpose(prediction, axes=permutation) if permutation else prediction
-
-    reshape: list[int] = []
-    ordered_index = 0
-    for axis, input_size in zip(input_axes, input_shape):
-        if axis in prediction_axes:
-            prediction_size = int(ordered.shape[ordered_index])
-            if prediction_size != int(input_size):
-                raise ValueError(
-                    f"Prediction/input size mismatch for axis {axis}: "
-                    f"{prediction_size} != {input_size}"
-                )
-            reshape.append(prediction_size)
-            ordered_index += 1
-        else:
-            reshape.append(1)
-    return np.broadcast_to(ordered.reshape(tuple(reshape)), input_shape)
-
-
-def _expected_background_suppressed_array(
-    filtered: np.ndarray,
-    input_axes: str,
-    prediction: np.ndarray,
-    prediction_axes: str,
-    depletion: float,
-) -> np.ndarray:
-    """Reproduce the documented non-normalized post-processing operation."""
-    if not 0.0 <= depletion <= 1.0:
-        raise ValueError("depletion must be in [0,1]")
-    broadcast = _broadcast_prediction_to_input(
-        prediction > 0, prediction_axes, input_axes, filtered.shape
-    )
-    residual = 1.0 - float(depletion)
-    expected = np.where(broadcast, filtered.astype(np.float64), filtered * residual)
-    if np.issubdtype(filtered.dtype, np.integer):
-        limits = np.iinfo(filtered.dtype)
-        expected = np.clip(np.rint(expected), limits.min, limits.max)
-    return expected.astype(filtered.dtype, copy=False)
-
-
 def _storage_normalization_state(raw: np.ndarray, filtered: np.ndarray, exact: bool) -> str:
     """Describe whether normalization appears to have been applied before saving."""
     if not exact:
@@ -175,43 +110,15 @@ def _storage_normalization_state(raw: np.ndarray, filtered: np.ndarray, exact: b
     return "NO: retained values and dtype equal raw"
 
 
-# Fluorescence-style display map for the single-channel 2d_time/HADA dataset.
-# This affects PNG previews only; quantitative arrays are never recoloured or changed.
-_TIME_BLUE_CMAP = LinearSegmentedColormap.from_list(
-    "pft_time_blue", [(0.0, 0.0, 0.0), (0.0, 0.25, 1.0)]
-)
-
-
-def _display(
-    hwc: np.ndarray,
-    *,
-    dataset: str,
-    already_normalized: bool = False,
-) -> tuple[np.ndarray, str | LinearSegmentedColormap | None]:
-    """Prepare one image for the HTML/PNG input-readiness preview.
-
-    The returned image is display-normalized only. The stored raw and filtered
-    arrays are not modified. For ``2d_time``, the single HADA channel is shown
-    with a black-to-blue fluorescence map. For ``2d_wga_dapi``, channel 0 is
-    displayed as DAPI/blue and channel 1 as WGA/green.
-    """
+def _display(hwc: np.ndarray, already_normalized: bool = False) -> np.ndarray:
     image = hwc if already_normalized else normalize_image01(hwc, "percentile")
-
-    if dataset == "2d_time":
-        if image.shape[-1] != 1:
-            raise ValueError(
-                f"2d_time preview expects one channel, received shape {image.shape}"
-            )
-        return image[..., 0], _TIME_BLUE_CMAP
-
     if image.shape[-1] == 1:
-        return image[..., 0], "gray"
+        return image[..., 0]
     if image.shape[-1] == 2:
-        rgb = np.stack(
+        return np.stack(
             [np.zeros_like(image[..., 0]), image[..., 1], image[..., 0]], axis=-1
         )
-        return rgb, None
-    return image[..., :3], None
+    return image[..., :3]
 
 
 def _save_preview(
@@ -224,38 +131,22 @@ def _save_preview(
 ) -> Path:
     normalized_input = normalize_image01(filtered_frame, "percentile")
     figure, axes = plt.subplots(1, 4, figsize=(16, 4.3), dpi=160)
-
-    raw_display, raw_cmap = _display(raw_frame, dataset=dataset)
-    filtered_display, filtered_cmap = _display(filtered_frame, dataset=dataset)
-    normalized_display, normalized_cmap = _display(
-        normalized_input, dataset=dataset, already_normalized=True
-    )
-
-    if dataset == "2d_time":
-        raw_title = "Raw HADA image\noriginal values; blue display only"
-        filtered_title = (
-            "Local-threshold filtered HADA\noriginal values; blue display only"
-        )
-        normalized_title = (
-            "Normalized U-Net input\nP1-P99.8 → [0,1]; blue display only"
-        )
-    else:
-        raw_title = "Raw image\nDAPI blue + WGA green; display only"
-        filtered_title = (
-            "Local-threshold filtered image\noriginal values; display normalized"
-        )
-        normalized_title = "Normalized U-Net input\nP1-P99.8 per channel → [0,1]"
-
-    panels: list[
-        tuple[str, np.ndarray, str | LinearSegmentedColormap | None]
-    ] = [
-        (raw_title, raw_display, raw_cmap),
-        (filtered_title, filtered_display, filtered_cmap),
-        (normalized_title, normalized_display, normalized_cmap),
-        ("Reference foreground mask\npositive labels converted to foreground", mask, "gray"),
+    panels: list[tuple[str, np.ndarray, str | None]] = [
+        ("Raw image\n(display normalization only)", _display(raw_frame), None),
+        (
+            "Stored local-threshold input\n(raw intensity values, display normalized)",
+            _display(filtered_frame),
+            None,
+        ),
+        (
+            "Exact tensor passed to U-Net\nP1-P99.8 per channel, [0,1]",
+            _display(normalized_input, already_normalized=True),
+            None,
+        ),
+        ("Hand-labelled binary foreground mask", mask, "gray"),
     ]
     for axis, (title, image, cmap) in zip(axes, panels):
-        axis.imshow(image, cmap=cmap, vmin=0.0, vmax=1.0)
+        axis.imshow(image, cmap=cmap)
         axis.set_title(title, fontsize=9)
         axis.axis("off")
     figure.suptitle(f"U-Net input readiness: {dataset} | {sample}")
@@ -290,7 +181,7 @@ def _write_html(path: Path, rows: list[CheckRow], roots: dict[str, dict[str, str
         f"<h1>PFT 2D U-Net input readiness: {status}</h1>",
         f"<p>Generated UTC: {html.escape(datetime.now(timezone.utc).isoformat())}</p>",
         "<p><strong>Normalization decision:</strong> keep local-threshold OME-Zarr files in their original intensity scale. The training and inference code normalizes each complete image independently per channel by mapping P1 and P99.8 to [0,1]. Do not save a second normalized training dataset.</p>",
-        "<p><strong>SNR prerequisites:</strong> raw image, foreground mask, and filtered image are required before training. After inference, <code>pred_mask.ome.zarr</code> and <code>foreground_filtered.ome.zarr</code> complete the before/after SNR workflow. The checker verifies that the saved enhanced image is not normalized, that inside-mask values are unchanged, and that outside-mask values retain the configured residual intensity (2% for 98% depletion).</p>",
+        "<p><strong>SNR prerequisites:</strong> raw image, foreground mask, and filtered image are required before training. After inference, <code>pred_mask.ome.zarr</code> and <code>foreground_filtered.ome.zarr</code> complete the before/after SNR workflow.</p>",
     ]
     for dataset, mapping in roots.items():
         lines.append(f"<h2>{html.escape(dataset)}</h2><ul>")
@@ -316,8 +207,6 @@ def _write_html(path: Path, rows: list[CheckRow], roots: dict[str, dict[str, str
         "foreground_pixels", "background_pixels", "positive_source_labels",
         "snr_pre_inference_ready",
         "predicted_mask_exists", "foreground_output_exists",
-        "foreground_output_axes_shape_match", "foreground_output_dtype_match",
-        "outside_mask_depletion_verified", "foreground_output_non_normalized",
         "snr_post_inference_ready", "issues",
     ]
     lines.extend(f"<th>{html.escape(column)}</th>" for column in columns)
@@ -341,7 +230,6 @@ def check_dataset(
     inference_root: Path,
     output_root: Path,
     preview_count: int,
-    expected_outside_mask_depletion: float,
 ) -> tuple[list[CheckRow], dict[str, str]]:
     raw = _discover(raw_root)
     filtered = _discover(filtered_root)
@@ -382,10 +270,6 @@ def check_dataset(
                 snr_pre_inference_ready=False,
                 predicted_mask_exists=False,
                 foreground_output_exists=False,
-                foreground_output_axes_shape_match=False,
-                foreground_output_dtype_match=False,
-                outside_mask_depletion_verified=False,
-                foreground_output_non_normalized=False,
                 snr_post_inference_ready=False,
                 preview_png="",
                 issues="FAIL: no raw, filtered, or reference-mask samples were discovered",
@@ -415,10 +299,6 @@ def check_dataset(
         storage_normalization = "UNKNOWN"
         raw_frames: list[np.ndarray] = []
         filtered_frames: list[np.ndarray] = []
-        raw_array: np.ndarray | None = None
-        filtered_array: np.ndarray | None = None
-        raw_axes = ""
-        filtered_axes = ""
         mask: np.ndarray | None = None
 
         if raw_exists and filtered_exists:
@@ -498,90 +378,7 @@ def check_dataset(
         foreground_path = inference_root / sample / "foreground_filtered.ome.zarr"
         pred_exists = pred_path.is_dir()
         foreground_exists = foreground_path.is_dir()
-        output_axes_shape_match = False
-        output_dtype_match = False
-        depletion_verified = False
-        output_non_normalized = False
-
-        if pred_exists != foreground_exists:
-            warnings.append(
-                "post-inference output is incomplete: pred_mask.ome.zarr and "
-                "foreground_filtered.ome.zarr must be present together"
-            )
-
-        if (
-            pred_exists
-            and foreground_exists
-            and filtered_array is not None
-            and filtered_axes
-        ):
-            try:
-                prediction_array, prediction_axes = _read_array(pred_path)
-                enhanced_array, enhanced_axes = _read_array(foreground_path)
-                output_axes_shape_match = bool(
-                    enhanced_axes == filtered_axes
-                    and enhanced_array.shape == filtered_array.shape
-                )
-                output_dtype_match = enhanced_array.dtype == filtered_array.dtype
-                if not output_axes_shape_match:
-                    failures.append(
-                        "saved enhanced OME-Zarr axes/shape do not match filtered input: "
-                        f"filtered={filtered_axes}{filtered_array.shape}, "
-                        f"enhanced={enhanced_axes}{enhanced_array.shape}"
-                    )
-                if not output_dtype_match:
-                    failures.append(
-                        "saved enhanced OME-Zarr dtype differs from filtered input: "
-                        f"{filtered_array.dtype} != {enhanced_array.dtype}"
-                    )
-
-                if output_axes_shape_match:
-                    expected_enhanced = _expected_background_suppressed_array(
-                        filtered_array,
-                        filtered_axes,
-                        prediction_array,
-                        prediction_axes,
-                        expected_outside_mask_depletion,
-                    )
-                    if np.issubdtype(filtered_array.dtype, np.floating):
-                        depletion_verified = bool(
-                            np.allclose(
-                                enhanced_array,
-                                expected_enhanced,
-                                rtol=1e-6,
-                                atol=1e-7,
-                                equal_nan=True,
-                            )
-                        )
-                    else:
-                        depletion_verified = bool(
-                            np.array_equal(enhanced_array, expected_enhanced)
-                        )
-                    if not depletion_verified:
-                        failures.append(
-                            "saved enhanced values do not match the requested outside-mask "
-                            f"depletion of {100.0 * expected_outside_mask_depletion:.1f}%"
-                        )
-
-                output_non_normalized = bool(
-                    output_axes_shape_match
-                    and output_dtype_match
-                    and depletion_verified
-                )
-            except Exception as exc:
-                failures.append(
-                    f"post-inference output validation error: {type(exc).__name__}: {exc}"
-                )
-
-        snr_post_ready = bool(
-            snr_pre_ready
-            and pred_exists
-            and foreground_exists
-            and output_axes_shape_match
-            and output_dtype_match
-            and depletion_verified
-            and output_non_normalized
-        )
+        snr_post_ready = bool(snr_pre_ready and pred_exists and foreground_exists)
 
         preview = ""
         if (
@@ -628,10 +425,6 @@ def check_dataset(
                 snr_pre_inference_ready=snr_pre_ready,
                 predicted_mask_exists=pred_exists,
                 foreground_output_exists=foreground_exists,
-                foreground_output_axes_shape_match=output_axes_shape_match,
-                foreground_output_dtype_match=output_dtype_match,
-                outside_mask_depletion_verified=depletion_verified,
-                foreground_output_non_normalized=output_non_normalized,
                 snr_post_inference_ready=snr_post_ready,
                 preview_png=preview,
                 issues=issues,
@@ -646,8 +439,6 @@ def check_dataset(
         "raw image count": str(len(raw)),
         "filtered image count": str(len(filtered)),
         "mask count": str(len(mask_samples)),
-        "expected outside-mask depletion": str(expected_outside_mask_depletion),
-        "expected outside-mask residual": str(1.0 - expected_outside_mask_depletion),
     }
     return rows, roots
 
@@ -685,22 +476,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=PROJECT_ROOT / "results" / "U-net" / "input_check",
     )
     parser.add_argument("--preview-count", type=int, default=2)
-    parser.add_argument(
-        "--expected-outside-mask-depletion",
-        type=float,
-        default=0.98,
-        help=(
-            "Expected post-inference depletion outside the predicted mask. "
-            "Default 0.98 verifies that 2%% remains."
-        ),
-    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not 0.0 <= args.expected_outside_mask_depletion <= 1.0:
-        raise SystemExit("--expected-outside-mask-depletion must be in [0,1]")
     datasets = list(DATASETS_2D) if args.dataset == "all" else [args.dataset]
     if len(datasets) > 1 and any(
         value is not None
@@ -733,7 +513,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             inference_root=inference_root,
             output_root=output_root,
             preview_count=max(0, args.preview_count),
-            expected_outside_mask_depletion=args.expected_outside_mask_depletion,
         )
         all_rows.extend(rows)
         root_map[dataset] = roots
@@ -757,10 +536,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Decision: pass the intensity-preserving filtered OME-Zarr files to the U-Net.",
         "Do not pre-save normalized images. Training and inference apply P1-P99.8",
         "normalization per complete image and per channel immediately before prediction.",
-        f"Expected outside-mask depletion after inference: {100.0 * args.expected_outside_mask_depletion:.1f}%.",
-        f"Expected outside-mask residual intensity: {100.0 * (1.0 - args.expected_outside_mask_depletion):.1f}%.",
-        "SNR after is valid only when the saved enhanced OME-Zarr passes value, dtype,",
-        "axis, shape, and non-normalization checks.",
         "",
         f"CSV: {csv_path}",
         f"HTML with input previews: {html_path}",

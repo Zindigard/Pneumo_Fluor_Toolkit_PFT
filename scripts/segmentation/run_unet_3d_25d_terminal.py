@@ -1,8 +1,9 @@
-"""Predict and save 2.5D U-Net foreground masks for a complete 3D volume.
+"""
+Predict and save 2.5D U-Net foreground masks for a complete 3D volume.
 
 The script reads the original OME-Zarr distribution used during training. It
 saves only ``pred_mask.ome.zarr``, an optional probability OME-Zarr, and quality-
-control figures for Z10, Z24, and Z30. It does not apply the
+control figures for Z5, Z10, Z15, Z20, Z25, Z30, and Z35. It does not apply the
 mask and does not save a background-attenuated fluorescence image.
 """
 

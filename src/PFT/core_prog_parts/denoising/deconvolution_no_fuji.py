@@ -1,10 +1,11 @@
-"""Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
+"""
+Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
 
 The selected input pyramid level is deconvolved channel by channel and written
 as level 0 of a new multiscale OME-Zarr. Numeric fluorescence values are saved
 as raw ``float32`` Richardson-Lucy output. No 0-1 normalization is applied to
 the stored arrays. Display normalization is used only in PNG quality-control
-figures. Each wavelength-matched channel may use its own iteration count.
+figures.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from PFT.core_prog_parts.denoising.psf_creator import (
 )
 
 PSFModel = Literal["BW", "GL", "RW"]
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10, 24, 30)
+DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (5, 10, 15, 20, 25, 30, 35)
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,6 @@ class SkimageDeconvRunInfo:
     out_dir: Path
     model: PSFModel
     iters: int
-    iterations_by_channel: dict[str, int]
     background: float
     input_level: int
     pyramid_max_layer: int
@@ -114,76 +114,6 @@ def _load_normalized_psf(match: MasterPSFMatch) -> np.ndarray:
     psf = np.asarray(tiff.imread(str(match.psf_path)), dtype=np.float32)
     psf /= np.float32(psf.sum(dtype=np.float64))
     return psf
-
-
-def _resolve_channel_iterations(
-    matches: Sequence[MasterPSFMatch],
-    *,
-    default_iters: int,
-    overrides: Mapping[str, int] | None,
-) -> dict[int, int]:
-    """Resolve a positive Richardson-Lucy iteration count for every channel.
-
-    Overrides may be keyed by display color (``blue``, ``green``, ``red``),
-    wavelength (for example ``405`` or ``405nm``), channel name, channel index
-    (``0``), or indexed label (``c0``). Color keys are recommended because the
-    master-PSF metadata already defines the wavelength-to-color convention.
-    """
-    if int(default_iters) < 1:
-        raise ValueError("default_iters must be at least 1")
-
-    normalized: dict[str, int] = {}
-    for raw_key, raw_value in (overrides or {}).items():
-        key = str(raw_key).strip().lower().replace(" ", "")
-        value = int(raw_value)
-        if not key:
-            raise ValueError("Channel-iteration override contains an empty key")
-        if value < 1:
-            raise ValueError(f"Iteration count for {raw_key!r} must be at least 1")
-        normalized[key] = value
-
-    resolved: dict[int, int] = {}
-    used_keys: set[str] = set()
-    for match in matches:
-        wavelength = float(match.wavelength_nm)
-        wavelength_int = int(round(wavelength))
-        candidates = (
-            str(match.display_color).strip().lower(),
-            str(wavelength_int),
-            f"{wavelength_int}nm",
-            str(match.channel_name).strip().lower().replace(" ", ""),
-            str(int(match.channel_index)),
-            f"c{int(match.channel_index)}",
-        )
-        selected = int(default_iters)
-        for candidate in candidates:
-            if candidate in normalized:
-                selected = normalized[candidate]
-                used_keys.add(candidate)
-                break
-        resolved[int(match.channel_index)] = selected
-
-    unused = sorted(set(normalized) - used_keys)
-    if unused:
-        raise ValueError(
-            "Unknown channel-iteration override key(s): " + ", ".join(unused)
-        )
-    return resolved
-
-
-def _iteration_tag(
-    matches: Sequence[MasterPSFMatch],
-    iterations_by_index: Mapping[int, int],
-) -> str:
-    """Return a stable output-name tag such as ``iterB4_G5_R3``."""
-    by_color = {
-        str(match.display_color).lower(): int(iterations_by_index[match.channel_index])
-        for match in matches
-    }
-    labels = (("blue", "B"), ("green", "G"), ("red", "R"))
-    return "iter" + "_".join(
-        f"{short}{by_color[color]}" for color, short in labels if color in by_color
-    )
 
 
 def _volume_stats(stage: str, channel_index: int, channel_name: str, array: np.ndarray) -> VolumeStats:
@@ -467,12 +397,7 @@ def _write_reports(
         f"Input level: {run_info['input_level']}",
         f"PSF model: {run_info['psf_model']}",
         "PSF policy: reusable level-0 master set, matched by wavelength metadata",
-        f"Default iterations: {run_info.get('iterations_default', run_info.get('iterations'))}",
-        "Iterations by channel:",
-        *[
-            "  C{channel_index} {channel_name} ({display_color}, {wavelength_nm:g} nm): {iterations}".format(**item)
-            for item in run_info.get("iterations_by_channel", [])
-        ],
+        f"Iterations: {run_info['iterations']}",
         f"Source metadata preserved: {run_info.get('metadata_preserved_for_segmentation')}",
         "Stored numeric normalization: NONE",
         "Stored dtype: float32",
@@ -502,7 +427,6 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     out_root: Path,
     model: PSFModel = "BW",
     iters: int = 5,
-    channel_iterations: Mapping[str, int] | None = None,
     background: float = 0.0,
     level: int = 0,
     channel_wavelength_nm: Mapping[str, float] | None = None,
@@ -517,12 +441,10 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     ``clip`` must remain ``False`` for raw fluorescence values. The selected input
     level becomes level 0 of the derived OME-Zarr, and its physical voxel size is
     retained. Additional output levels are generated by lateral mean pooling.
-    ``channel_iterations`` overrides the default ``iters`` value by channel color,
-    wavelength, channel name, or channel index.
     """
     in_omezarr = Path(in_omezarr).resolve()
     out_root = Path(out_root).resolve()
-    if int(iters) < 1:
+    if iters < 1:
         raise ValueError("iters must be at least 1")
     if clip:
         raise ValueError("clip=True is prohibited because it would clip raw fluorescence intensities to [-1, 1]")
@@ -558,25 +480,9 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     matches_by_index = {match.channel_index: match for match in master_matches}
     if len(matches_by_index) != c_size:
         raise ValueError(f"Resolved {len(matches_by_index)} master PSF mappings for C={c_size}")
-    iterations_by_index = _resolve_channel_iterations(
-        master_matches,
-        default_iters=int(iters),
-        overrides=channel_iterations,
-    )
-    iteration_records = [
-        {
-            "channel_index": int(match.channel_index),
-            "channel_name": str(match.channel_name),
-            "wavelength_nm": float(match.wavelength_nm),
-            "display_color": str(match.display_color),
-            "iterations": int(iterations_by_index[match.channel_index]),
-        }
-        for match in master_matches
-    ]
-    iteration_tag = _iteration_tag(master_matches, iterations_by_index)
 
     sample = in_omezarr.parent.name
-    out_dir = out_root / f"{sample}__SK_RL__PSF{model}__{iteration_tag}__sourceL{level}"
+    out_dir = out_root / f"{sample}__SK_RL__PSF{model}__iter{iters}__sourceL{level}"
     out_zarr = out_dir / "image.ome.zarr"
     if out_dir.exists() and overwrite:
         shutil.rmtree(out_dir)
@@ -603,9 +509,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "source_level": int(level),
         "source_array_path": str(meta["array_path"]),
         "psf_model": model,
-        "iterations": int(iters) if len(set(iterations_by_index.values())) == 1 else None,
-        "iterations_default": int(iters),
-        "iterations_by_channel": iteration_records,
+        "iterations": int(iters),
         "background_subtracted": float(background),
         "clip": False,
         "filter_epsilon": filter_epsilon,
@@ -615,12 +519,6 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "master_psf_reference_omezarr": master_metadata.get("reference_omezarr"),
         "master_psf_metadata_schema": master_metadata.get("schema"),
         "master_psf_channel_matching": "wavelength metadata",
-        "master_psf_compatibility_warnings": list(
-            master_metadata.get("compatibility_warnings") or []
-        ),
-        "resolved_optical_metadata_for_psf_compatibility": master_metadata.get(
-            "resolved_optical_metadata_for_compatibility"
-        ),
         "channel_psf_mapping": [asdict(item) | {"psf_path": str(item.psf_path)} for item in master_matches],
         "channel_display_colors": [
             {
@@ -659,16 +557,15 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
             f"[DECONV] channel {channel_index}: {channel_name}; "
             f"wavelength={match.wavelength_nm:g} nm; color={match.display_color}"
         )
-        channel_iters = int(iterations_by_index[channel_index])
         print(
             f"         input={prepared.shape} {prepared.dtype}; "
-            f"master PSF={match.psf_path.name} {psf.shape}; iterations={channel_iters}"
+            f"master PSF={match.psf_path.name} {psf.shape}; iterations={iters}"
         )
         deconvolved = np.asarray(
             richardson_lucy(
                 image=prepared,
                 psf=psf,
-                num_iter=channel_iters,
+                num_iter=int(iters),
                 clip=False,
                 filter_epsilon=filter_epsilon,
             ),
@@ -736,9 +633,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "output_level0_shape": list(stored_level0.shape),
         "output_levels": pyramid_max_layer + 1,
         "psf_model": model,
-        "iterations": int(iters) if len(set(iterations_by_index.values())) == 1 else None,
-        "iterations_default": int(iters),
-        "iterations_by_channel": iteration_records,
+        "iterations": int(iters),
         "background": float(background),
         "clip": False,
         "filter_epsilon": filter_epsilon,
@@ -768,10 +663,6 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         out_dir=out_dir,
         model=model,
         iters=int(iters),
-        iterations_by_channel={
-            str(record["display_color"]): int(record["iterations"])
-            for record in iteration_records
-        },
         background=float(background),
         input_level=int(level),
         pyramid_max_layer=int(pyramid_max_layer),

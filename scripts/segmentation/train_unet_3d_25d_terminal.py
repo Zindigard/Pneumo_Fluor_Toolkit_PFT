@@ -1,6 +1,7 @@
-"""Train and evaluate the 2.5D foreground U-Net on sparse manual Z-slice masks.
+"""
+Train and evaluate the 2.5D foreground U-Net on sparse manual Z-slice masks.
 
-Default targets are Z10, Z24, and Z30. Each target uses
+Default targets are Z5, Z10, Z15, Z20, Z25, Z30, and Z35. Each target uses
 Z-1/Z/Z+1 from all three fluorescence channels, giving a nine-channel input,
 while only the middle slice has a manual binary mask.
 """
