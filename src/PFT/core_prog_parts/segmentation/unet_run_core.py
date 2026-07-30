@@ -440,8 +440,58 @@ def roi_snr(image: np.ndarray, reference_mask: np.ndarray, epsilon: float = 1e-1
     return float((signal_mean - background_mean) / (background_sd + epsilon))
 
 
-def _display_image(hwc: np.ndarray) -> np.ndarray:
-    normalized = normalize_image01(hwc, "percentile")
+def _normalized_hwc_with_reference(
+    target_hwc: np.ndarray,
+    reference_hwc: np.ndarray,
+    *,
+    p_low: float = 1.0,
+    p_high: float = 99.8,
+) -> np.ndarray:
+    """Normalize target channels using percentile limits from a reference image.
+
+    This is used only for QC visualization. In particular, a completely
+    zeroed background can make P99.8 of the sparse final image equal zero.
+    Deriving limits from the filtered input prevents the valid foreground from
+    being displayed as an entirely black panel.
+    """
+    target = np.asarray(target_hwc, dtype=np.float32)
+    reference = np.asarray(reference_hwc, dtype=np.float32)
+    if target.ndim == 2:
+        target = target[..., None]
+    if reference.ndim == 2:
+        reference = reference[..., None]
+    if target.shape != reference.shape:
+        raise ValueError(
+            f"Target/reference display shapes differ: {target.shape} versus {reference.shape}"
+        )
+
+    normalized = np.empty_like(target, dtype=np.float32)
+    for channel in range(target.shape[-1]):
+        reference_plane = reference[..., channel]
+        lo = float(np.percentile(reference_plane, p_low))
+        hi = float(np.percentile(reference_plane, p_high))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            finite = reference_plane[np.isfinite(reference_plane)]
+            if finite.size == 0:
+                lo, hi = 0.0, 1.0
+            else:
+                lo = float(np.min(finite))
+                hi = float(np.max(finite))
+                if hi <= lo:
+                    hi = lo + 1.0
+        normalized[..., channel] = np.clip(
+            (target[..., channel] - lo) / (hi - lo + 1e-8),
+            0.0,
+            1.0,
+        )
+    return normalized
+
+
+def _display_from_normalized_hwc(normalized_hwc: np.ndarray) -> np.ndarray:
+    """Compose an already normalized HWC fluorescence image for display."""
+    normalized = np.asarray(normalized_hwc, dtype=np.float32)
+    if normalized.ndim == 2:
+        return normalized
     if normalized.shape[-1] == 1:
         return normalized[..., 0]
     if normalized.shape[-1] == 2:
@@ -450,6 +500,20 @@ def _display_image(hwc: np.ndarray) -> np.ndarray:
         red = np.zeros_like(blue)
         return np.stack([red, green, blue], axis=-1)
     return normalized[..., :3]
+
+
+def _display_image(hwc: np.ndarray) -> np.ndarray:
+    return _display_from_normalized_hwc(normalize_image01(hwc, "percentile"))
+
+
+def _display_image_with_reference(
+    target_hwc: np.ndarray,
+    reference_hwc: np.ndarray,
+) -> np.ndarray:
+    """Display target with percentile limits derived from reference."""
+    return _display_from_normalized_hwc(
+        _normalized_hwc_with_reference(target_hwc, reference_hwc)
+    )
 
 
 def _save_preview(
@@ -474,7 +538,14 @@ def _save_preview(
     depletion_percent = 100.0 * outside_mask_depletion
     residual_percent = 100.0 * (1.0 - outside_mask_depletion)
     filtered_display = _display_image(filtered_hwc)
-    suppressed_display = _display_image(suppressed_hwc)
+    # Use the filtered input's percentile limits for the saved result. This is
+    # essential when 100% outside-mask depletion makes almost all output pixels
+    # exactly zero; independent P99.8 normalization can otherwise yield a fully
+    # black but misleading QC panel.
+    suppressed_display = _display_image_with_reference(
+        suppressed_hwc,
+        filtered_hwc,
+    )
     residual_display = (
         suppressed_display[..., 0]
         if suppressed_display.ndim == 3
@@ -593,6 +664,36 @@ def run_2d_unet_on_omezarr(
         masks,
         outside_mask_depletion=cfg.outside_mask_depletion,
     )
+
+    # Numerical integrity checks: the mask application must never alter values
+    # inside the predicted foreground. With complete depletion, every value
+    # outside the mask must be exactly zero. These checks verify the quantitative
+    # array independently of any display normalization.
+    mask_stack_for_check = np.stack(masks, axis=0)
+    broadcast_for_check = _broadcast_masks_to_input(
+        mask_stack_for_check,
+        input_axes,
+        input_array.shape,
+    )
+    inside_for_check = np.broadcast_to(
+        broadcast_for_check > 0,
+        input_array.shape,
+    )
+    if not np.array_equal(
+        suppressed_array[inside_for_check],
+        np.asarray(input_array)[inside_for_check],
+    ):
+        raise RuntimeError(
+            f"Foreground-intensity integrity check failed for {sample}: "
+            "values inside the predicted mask were modified."
+        )
+    if cfg.outside_mask_depletion == 1.0 and np.any(
+        suppressed_array[~inside_for_check] != 0
+    ):
+        raise RuntimeError(
+            f"Zero-background integrity check failed for {sample}: "
+            "nonzero values remain outside the predicted mask."
+        )
 
     sample_dir = ensure_dir(Path(cfg.out_root) / sample)
     mask_array, mask_axes = _mask_stack_and_axes(masks)
