@@ -15,6 +15,52 @@ import zarr
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 
+# One manually selected target slice per source volume. Keys are stable paths
+# relative to results/img/3d_data and therefore remain unique when sample names
+# occur in more than one acquisition directory.
+TARGET_SLICE_BY_VOLUME_KEY: dict[str, int] = {
+    "20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM": 6,
+    "20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI2_SIM": 10,
+    "20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI3_SIM": 16,
+    "20220218_dynamic/WT_NHS_HADA_NADA_TADA_40min_ROI1_SIM": 13,
+    "20220218_dynamic/WT_THY_HADA_NADA_TADA_40min_ROI1_SIM": 31,
+    "20220218_dynamic/WT_THY_HADA_NADA_TADA_40min_ROI2_SIM": 15,
+    "20220218_dynamic/WT_THY_HADA_NADA_TADA_40min_ROI3_SIM": 16,
+    "20220225_HADA_NADA_TADA_40min/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM": 20,
+    "20220225_HADA_NADA_TADA_40min/DpspA_THY_HADA_NADA_TADA_40min_ROI2_SIM": 18,
+    "20220225_HADA_NADA_TADA_40min/DpspA_THY_HADA_NADA_TADA_40min_ROI3_SIM": 17,
+    "20220225_HADA_NADA_TADA_40min/WT_NHS_HADA_NADA_TADA_40min_ROI1_SIM": 10,
+    "20220225_HADA_NADA_TADA_40min/WT_NHS_HADA_NADA_TADA_40min_ROI2_SIM": 32,
+    "20220225_HADA_NADA_TADA_40min/WT_NHS_HADA_NADA_TADA_40min_ROI3_SIM": 19,
+    "20220225_HADA_NADA_TADA_40min/WT_THY_HADA_NADA_TADA_40min_ROI1_SIM": 6,
+    "20220225_HADA_NADA_TADA_40min/WT_THY_HADA_NADA_TADA_40min_ROI2_SIM": 18,
+    "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI1_SIM": 39,
+    "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI2_SIM": 23,
+    "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI3_SIM": 21,
+    "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI4_SIM": 22,
+    "20220318_HADA_NADA_TADA_40min/WT_NHS_NADA_HADA_TADA_40min_ROI1_SIM": 20,
+    "20220318_HADA_NADA_TADA_40min/WT_NHS_NADA_HADA_TADA_40min_ROI2_SIM": 23,
+    "20220318_HADA_NADA_TADA_40min/WT_NHS_NADA_HADA_TADA_40min_ROI3_SIM": 23,
+    "20220330_HADA_NADA_TADA_0min/DpspA_NHS_HADA_NADA_TADA_0min_ROI1_SIM": 15,
+    "20220330_HADA_NADA_TADA_0min/DpspA_NHS_HADA_NADA_TADA_0min_ROI2_SIM": 20,
+    "20220330_HADA_NADA_TADA_0min/DpspA_THY_HADA_NADA_TADA_0min_ROI1_SIM": 21,
+    "20220330_HADA_NADA_TADA_0min/WT_NHS_HADA_NADA_TADA_0min_ROI1_SIM": 7,
+    "20220330_HADA_NADA_TADA_0min/WT_NHS_HADA_NADA_TADA_0min_ROI2_SIM": 16,
+    "20220330_HADA_NADA_TADA_0min/WT_THY_HADA_NADA_TADA_0min_ROI1_SIM": 20,
+    "20220330_HADA_NADA_TADA_0min/WT_THY_HADA_NADA_TADA_0min_ROI2_SIM": 39,
+}
+
+# Fixed deconvolution/PSF test cohort: one stack from each acquisition folder.
+# The assigned target slices span shallow, middle, and deep optical planes.
+DEFAULT_DECONV_TEST_VOLUME_KEYS: tuple[str, ...] = (
+    "20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM",
+    "20220225_HADA_NADA_TADA_40min/WT_NHS_HADA_NADA_TADA_40min_ROI1_SIM",
+    "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI3_SIM",
+    "20220330_HADA_NADA_TADA_0min/WT_THY_HADA_NADA_TADA_0min_ROI2_SIM",
+)
+
+# Retained only for backward-compatible imports. New 3D code must resolve the
+# target from TARGET_SLICE_BY_VOLUME_KEY instead of assuming one global slice.
 DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10,)
 
 
@@ -49,6 +95,49 @@ def relative_volume_path(image_zarr: str | Path, image_root: str | Path | None =
 def volume_key(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
     """Return a unique forward-slash experiment/sample identifier."""
     return relative_volume_path(image_zarr, image_root).as_posix()
+
+
+def target_slice_for_volume(
+    image_zarr: str | Path,
+    image_root: str | Path | None = None,
+) -> int:
+    """Return the configured one-based target slice for one source volume."""
+    key = volume_key(image_zarr, image_root)
+    try:
+        return int(TARGET_SLICE_BY_VOLUME_KEY[key])
+    except KeyError as error:
+        raise KeyError(
+            f"No target slice is configured for {key!r}. Add the volume to "
+            "TARGET_SLICE_BY_VOLUME_KEY before labeling, training, inference, or QC."
+        ) from error
+
+
+def target_context_for_volume(
+    image_zarr: str | Path,
+    image_root: str | Path | None = None,
+) -> tuple[int, int, int]:
+    """Return the one-based Z-1/Z/Z+1 context for the configured target."""
+    target = target_slice_for_volume(image_zarr, image_root)
+    return target - 1, target, target + 1
+
+
+def configured_test_zarrs(image_root: str | Path) -> list[Path]:
+    """Resolve the fixed four-stack deconvolution test cohort."""
+    root = Path(image_root).resolve()
+    paths: list[Path] = []
+    missing: list[Path] = []
+    for key in DEFAULT_DECONV_TEST_VOLUME_KEYS:
+        path = root / Path(*key.split("/")) / "image.ome.zarr"
+        if path.is_dir():
+            paths.append(path)
+        else:
+            missing.append(path)
+    if missing:
+        raise FileNotFoundError(
+            "The fixed four-stack test cohort is incomplete:\n"
+            + "\n".join(f"- {path}" for path in missing)
+        )
+    return paths
 
 
 def volume_file_id(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
@@ -134,13 +223,26 @@ def check_3d_sample(
     *,
     level: int,
     mask_root: str | Path | None = None,
-    training_slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
+    training_slices_1based: Sequence[int] | None = None,
     expected_channels: int = 3,
     require_masks: bool = True,
 ) -> ReadinessReport:
     """Validate one 3D OME-Zarr and its sparse manual training masks."""
     image_zarr = Path(image_zarr).resolve()
     sample = volume_key(image_zarr)
+    if training_slices_1based is None:
+        try:
+            training_slices_1based = (target_slice_for_volume(image_zarr),)
+        except KeyError as error:
+            return ReadinessReport(
+                sample,
+                str(image_zarr),
+                level,
+                (CheckItem("configured target slice", "FAIL", str(error)),),
+            )
+    training_slices_1based = tuple(sorted({int(value) for value in training_slices_1based}))
+    if not training_slices_1based:
+        raise ValueError("At least one target slice is required")
     checks: list[CheckItem] = []
     if not image_zarr.is_dir():
         return ReadinessReport(sample, str(image_zarr), level, (CheckItem("OME-Zarr exists", "FAIL", str(image_zarr)),))
@@ -161,7 +263,14 @@ def check_3d_sample(
     if axes == "czyx" and len(shape) == 4:
         channel_count, z_count, y_size, x_size = shape
         checks.append(CheckItem("channel count", "PASS" if channel_count == expected_channels else "FAIL", f"expected={expected_channels}; stored={channel_count}"))
-        checks.append(CheckItem("Z depth", "PASS" if z_count >= max(training_slices_1based) else "FAIL", f"Z={z_count}; largest requested training slice={max(training_slices_1based)}"))
+        context_ok = all(2 <= value <= z_count - 1 for value in training_slices_1based)
+        checks.append(
+            CheckItem(
+                "Z target context",
+                "PASS" if context_ok else "FAIL",
+                f"Z={z_count}; targets={tuple(training_slices_1based)}; each requires Z-1/Z/Z+1",
+            )
+        )
         checks.append(CheckItem("spatial dimensions", "PASS" if y_size >= 64 and x_size >= 64 else "FAIL", f"YX={(y_size, x_size)}"))
     else:
         channel_count = z_count = y_size = x_size = 0
@@ -249,12 +358,17 @@ def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> t
 
 __all__ = [
     "CheckItem",
+    "DEFAULT_DECONV_TEST_VOLUME_KEYS",
     "DEFAULT_TRAINING_SLICES_1BASED",
+    "TARGET_SLICE_BY_VOLUME_KEY",
     "ReadinessReport",
     "annotation_sample_dir",
     "check_3d_sample",
     "find_slice_mask",
+    "configured_test_zarrs",
     "relative_volume_path",
+    "target_context_for_volume",
+    "target_slice_for_volume",
     "volume_file_id",
     "volume_key",
     "write_readiness_report",

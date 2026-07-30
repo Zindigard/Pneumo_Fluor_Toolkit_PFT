@@ -1,46 +1,15 @@
-r"""Randomly verify one 3D OME-Zarr against the reusable master PSF set.
+r"""Check the fixed four-stack 3D cohort against the reusable master PSFs.
 
-The default mode is a fast, non-destructive preflight check. The script:
-
-1. discovers all ``image.ome.zarr`` stores under the configured 3D-data root;
-2. selects one store randomly, with an optional reproducible random seed;
-3. confirms that level 0 contains a finite, non-constant CZYX volume;
-4. samples the planned training slices without loading the complete volume;
-5. validates voxel sampling, optics, wavelengths, spatial dimensions, and all
-   three master PSFs against ``results/psf/master``;
-6. records the wavelength-to-color-to-PSF mapping in TXT and JSON reports.
-
-Use ``--run-deconvolution`` only when a full test run is required. It calls the
-same raw-intensity-preserving Richardson-Lucy function as
-``deconvolve_3d_v2.py``. Full level-0 deconvolution can require substantial RAM
-and processing time; the default compatibility check does not deconvolve.
-
-Examples
---------
-Fast random compatibility check::
-
-    & $PY scripts\denoising\check_random_omezarr_psf.py
-
-Repeatable random selection::
-
-    & $PY scripts\denoising\check_random_omezarr_psf.py --seed 42
-
-Check a specified store instead of selecting randomly::
-
-    & $PY scripts\denoising\check_random_omezarr_psf.py `
-      --zarr "D:\\...\\image.ome.zarr"
-
-Run full low-iteration Richardson-Lucy after the successful check::
-
-    & $PY scripts\denoising\check_random_omezarr_psf.py `
-      --seed 42 --run-deconvolution --iters-blue 4 --iters-green 5 --iters-red 3
+Without ``--zarr``, one mapped source stack from each acquisition directory is
+checked. Each stack is sampled at its configured U-Net target slice. Optional
+Richardson-Lucy testing applies the same target-specific QC as
+``deconvolve_3d_v2.py``.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,7 +33,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare  # noqa: E402
 from PFT.core_prog_parts.denoising.deconvolution_no_fuji import (  # noqa: E402
-    DEFAULT_TRAINING_SLICES_1BASED,
     deconvolve_omezarr_3ch_to_omezarr_skimage,
 )
 from PFT.core_prog_parts.denoising.psf_creator import (  # noqa: E402
@@ -72,6 +40,9 @@ from PFT.core_prog_parts.denoising.psf_creator import (  # noqa: E402
 )
 from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
     check_3d_sample,
+    configured_test_zarrs,
+    target_slice_for_volume,
+    volume_key,
     write_readiness_report,
 )
 
@@ -213,7 +184,7 @@ def _write_compatibility_report(
         for match in matches
     ]
     payload = {
-        "schema": "pft-random-omezarr-master-psf-check-v1",
+        "schema": "pft-four-stack-omezarr-master-psf-check-v1",
         "generated_utc": generated,
         "status": "PASS",
         "selection": {
@@ -242,13 +213,13 @@ def _write_compatibility_report(
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
 
     lines = [
-        "PFT random OME-Zarr and master PSF compatibility report",
+        "PFT fixed-cohort OME-Zarr and master PSF compatibility report",
         "=" * 80,
         f"Generated (UTC): {generated}",
         "Status: PASS",
         f"Discovery root: {discovery_root}",
         f"Candidate OME-Zarr stores: {candidate_count}",
-        f"Random seed: {seed if seed is not None else 'system random'}",
+        "Selection mode: fixed four-stack cohort or explicit --zarr",
         f"Selected OME-Zarr: {selected_zarr}",
         "Selected pyramid level: 0",
         f"Axes: {meta.get('axes')}",
@@ -294,75 +265,54 @@ def _write_compatibility_report(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Randomly check one source 3D OME-Zarr against the reusable master PSFs.",
+        description=(
+            "Check one configured source stack from each acquisition directory "
+            "against the reusable master PSFs."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--root",
         type=Path,
         default=PROJECT_ROOT / "results" / "img" / "3d_data",
-        help="Root containing source image.ome.zarr stores",
     )
     parser.add_argument(
         "--zarr",
         type=Path,
         default=None,
-        help="Check this exact image.ome.zarr instead of random selection",
+        help="Check one exact image.ome.zarr instead of the fixed four-stack cohort",
     )
-    parser.add_argument("--seed", type=int, default=None, help="Optional reproducible random seed")
     parser.add_argument("--model", choices=("BW", "GL", "RW"), default="BW")
-    parser.add_argument(
-        "--sample-slices",
-        default=",".join(str(value) for value in DEFAULT_TRAINING_SLICES_1BASED),
-        help="One-based Z slices sampled during the quick data check",
-    )
     parser.add_argument(
         "--report-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "noise_analysis" / "3d" / "random_psf_check",
+        default=PROJECT_ROOT / "results" / "noise_analysis" / "3d" / "four_stack_psf_check",
     )
-    parser.add_argument(
-        "--run-deconvolution",
-        action="store_true",
-        help="After a successful check, run full level-0 Richardson-Lucy deconvolution",
-    )
-    parser.add_argument(
-        "--iters",
-        type=int,
-        default=3,
-        help="Default iteration count for the optional full test",
-    )
-    parser.add_argument("--iters-blue", type=int, default=None, help="Optional 405 nm blue-channel iteration count")
-    parser.add_argument("--iters-green", type=int, default=None, help="Optional 488 nm green-channel iteration count")
-    parser.add_argument("--iters-red", type=int, default=None, help="Optional 561 nm red-channel iteration count")
+    parser.add_argument("--run-deconvolution", action="store_true")
+    parser.add_argument("--iters", type=int, default=3)
+    parser.add_argument("--iters-blue", type=int, default=None)
+    parser.add_argument("--iters-green", type=int, default=None)
+    parser.add_argument("--iters-red", type=int, default=None)
     parser.add_argument("--background", type=float, default=0.0)
     parser.add_argument("--filter-epsilon", type=float, default=None)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
     parser.add_argument(
         "--deconv-out-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "deconv_random_check",
+        default=PROJECT_ROOT / "results" / "deconv_four_stack_check",
     )
     parser.add_argument("--no-overwrite", action="store_true")
     args = parser.parse_args()
 
     discovery_root = args.root.expanduser().resolve()
     if args.zarr is not None:
-        selected_zarr = args.zarr.expanduser().resolve()
-        if not selected_zarr.is_dir():
-            raise FileNotFoundError(selected_zarr)
-        candidates = _find_zarrs(selected_zarr)
-        if candidates != [selected_zarr]:
-            raise ValueError(f"--zarr must point to an image.ome.zarr directory: {selected_zarr}")
-        candidate_count = 1
+        selected = args.zarr.expanduser().resolve()
+        if not selected.is_dir() or selected.name != "image.ome.zarr":
+            raise FileNotFoundError(f"--zarr must point to image.ome.zarr: {selected}")
+        selected_zarrs = [selected]
     else:
-        candidates = _find_zarrs(discovery_root)
-        if not candidates:
-            raise FileNotFoundError(f"No source image.ome.zarr stores found under {discovery_root}")
-        selected_zarr = random.Random(args.seed).choice(candidates)
-        candidate_count = len(candidates)
+        selected_zarrs = configured_test_zarrs(discovery_root)
 
-    slices = _parse_slices(args.sample_slices)
     channel_iterations = {
         color: value
         for color, value in (
@@ -372,98 +322,82 @@ def main() -> int:
         )
         if value is not None
     }
-    if any(value < 1 for value in channel_iterations.values()):
-        raise ValueError("All per-channel iteration counts must be at least 1")
-    print("\nPFT random OME-Zarr and master PSF check")
+    if args.iters < 1 or any(value < 1 for value in channel_iterations.values()):
+        raise ValueError("All iteration counts must be at least 1")
+
+    print("\nPFT four-stack OME-Zarr and master PSF check")
     print("=" * 72)
-    print(f"Available source stores: {candidate_count}")
-    print(f"Random seed:            {args.seed if args.seed is not None else 'system random'}")
-    print(f"Selected store:         {selected_zarr}")
-    print("Pyramid level:          0")
-    print(f"PSF model:              {args.model}")
+    print(f"Stacks:    {len(selected_zarrs)}")
+    print(f"PSF model: {args.model}")
 
-    readiness = check_3d_sample(
-        selected_zarr,
-        level=0,
-        require_masks=False,
-        training_slices_1based=slices,
-    )
-    readiness_root = args.report_root / "raw_readiness"
-    readiness_txt, readiness_json = write_readiness_report(readiness, readiness_root)
-    if not readiness.passed:
-        raise ValueError(f"Randomly selected OME-Zarr failed raw-data readiness checks: {readiness_txt}")
-
-    array, meta = _selected_level0_array(selected_zarr)
-    data_statistics, sampled_slices = _sample_data_statistics(array, slices_1based=slices)
-    matches, master_metadata = validate_stack_against_master_psfs(
-        project_root=PROJECT_ROOT,
-        zarr_dir=selected_zarr,
-        level=0,
-        model=args.model,
-        normalize_psfs=True,
-    )
-
-    txt_path, json_path = _report_paths(args.report_root, selected_zarr.parent.name)
-    _write_compatibility_report(
-        txt_path=txt_path,
-        json_path=json_path,
-        selected_zarr=selected_zarr,
-        discovery_root=discovery_root,
-        candidate_count=candidate_count,
-        seed=args.seed,
-        meta=meta,
-        sampled_slices=sampled_slices,
-        data_statistics=data_statistics,
-        matches=matches,
-        master_metadata=master_metadata,
-        readiness_report_txt=readiness_txt,
-        readiness_report_json=readiness_json,
-    )
-
-    warnings = list(master_metadata.get("compatibility_warnings") or [])
-    print("\nPASS")
-    if warnings:
-        print("Metadata note: fixed master-reference values were used for absent fields:")
-        for warning in warnings:
-            print(f"  - {warning}")
-    print(f"Compatibility TXT: {txt_path}")
-    print(f"Compatibility JSON:{json_path}")
-    for match in matches:
-        print(
-            f"  C{match.channel_index} {match.channel_name}: "
-            f"{match.wavelength_nm:g} nm ({match.display_color}) -> {match.psf_path.name}"
-        )
-
-    if args.run_deconvolution:
-        print("\nStarting optional full Richardson-Lucy test...")
-        print(f"Default iterations: {args.iters}")
-        print(
-            "Per-channel iterations: "
-            + (
-                ", ".join(f"{color}={value}" for color, value in channel_iterations.items())
-                if channel_iterations
-                else "none; default used for all channels"
+    failures = 0
+    for index, selected_zarr in enumerate(selected_zarrs, start=1):
+        sample = volume_key(selected_zarr, discovery_root)
+        target = target_slice_for_volume(selected_zarr, discovery_root)
+        slices = (target,)
+        print(f"\n[{index}/{len(selected_zarrs)}] {sample} | target Z{target}")
+        try:
+            readiness = check_3d_sample(
+                selected_zarr,
+                level=0,
+                require_masks=False,
+                training_slices_1based=slices,
             )
-        )
-        result = deconvolve_omezarr_3ch_to_omezarr_skimage(
-            in_omezarr=selected_zarr,
-            out_root=args.deconv_out_root,
-            model=args.model,
-            iters=args.iters,
-            channel_iterations=channel_iterations,
-            background=args.background,
-            level=0,
-            overwrite=not args.no_overwrite,
-            clip=False,
-            filter_epsilon=args.filter_epsilon,
-            pyramid_max_layer=args.pyramid_max_layer,
-            preview_slices_1based=slices,
-        )
-        print(f"Deconvolved OME-Zarr: {result.out_zarr}")
-        print(f"Deconvolution report: {result.report_txt}")
-    else:
-        print("No deconvolution was run. Add --run-deconvolution for a full test.")
-    return 0
+            readiness_root = args.report_root / "raw_readiness"
+            readiness_txt, readiness_json = write_readiness_report(readiness, readiness_root)
+            if not readiness.passed:
+                raise ValueError(f"Raw-data readiness failed: {readiness_txt}")
+
+            array, meta = _selected_level0_array(selected_zarr)
+            data_statistics, sampled_slices = _sample_data_statistics(array, slices_1based=slices)
+            matches, master_metadata = validate_stack_against_master_psfs(
+                project_root=PROJECT_ROOT,
+                zarr_dir=selected_zarr,
+                level=0,
+                model=args.model,
+                normalize_psfs=True,
+            )
+            txt_path, json_path = _report_paths(args.report_root, sample)
+            _write_compatibility_report(
+                txt_path=txt_path,
+                json_path=json_path,
+                selected_zarr=selected_zarr,
+                discovery_root=discovery_root,
+                candidate_count=len(selected_zarrs),
+                seed=None,
+                meta=meta,
+                sampled_slices=sampled_slices,
+                data_statistics=data_statistics,
+                matches=matches,
+                master_metadata=master_metadata,
+                readiness_report_txt=readiness_txt,
+                readiness_report_json=readiness_json,
+            )
+            print(f"PASS: {txt_path}")
+
+            if args.run_deconvolution:
+                result = deconvolve_omezarr_3ch_to_omezarr_skimage(
+                    in_omezarr=selected_zarr,
+                    out_root=args.deconv_out_root,
+                    model=args.model,
+                    iters=args.iters,
+                    channel_iterations=channel_iterations,
+                    background=args.background,
+                    level=0,
+                    overwrite=not args.no_overwrite,
+                    clip=False,
+                    filter_epsilon=args.filter_epsilon,
+                    pyramid_max_layer=args.pyramid_max_layer,
+                    preview_slices_1based=slices,
+                )
+                print(f"Deconvolved: {result.out_zarr}")
+                print(f"QC:          {result.preview_dir}")
+        except Exception as error:
+            failures += 1
+            print(f"FAIL: {type(error).__name__}: {error}")
+
+    print(f"\nChecked {len(selected_zarrs)} stack(s); failures={failures}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

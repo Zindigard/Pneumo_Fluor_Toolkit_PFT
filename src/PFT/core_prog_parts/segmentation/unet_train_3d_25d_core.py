@@ -1,20 +1,12 @@
-"""Training and evaluation for the Z10-only merged-RGB 2.5D U-Net.
+"""Training and evaluation for the per-volume merged-RGB 2.5D U-Net.
 
-Only one middle slice is manually annotated per selected stack:
+Each source stack has one manually selected target slice in the shared mapping.
+For a target Zn, the model input is the wavelength-mapped merged-RGB context
+Z(n-1)/Zn/Z(n+1), concatenated as nine channels, and the target is one binary
+foreground mask at Zn. Unannotated stacks are never treated as background.
 
-* Z9, Z10, Z11 -> target mask at Z10.
-
-For target Z10, the microscopy channels are mapped by wavelength to a merged
-RGB image: 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB context
-images are concatenated in Z-major order, producing nine network input channels
-and one binary foreground output. Training and validation use the same merged-
-RGB construction and the same context-wise percentile limits.
-
-Manual-mask convention
-----------------------
-``results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif``
-
-Unannotated stacks are never treated as background.
+Manual masks are stored as
+``results/training_files/U-net/3d_25d/<experiment>/<sample>/zNNN_mask.tif``.
 """
 
 from __future__ import annotations
@@ -37,9 +29,10 @@ from PFT.core_prog_parts.common_paths import ensure_dir, find_project_root
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import resolve_channel_optics
 from PFT.core_prog_parts.denoising.validation_3d import (
-    DEFAULT_TRAINING_SLICES_1BASED,
+    TARGET_SLICE_BY_VOLUME_KEY,
     annotation_sample_dir,
     find_slice_mask,
+    target_slice_for_volume,
     volume_key,
 )
 from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
@@ -49,6 +42,9 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
     iou_coef,
     save_training_curves,
 )
+
+
+MODEL_CONTRACT = "pft_3d_25d_merged_rgb_per_volume_target_v1"
 
 
 @dataclass
@@ -62,7 +58,6 @@ class UNet25DTrainConfig:
     mask_root: Path | None = None
     model_root: Path | None = None
 
-    training_slices_1based: tuple[int, ...] = DEFAULT_TRAINING_SLICES_1BASED
     patch: int = 256
     batch: int = 4
     epochs: int = 50
@@ -227,15 +222,29 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
             )
         rgb_source_channels = resolve_rgb_source_channels(image_zarr, level=cfg.level)
         z_count = int(array.shape[1])
-        for slice_number in cfg.training_slices_1based:
-            if slice_number < 2 or slice_number > z_count - 1:
-                missing.append(f"{sample}: Z{slice_number} has no complete Z-1/Z/Z+1 context for Z={z_count}")
-                continue
-            mask_path = find_slice_mask(sample_mask_dir, slice_number)
-            if mask_path is None:
-                missing.append(f"{sample}: missing {sample_mask_dir / f'z{slice_number:03d}_mask.tif'}")
-                continue
-            entries.append(AnnotatedSlice(image_zarr, mask_path, sample, slice_number, slice_number - 1, rgb_source_channels))
+        slice_number = target_slice_for_volume(image_zarr, image_root)
+        if slice_number < 2 or slice_number > z_count - 1:
+            missing.append(
+                f"{sample}: configured Z{slice_number} has no complete Z-1/Z/Z+1 context for Z={z_count}"
+            )
+            continue
+        mask_path = find_slice_mask(sample_mask_dir, slice_number)
+        if mask_path is None:
+            missing.append(
+                f"{sample}: missing configured target mask "
+                f"{sample_mask_dir / f'z{slice_number:03d}_mask.tif'}"
+            )
+            continue
+        entries.append(
+            AnnotatedSlice(
+                image_zarr,
+                mask_path,
+                sample,
+                slice_number,
+                slice_number - 1,
+                rgb_source_channels,
+            )
+        )
     if selected_samples == 0:
         raise RuntimeError(
             f"No selected training samples were found under {mask_root}. "
@@ -749,10 +758,6 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
     cfg.model_root = ensure_dir(Path(cfg.model_root or _default_model_root(cfg.project_root)))
     if cfg.z_radius != 1:
         raise ValueError("This thesis workflow requires z_radius=1 (Z-1, Z, Z+1)")
-    if tuple(cfg.training_slices_1based) != DEFAULT_TRAINING_SLICES_1BASED:
-        raise ValueError(
-            f"This workflow is fixed to Z10 only; received {cfg.training_slices_1based}."
-        )
     if cfg.channels is not None:
         raise ValueError(
             "Merged-RGB training always uses all three wavelength-mapped channels; "
@@ -798,7 +803,7 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
         str(best_model),
         custom_objects={"bce_dice_loss": bce_dice_loss, "dice_coef": dice_coef, "iou_coef": iou_coef},
     )
-    evaluation_dir = cfg.model_root / "evaluation_z010"
+    evaluation_dir = cfg.model_root / "evaluation_configured_target_slices"
     if evaluation_dir.exists():
         shutil.rmtree(evaluation_dir)
     partitions = {
@@ -815,13 +820,15 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
 
     summary = {
         "dataset": cfg.dataset,
-        "model_contract": "pft_3d_25d_merged_rgb_z10_v1",
+        "model_contract": MODEL_CONTRACT,
         "input_definition": "Z-1/Z/Z+1 wavelength-mapped merged RGB images concatenated as 9 channels",
         "model_input_channels": model_channels,
         "z_radius": cfg.z_radius,
         "selected_image_channels": "all three, mapped by wavelength to RGB",
         "rgb_colour_mapping_nm": {"red": 561.0, "green": 488.0, "blue": 405.0},
-        "training_slices_1based": list(cfg.training_slices_1based),
+        "training_target_policy": "one configured target slice per source volume",
+        "target_slice_map": dict(TARGET_SLICE_BY_VOLUME_KEY),
+        "training_targets_by_sample": {entry.sample: entry.slice_1based for entry in entries},
         "threshold": cfg.threshold,
         "annotation_count": len(entries),
         "train_annotation_count": len(train_entries),
@@ -855,6 +862,7 @@ def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
 
 
 __all__ = [
+    "MODEL_CONTRACT",
     "AnnotatedSlice",
     "UNet25DTrainConfig",
     "evaluate_annotated_slices",

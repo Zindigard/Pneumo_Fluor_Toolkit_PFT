@@ -1,10 +1,8 @@
-"""Train and evaluate the sparse Z10-only 2.5D foreground U-Net.
+"""Train the per-volume-target merged-RGB 2.5D foreground U-Net.
 
-Each annotated target uses the wavelength-mapped merged RGB context
-Z9/Z10/Z11 and the manual target mask at Z10. Each context slice is converted
-to RGB using 561 nm=red, 488 nm=green, and 405 nm=blue. The three RGB images
-are concatenated, giving nine model input channels. Only Z10 has a manual
-binary target.
+Each annotated stack contributes one target slice from the shared mapping. For
+configured target Zn, the input is merged-RGB Z(n-1)/Zn/Z(n+1), concatenated
+as nine channels, and the target is ``zNNN_mask.tif``.
 """
 
 from __future__ import annotations
@@ -26,32 +24,22 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from PFT.core_prog_parts.denoising.validation_3d import DEFAULT_TRAINING_SLICES_1BASED  # noqa: E402
 from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (  # noqa: E402
+    MODEL_CONTRACT,
     UNet25DTrainConfig,
     train_3d_25d_unet,
 )
 
 
-def _parse_slices(value: str) -> tuple[int, ...]:
-    values = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
-    if values != DEFAULT_TRAINING_SLICES_1BASED:
-        raise ValueError(
-            f"This workflow is fixed to target slices {DEFAULT_TRAINING_SLICES_1BASED}; received {values}."
-        )
-    return values
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Train the PFT merged-RGB 2.5D U-Net from Z10 annotations only.",
+        description="Train the PFT 2.5D U-Net from one configured target slice per annotated volume.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--image-root", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
     parser.add_argument("--mask-root", type=Path, default=PROJECT_ROOT / "results" / "training_files" / "U-net" / "3d_25d")
     parser.add_argument("--model-root", type=Path, default=PROJECT_ROOT / "models" / "u_net_3d_25d")
     parser.add_argument("--level", type=int, default=0)
-    parser.add_argument("--slices", default=",".join(map(str, DEFAULT_TRAINING_SLICES_1BASED)))
     parser.add_argument("--patch", type=int, default=256)
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=50)
@@ -71,37 +59,36 @@ def main() -> int:
         mask_root=args.mask_root,
         model_root=args.model_root,
         level=args.level,
-        training_slices_1based=_parse_slices(args.slices),
-        channels=None,
         patch=args.patch,
         batch=args.batch,
         epochs=args.epochs,
         steps_per_epoch=args.steps_per_epoch,
         val_steps=args.val_steps,
         val_split=args.val_split,
+        seed=args.seed,
         lr=args.learning_rate,
         base_filters=args.base_filters,
         dropout=args.dropout,
-        predict_batch_size=args.predict_batch_size,
+        channels=None,
         threshold=0.5,
+        predict_batch_size=args.predict_batch_size,
         z_radius=1,
-        seed=args.seed,
     )
-    print("\nPFT merged-RGB 2.5D U-Net training")
+
+    print("\nPFT per-volume-target 2.5D U-Net training")
     print("=" * 72)
+    print(f"Model contract:      {MODEL_CONTRACT}")
+    print("Target policy:       one configured target slice per annotated volume")
+    print("Training context:    Z-1/Z/Z+1 merged RGB -> target Z")
+    print("Model input:         9 channels")
     print(f"Image root:          {config.image_root}")
     print(f"Mask root:           {config.mask_root}")
-    print(f"Target slices:       {config.training_slices_1based}")
-    print("Training context:    Z9/Z10/Z11 -> target Z10")
-    print("Input representation: merged RGB at each context Z")
-    print("Colour mapping:      561 nm=red, 488 nm=green, 405 nm=blue")
-    print("Model input:         3 RGB images = 9 channels")
-    print("Mask threshold:      0.5")
+    print(f"Model root:          {config.model_root}")
 
     outputs = train_3d_25d_unet(config)
-    print("\nCompleted")
+    print("\nTraining completed")
     for name, path in outputs.items():
-        print(f"{name:20}: {path}")
+        print(f"{name}: {path}")
     return 0
 
 

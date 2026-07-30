@@ -1,4 +1,5 @@
-"""Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
+"""
+Metadata-preserving 3D Richardson-Lucy deconvolution for OME-Zarr.
 
 The selected input pyramid level is deconvolved channel by channel and written
 as level 0 of a new multiscale OME-Zarr. Numeric fluorescence values are saved
@@ -32,6 +33,8 @@ from PFT.core_prog_parts.denoising.metadata_3d import (
 )
 from PFT.core_prog_parts.denoising.validation_3d import (
     check_3d_sample,
+    relative_volume_path,
+    target_slice_for_volume,
     write_readiness_report,
 )
 from PFT.core_prog_parts.denoising.psf_creator import (
@@ -42,7 +45,6 @@ from PFT.core_prog_parts.denoising.psf_creator import (
 )
 
 PSFModel = Literal["BW", "GL", "RW"]
-DEFAULT_TRAINING_SLICES_1BASED: tuple[int, ...] = (10,)
 
 # These attributes describe the current derived OME-Zarr and therefore cannot
 # retain the source values under the same keys when dtype, shape, or pyramid
@@ -378,18 +380,39 @@ def _rgb_composite(
     return output
 
 
+def _exact_shared_limits(before: np.ndarray, after: np.ndarray) -> tuple[float, float]:
+    """Return exact common display limits without allocating a combined image."""
+    before = np.asarray(before, dtype=np.float32)
+    after = np.asarray(after, dtype=np.float32)
+    if not np.isfinite(before).any() or not np.isfinite(after).any():
+        raise ValueError("QC images contain no finite values")
+    low = min(float(np.nanmin(before)), float(np.nanmin(after)))
+    high = max(float(np.nanmax(before)), float(np.nanmax(after)))
+    if high <= low:
+        high = low + 1.0
+    return low, high
+
+
+def _normalize_with_limits(image: np.ndarray, limits: tuple[float, float]) -> np.ndarray:
+    low, high = limits
+    return np.clip((np.asarray(image, dtype=np.float32) - low) / (high - low), 0.0, 1.0)
+
+
 def save_selected_slice_qc(
     *,
     original_zarr: Path,
     original_level: int,
     deconvolved_zarr: Path,
     output_dir: Path,
-    slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
+    slices_1based: Sequence[int],
 ) -> list[Path]:
-    """Save original, deconvolved, signed-difference, and absolute-difference panels.
+    """Save raw and normalized before/after QC without difference images.
 
-    Numeric values are never changed in the OME-Zarr files. Percentile scaling is
-    performed only for display in these PNG figures.
+    For each assigned slice, two PNGs are produced. The raw panel uses identical
+    numeric display limits before and after for each channel. The normalized
+    panel uses independent P1-P99.8 limits for each image and contains the merged
+    RGB view plus all wavelength-mapped channels. Stored OME-Zarr values are not
+    modified.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     raw_meta = extract_ome_zarr_meta_for_compare(original_zarr, level=original_level)
@@ -413,55 +436,84 @@ def save_selected_slice_qc(
     ]
 
     for slice_number in slices_1based:
-        z_index = slice_number - 1
+        z_index = int(slice_number) - 1
         if not 0 <= z_index < z_size:
-            continue
+            raise ValueError(f"QC slice Z{slice_number} is outside a stack with Z={z_size}")
         raw_cyx = np.asarray(raw[:, z_index], dtype=np.float32)
         dec_cyx = np.asarray(dec[:, z_index], dtype=np.float32)
-        signed = dec_cyx - raw_cyx
-        absolute = np.abs(signed)
-        limits = [_robust_limits(raw_cyx[channel]) for channel in range(c_size)]
+
+        shared_limits = [
+            _exact_shared_limits(raw_cyx[channel], dec_cyx[channel])
+            for channel in range(c_size)
+        ]
+        raw_rgb = _rgb_composite(raw_cyx, shared_limits, rgb_destinations)
+        dec_rgb = _rgb_composite(dec_cyx, shared_limits, rgb_destinations)
 
         rows = c_size + 1
-        figure, axes = plt.subplots(rows, 4, figsize=(16, 3.6 * rows), constrained_layout=True)
+        figure, axes = plt.subplots(rows, 2, figsize=(10, 3.6 * rows), constrained_layout=True)
         if rows == 1:
             axes = axes[None, :]
-
-        raw_rgb = _rgb_composite(raw_cyx, limits, rgb_destinations)
-        dec_rgb = _rgb_composite(dec_cyx, limits, rgb_destinations)
-        signed_mean = signed.mean(axis=0)
-        absolute_mean = absolute.mean(axis=0)
-        signed_limit = float(np.percentile(np.abs(signed_mean), 99.5)) or 1.0
         axes[0, 0].imshow(raw_rgb)
         axes[0, 1].imshow(dec_rgb)
-        image = axes[0, 2].imshow(signed_mean, cmap="coolwarm", vmin=-signed_limit, vmax=signed_limit)
-        figure.colorbar(image, ax=axes[0, 2], fraction=0.046)
-        image = axes[0, 3].imshow(absolute_mean, cmap="magma")
-        figure.colorbar(image, ax=axes[0, 3], fraction=0.046)
-        axes[0, 0].set_ylabel("3-channel composite")
-
+        axes[0, 0].set_ylabel("Merged RGB\n(shared raw limits)")
         for channel in range(c_size):
             row = channel + 1
-            low, high = limits[channel]
-            channel_signed_limit = float(np.percentile(np.abs(signed[channel]), 99.5)) or 1.0
-            axes[row, 0].imshow(raw_cyx[channel], cmap="gray", vmin=low, vmax=high)
-            axes[row, 1].imshow(dec_cyx[channel], cmap="gray", vmin=low, vmax=high)
-            image = axes[row, 2].imshow(signed[channel], cmap="coolwarm", vmin=-channel_signed_limit, vmax=channel_signed_limit)
-            figure.colorbar(image, ax=axes[row, 2], fraction=0.046)
-            image = axes[row, 3].imshow(absolute[channel], cmap="magma")
-            figure.colorbar(image, ax=axes[row, 3], fraction=0.046)
+            low, high = shared_limits[channel]
+            before_image = axes[row, 0].imshow(raw_cyx[channel], cmap="gray", vmin=low, vmax=high)
+            after_image = axes[row, 1].imshow(dec_cyx[channel], cmap="gray", vmin=low, vmax=high)
+            figure.colorbar(before_image, ax=axes[row, 0], fraction=0.046)
+            figure.colorbar(after_image, ax=axes[row, 1], fraction=0.046)
             axes[row, 0].set_ylabel(channel_labels[channel])
-
-        for column, title in enumerate(("Original", "Deconvolved", "Signed difference", "Absolute difference")):
-            axes[0, column].set_title(title)
+        axes[0, 0].set_title("Raw before deconvolution")
+        axes[0, 1].set_title("Raw after deconvolution")
         for axis in axes.ravel():
             axis.set_xticks([])
             axis.set_yticks([])
-        figure.suptitle(f"Z{slice_number:03d}: original vs Richardson-Lucy output")
-        output = output_dir / f"z{slice_number:03d}__original_deconvolved_difference.png"
-        figure.savefig(output, dpi=160)
+        figure.suptitle(
+            f"Z{slice_number:03d}: raw Richardson-Lucy before/after "
+            "(identical limits per channel)"
+        )
+        raw_output = output_dir / f"z{slice_number:03d}__raw_before_after.png"
+        figure.savefig(raw_output, dpi=160)
         plt.close(figure)
-        saved.append(output)
+        saved.append(raw_output)
+
+        raw_norm_limits = [_robust_limits(raw_cyx[channel]) for channel in range(c_size)]
+        dec_norm_limits = [_robust_limits(dec_cyx[channel]) for channel in range(c_size)]
+        raw_norm = np.stack(
+            [_normalize_with_limits(raw_cyx[channel], raw_norm_limits[channel]) for channel in range(c_size)]
+        )
+        dec_norm = np.stack(
+            [_normalize_with_limits(dec_cyx[channel], dec_norm_limits[channel]) for channel in range(c_size)]
+        )
+        zero_one_limits = [(0.0, 1.0)] * c_size
+        raw_norm_rgb = _rgb_composite(raw_norm, zero_one_limits, rgb_destinations)
+        dec_norm_rgb = _rgb_composite(dec_norm, zero_one_limits, rgb_destinations)
+
+        figure, axes = plt.subplots(rows, 2, figsize=(10, 3.6 * rows), constrained_layout=True)
+        if rows == 1:
+            axes = axes[None, :]
+        axes[0, 0].imshow(raw_norm_rgb)
+        axes[0, 1].imshow(dec_norm_rgb)
+        axes[0, 0].set_ylabel("Merged RGB")
+        for channel in range(c_size):
+            row = channel + 1
+            axes[row, 0].imshow(raw_norm[channel], cmap="gray", vmin=0.0, vmax=1.0)
+            axes[row, 1].imshow(dec_norm[channel], cmap="gray", vmin=0.0, vmax=1.0)
+            axes[row, 0].set_ylabel(channel_labels[channel])
+        axes[0, 0].set_title("Normalized before deconvolution")
+        axes[0, 1].set_title("Normalized after deconvolution")
+        for axis in axes.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
+        figure.suptitle(
+            f"Z{slice_number:03d}: independently normalized before/after "
+            "(P1-P99.8 per channel)"
+        )
+        normalized_output = output_dir / f"z{slice_number:03d}__normalized_before_after.png"
+        figure.savefig(normalized_output, dpi=160)
+        plt.close(figure)
+        saved.append(normalized_output)
     return saved
 
 
@@ -566,7 +618,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     clip: bool = False,
     filter_epsilon: float | None = None,
     pyramid_max_layer: int = 2,
-    preview_slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
+    preview_slices_1based: Sequence[int] | None = None,
 ) -> SkimageDeconvRunInfo:
     """Run channel-wise 3D Richardson-Lucy and save a validated multiscale output.
 
@@ -578,6 +630,11 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     """
     in_omezarr = Path(in_omezarr).resolve()
     out_root = Path(out_root).resolve()
+    if preview_slices_1based is None:
+        preview_slices_1based = (target_slice_for_volume(in_omezarr),)
+    preview_slices_1based = tuple(sorted({int(value) for value in preview_slices_1based}))
+    if not preview_slices_1based:
+        raise ValueError("At least one QC slice is required")
     if int(iters) < 1:
         raise ValueError("iters must be at least 1")
     if clip:
@@ -631,8 +688,13 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     ]
     iteration_tag = _iteration_tag(master_matches, iterations_by_index)
 
-    sample = in_omezarr.parent.name
-    out_dir = out_root / f"{sample}__SK_RL__PSF{model}__{iteration_tag}__sourceL{level}"
+    relative_volume = relative_volume_path(in_omezarr)
+    sample = relative_volume.name
+    out_dir = (
+        out_root
+        / relative_volume.parent
+        / f"{sample}__SK_RL__PSF{model}__{iteration_tag}__sourceL{level}"
+    )
     out_zarr = out_dir / "image.ome.zarr"
     if out_dir.exists() and overwrite:
         shutil.rmtree(out_dir)
@@ -790,7 +852,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         ):
             raise ValueError(f"Stored-value check failed for channel {channel_index}")
 
-    preview_dir = out_dir / "qc_training_slices"
+    preview_dir = out_dir / "qc_target_slice_before_after"
     save_selected_slice_qc(
         original_zarr=in_omezarr,
         original_level=level,
@@ -857,7 +919,6 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
 
 
 __all__ = [
-    "DEFAULT_TRAINING_SLICES_1BASED",
     "PSFModel",
     "SkimageDeconvRunInfo",
     "VolumeStats",

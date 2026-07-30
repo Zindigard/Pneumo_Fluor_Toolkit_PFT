@@ -1,10 +1,4 @@
-"""Infer only the Z10 mask and broadcast it to the full Z-stack.
-
-The trained merged-RGB 2.5D U-Net is evaluated only at Z10 using the
-Z9/Z10/Z11 context. The resulting two-dimensional binary mask is copied to
-every Z-slice and saved as ``pred_mask.ome.zarr``. Fluorescence intensities are
-not modified.
-"""
+"""Infer the configured per-volume target slice and broadcast its mask in Z."""
 
 from __future__ import annotations
 
@@ -25,41 +19,33 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from PFT.core_prog_parts.denoising.validation_3d import DEFAULT_TRAINING_SLICES_1BASED  # noqa: E402
+from PFT.core_prog_parts.denoising.validation_3d import target_slice_for_volume  # noqa: E402
 from PFT.core_prog_parts.segmentation.unet_run_3d_25d_core import (  # noqa: E402
     UNet25DRunConfig,
     run_3d_25d_unet_masks,
 )
 
 
-def _parse_slices(value: str) -> tuple[int, ...]:
-    values = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
-    if values != DEFAULT_TRAINING_SLICES_1BASED:
-        raise ValueError(
-            f"This workflow is fixed to inference slices {DEFAULT_TRAINING_SLICES_1BASED}; received {values}."
-        )
-    return values
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Infer the Z10 mask and broadcast it to all Z-slices.",
+        description="Infer the configured target-slice mask and broadcast it to all Z-slices.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--zarr", type=Path, required=True, help="Original image.ome.zarr used for U-Net inference")
+    parser.add_argument("--zarr", type=Path, required=True, help="Source image.ome.zarr")
     parser.add_argument("--model", type=Path, default=PROJECT_ROOT / "models" / "u_net_3d_25d" / "u_net_3d_25d_best.keras")
     parser.add_argument("--out-root", type=Path, default=PROJECT_ROOT / "results" / "U-net" / "3d_25d")
     parser.add_argument("--manual-mask-root", type=Path, default=PROJECT_ROOT / "results" / "training_files" / "U-net" / "3d_25d")
     parser.add_argument("--level", type=int, default=0)
     parser.add_argument("--patch", type=int, default=256)
     parser.add_argument("--predict-batch-size", type=int, default=8)
-    parser.add_argument("--inference-slices", default=",".join(map(str, DEFAULT_TRAINING_SLICES_1BASED)))
     parser.add_argument("--no-probability", action="store_true")
     args = parser.parse_args()
 
+    input_zarr = args.zarr.expanduser().resolve()
+    target = target_slice_for_volume(input_zarr)
     config = UNet25DRunConfig(
         project_root=PROJECT_ROOT,
-        input_zarr=args.zarr,
+        input_zarr=input_zarr,
         model_path=args.model,
         output_root=args.out_root,
         manual_mask_root=args.manual_mask_root,
@@ -68,18 +54,17 @@ def main() -> int:
         channels=None,
         threshold=0.5,
         predict_batch_size=args.predict_batch_size,
-        inference_slices_1based=_parse_slices(args.inference_slices),
         save_probability=not args.no_probability,
     )
     result = run_3d_25d_unet_masks(config)
-    print("\nZ10 mask inference completed")
+    print("\nConfigured target-slice mask inference completed")
+    print(f"Target/context:          Z{target} from Z{target-1}/Z{target}/Z{target+1}")
     print(f"Full ZYX mask OME-Zarr: {result.mask_zarr}")
     print(f"Probability OME-Zarr:   {result.probability_zarr}")
-    print(f"Z10 2D mask:            {result.source_mask_tif}")
-    print(f"Source-slice products:  {result.source_slice_dir}")
+    print(f"Target 2D mask:         {result.source_mask_tif}")
+    print(f"Target-slice products:  {result.source_slice_dir}")
     print(f"QC figures:             {result.preview_dir}")
     print(f"Report:                 {result.report_json}")
-    print("Only Z10 was inferred from Z9/Z10/Z11 and copied to all Z-slices.")
     print("No fluorescence intensities were modified in this step.")
     return 0
 

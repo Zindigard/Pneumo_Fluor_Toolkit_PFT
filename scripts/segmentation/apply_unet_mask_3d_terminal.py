@@ -1,10 +1,8 @@
-"""
-Apply a saved 2.5D U-Net mask to a saved deconvolved OME-Zarr.
+"""Apply a saved 2.5D U-Net mask to a saved deconvolved OME-Zarr.
 
-The script preserves all deconvolved foreground values, leaves 2% of intensity
-outside the predicted mask, writes a new multiscale float32 OME-Zarr, validates
-stored values, and calculates ROI SNR on the manually annotated Z10 slice
-using the same formula as the 2D workflow.
+The configured per-volume target slice is used automatically for manual-mask
+SNR evaluation. Foreground values are preserved and 2% of intensity remains
+outside the predicted mask by default.
 """
 
 from __future__ import annotations
@@ -26,14 +24,9 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from PFT.core_prog_parts.denoising.validation_3d import DEFAULT_TRAINING_SLICES_1BASED  # noqa: E402
 from PFT.core_prog_parts.segmentation.mask_application_3d import (  # noqa: E402
     apply_saved_mask_to_deconvolution,
 )
-
-
-def _parse_slices(value: str) -> tuple[int, ...]:
-    return tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
 
 
 def main() -> int:
@@ -47,7 +40,6 @@ def main() -> int:
     parser.add_argument("--manual-mask-root", type=Path, default=PROJECT_ROOT / "results" / "training_files" / "U-net" / "3d_25d")
     parser.add_argument("--outside-mask-depletion", type=float, default=0.98)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
-    parser.add_argument("--slices", default=",".join(map(str, DEFAULT_TRAINING_SLICES_1BASED)))
     parser.add_argument("--epsilon", type=float, default=1e-12)
     parser.add_argument("--no-overwrite", action="store_true")
     args = parser.parse_args()
@@ -59,7 +51,7 @@ def main() -> int:
         manual_mask_root=args.manual_mask_root,
         outside_mask_depletion=args.outside_mask_depletion,
         pyramid_max_layer=args.pyramid_max_layer,
-        slices_1based=_parse_slices(args.slices),
+        slices_1based=None,
         epsilon=args.epsilon,
         overwrite=not args.no_overwrite,
     )

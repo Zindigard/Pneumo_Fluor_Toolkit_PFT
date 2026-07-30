@@ -1,13 +1,8 @@
-"""Z10-only merged-RGB 2.5D U-Net inference and full-stack mask creation.
+"""Per-volume-target merged-RGB 2.5D U-Net inference.
 
-The network is evaluated only at target slice Z10. Its input consists of the
-wavelength-mapped merged-RGB context Z9/Z10/Z11. The predicted two-dimensional
-Z10 mask is then broadcast to every Z-slice and saved as a ZYX OME-Zarr
-semantic mask.
-
-No fluorescence intensities are modified in this module. Background attenuation
-is performed later by ``mask_application_3d.py`` on the saved deconvolution
-output.
+For each source volume, the configured target Zn is inferred from the
+wavelength-mapped merged-RGB context Z(n-1)/Zn/Z(n+1). The predicted 2D mask
+is then broadcast through the full Z-stack and saved as a ZYX OME-Zarr mask.
 """
 
 from __future__ import annotations
@@ -30,10 +25,11 @@ from PFT.core_prog_parts.denoising.metadata_3d import (
     copyable_root_metadata,
 )
 from PFT.core_prog_parts.denoising.validation_3d import (
-    DEFAULT_TRAINING_SLICES_1BASED,
+    TARGET_SLICE_BY_VOLUME_KEY,
     annotation_sample_dir,
     find_slice_mask,
     relative_volume_path,
+    target_slice_for_volume,
     volume_key,
 )
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
@@ -43,6 +39,7 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (
     iou_coef,
 )
 from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (
+    MODEL_CONTRACT,
     UNet25DTrainConfig,
     make_merged_rgb_context_slice,
     open_3d_image_czyx,
@@ -51,12 +48,11 @@ from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (
     resolve_rgb_source_channels,
 )
 
-MODEL_CONTRACT = "pft_3d_25d_merged_rgb_z10_v1"
 
 
 @dataclass
 class UNet25DRunConfig:
-    """Configuration for Z10-only mask inference."""
+    """Configuration for one configured target-slice inference."""
 
     project_root: Path = find_project_root(Path(__file__).resolve())
     input_zarr: Path | None = None
@@ -69,13 +65,12 @@ class UNet25DRunConfig:
     normalize: str = "percentile"
     threshold: float = 0.5
     predict_batch_size: int = 8
-    inference_slices_1based: tuple[int, ...] = DEFAULT_TRAINING_SLICES_1BASED
     save_probability: bool = True
 
 
 @dataclass(frozen=True)
 class UNet25DRunOutput:
-    """Saved products from one Z10-only inference run."""
+    """Saved products from one configured target-slice inference run."""
 
     sample: str
     source_zarr: Path
@@ -104,22 +99,24 @@ def load_25d_model(model_path: Path) -> tf.keras.Model:
 
 
 def _validate_model_contract(model_path: Path) -> Path:
-    """Require a model trained by the Z10-only merged-RGB workflow."""
+    """Require a model trained with the current per-volume target map."""
     summary_path = model_path.parent / "u_net_3d_25d_training_summary.json"
     if not summary_path.is_file():
         raise FileNotFoundError(
             f"Model contract summary is missing: {summary_path}. Retrain the model "
-            "with the Z10-only merged-RGB training script before inference."
+            "with the per-volume-target merged-RGB training script before inference."
         )
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     if summary.get("model_contract") != MODEL_CONTRACT:
         raise ValueError(
             f"Model summary contract is {summary.get('model_contract')!r}, expected "
-            f"{MODEL_CONTRACT!r}. Retrain with the Z10-only workflow."
+            f"{MODEL_CONTRACT!r}. Retrain with the current per-volume-target workflow."
         )
-    if tuple(summary.get("training_slices_1based") or ()) != DEFAULT_TRAINING_SLICES_1BASED:
+    saved_map = summary.get("target_slice_map")
+    if saved_map != TARGET_SLICE_BY_VOLUME_KEY:
         raise ValueError(
-            f"Model was not trained only on Z10: {summary.get('training_slices_1based')}"
+            "The model target-slice map differs from the current project mapping. "
+            "Retrain the model before inference."
         )
     if int(summary.get("model_input_channels", -1)) != 9:
         raise ValueError(
@@ -143,14 +140,13 @@ def _yx_scale(input_zarr: Path, level: int) -> list[float]:
 
 
 
-def _validate_source_slice(slices_1based: Sequence[int], z_count: int) -> int:
-    slices = tuple(sorted({int(value) for value in slices_1based}))
-    if slices != DEFAULT_TRAINING_SLICES_1BASED:
-        raise ValueError(f"This workflow is fixed to Z10 inference; received {slices}.")
-    slice_number = slices[0]
+def _validate_target_slice(slice_number: int, z_count: int) -> int:
+    """Validate that the mapped target has complete Z-1/Z/Z+1 context."""
+    slice_number = int(slice_number)
     if slice_number < 2 or slice_number > z_count - 1:
         raise ValueError(
-            f"Z{slice_number} lacks complete Z-1/Z/Z+1 context for a stack with Z={z_count}."
+            f"Configured Z{slice_number} lacks complete Z-1/Z/Z+1 context "
+            f"for a stack with Z={z_count}."
         )
     return slice_number
 
@@ -163,7 +159,7 @@ def _save_source_slice_products(
     probability: np.ndarray,
     mask: np.ndarray,
 ) -> Path:
-    """Save the Z10 probability map and strict binary mask."""
+    """Save the target-slice probability map and strict binary mask."""
     source_slice_dir.mkdir(parents=True, exist_ok=True)
     tiff.imwrite(
         source_slice_dir / f"z{slice_number:03d}_foreground_probability.tif",
@@ -187,7 +183,7 @@ def _save_source_mask_preview(
     output_dir: Path,
     manual_mask_dir: Path | None,
 ) -> list[Path]:
-    """Save the Z10 prediction quality-control figure."""
+    """Save the configured target-slice prediction quality-control figure."""
     output_dir.mkdir(parents=True, exist_ok=True)
     normalization_cache: dict[tuple[int, int], tuple[float, float]] = {}
     context = make_merged_rgb_context_slice(
@@ -237,7 +233,7 @@ def _save_source_mask_preview(
 
 
 def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
-    """Infer only Z10 and broadcast its binary mask to the full Z-stack."""
+    """Infer the configured target and broadcast its mask to the full Z-stack."""
     if cfg.input_zarr is None:
         raise ValueError("input_zarr is required")
     input_zarr = Path(cfg.input_zarr).resolve()
@@ -258,8 +254,8 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     image = open_3d_image_czyx(input_zarr, level=cfg.level)
     if int(image.shape[0]) != 3:
         raise ValueError(f"Merged RGB inference requires C=3, received C={image.shape[0]}")
-    slice_number = _validate_source_slice(
-        cfg.inference_slices_1based,
+    slice_number = _validate_target_slice(
+        target_slice_for_volume(input_zarr),
         int(image.shape[1]),
     )
     relative_volume = relative_volume_path(input_zarr)
@@ -270,7 +266,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     if expected_channels != 9:
         raise ValueError(
             f"Merged-RGB model must expect 9 channels, but model input is {expected_channels}. "
-            "Retrain with the Z10-only merged-RGB training code."
+            "Retrain with the per-volume-target merged-RGB training code."
         )
     rgb_source_channels = resolve_rgb_source_channels(input_zarr, level=cfg.level)
 
@@ -283,7 +279,6 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         threshold=cfg.threshold,
         predict_batch_size=cfg.predict_batch_size,
         z_radius=1,
-        training_slices_1based=DEFAULT_TRAINING_SLICES_1BASED,
     )
     print(
         f"[U-NET MASK] {sample}: infer Z{slice_number:03d} from "
@@ -299,7 +294,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     )
     mask = (probability >= cfg.threshold).astype(np.uint8)
     if not np.any(mask) or np.all(mask):
-        raise ValueError("The predicted Z10 mask must contain both foreground and background.")
+        raise ValueError("The predicted target-slice mask must contain both foreground and background.")
 
     z_count = int(image.shape[1])
     mask_zyx = np.broadcast_to(mask[None, ...], (z_count, *mask.shape)).copy()
@@ -311,6 +306,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         sample_dir / "combined_foreground_probability.ome.zarr",
         sample_dir / "source_slice_prediction",
         sample_dir / "qc_z010_prediction",
+        sample_dir / f"qc_z{slice_number:03d}_prediction",
     )
     for stale_path in stale_products:
         if stale_path.is_dir():
@@ -329,7 +325,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
     source_channel_names = retained.pop("channel_names", None)
     source_omero = retained.pop("omero", None)
     processing = {
-        "operation": "unet_3d_25d_z10_foreground_mask",
+        "operation": "unet_3d_25d_configured_target_foreground_mask",
         "source_omezarr": str(input_zarr),
         "source_level": int(cfg.level),
         "model_path": str(model_path),
@@ -337,7 +333,10 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         "model_contract": MODEL_CONTRACT,
         "inference_slice_1based": int(slice_number),
         "inference_context_1based": [slice_number - 1, slice_number, slice_number + 1],
-        "input_representation": "wavelength-mapped merged RGB at Z9/Z10/Z11",
+        "input_representation": (
+            f"wavelength-mapped merged RGB at Z{slice_number - 1}/"
+            f"Z{slice_number}/Z{slice_number + 1}"
+        ),
         "rgb_source_channels": {
             "red": int(rgb_source_channels[0]),
             "green": int(rgb_source_channels[1]),
@@ -371,12 +370,12 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         probability_attrs = dict(retained)
         probability_attrs["pft_processing"] = {
             **processing,
-            "operation": "unet_3d_25d_z10_probability_2d",
+            "operation": "unet_3d_25d_configured_target_probability_2d",
             "stored_axes": "yx",
             "broadcast_to_z": False,
         }
         probability_zarr = save_ome_zarr(
-            sample_dir / "z010_foreground_probability.ome.zarr",
+            sample_dir / f"z{slice_number:03d}_foreground_probability.ome.zarr",
             probability,
             "yx",
             overwrite=True,
@@ -391,7 +390,7 @@ def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
         if cfg.manual_mask_root
         else None
     )
-    preview_dir = sample_dir / "qc_z010_prediction"
+    preview_dir = sample_dir / f"qc_z{slice_number:03d}_prediction"
     previews = _save_source_mask_preview(
         image_czyx=image,
         training_cfg=training_cfg,

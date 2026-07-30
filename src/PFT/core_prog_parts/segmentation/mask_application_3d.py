@@ -32,10 +32,10 @@ from PFT.core_prog_parts.denoising.deconvolution_no_fuji import (
 )
 from PFT.core_prog_parts.denoising.metadata_3d import copyable_root_metadata
 from PFT.core_prog_parts.denoising.validation_3d import (
-    DEFAULT_TRAINING_SLICES_1BASED,
     annotation_sample_dir,
     find_slice_mask,
     relative_volume_path,
+    target_slice_for_volume,
     volume_key,
 )
 from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import read_binary_slice_mask
@@ -261,7 +261,7 @@ def apply_saved_mask_to_deconvolution(
     manual_mask_root: Path | None = None,
     outside_mask_depletion: float = 0.98,
     pyramid_max_layer: int = 2,
-    slices_1based: Sequence[int] = DEFAULT_TRAINING_SLICES_1BASED,
+    slices_1based: Sequence[int] | None = None,
     epsilon: float = 1e-12,
     overwrite: bool = True,
 ) -> MaskApplicationOutput:
@@ -316,6 +316,11 @@ def apply_saved_mask_to_deconvolution(
     source_raw_path = Path(source_raw).resolve()
     relative_volume = relative_volume_path(source_raw_path)
     sample = volume_key(source_raw_path)
+    if slices_1based is None:
+        slices_1based = (target_slice_for_volume(source_raw_path),)
+    slices_1based = tuple(sorted({int(value) for value in slices_1based}))
+    if not slices_1based:
+        raise ValueError("At least one target slice is required for SNR calculation")
     output_dir = output_root / relative_volume
     output_zarr = output_dir / "image.ome.zarr"
     if output_dir.exists() and overwrite:

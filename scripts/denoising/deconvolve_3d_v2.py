@@ -1,23 +1,18 @@
 """Run validated 3D Richardson-Lucy deconvolution without Fiji.
 
-This script reads level 0 of one CZYX OME-Zarr, validates the stack against the
-single reusable three-wavelength master PSF set, performs channel-wise 3D
-Richardson-Lucy deconvolution, and writes a new multiscale OME-Zarr. Channel-to-
-PSF assignment uses wavelength metadata. Stored output values are raw float32
-deconvolution values;
-no 0-1 normalization is applied. ``clip`` is permanently disabled because
-scikit-image clipping would destroy raw fluorescence intensity ranges.
-
-Quality-control PNGs are created only for the planned 2.5D training slices:
-Z10. The figure contains original, deconvolved, signed-
-difference, and absolute-difference views. Richardson-Lucy iterations can be
-set independently for the 405 nm blue, 488 nm green, and 561 nm red channels.
+With no ``--zarr`` argument, the script processes the fixed four-stack test
+cohort, containing one source OME-Zarr from each acquisition directory. Each
+stack uses its configured target slice for QC. The QC output contains raw
+before/after and independently normalized before/after views for the merged RGB
+image and all three wavelength-mapped channels; no difference image is saved.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_FILE = Path(__file__).resolve()
@@ -34,72 +29,83 @@ PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PFT.core_prog_parts.denoising.deconvolution_no_fuji import (  # noqa: E402
-    DEFAULT_TRAINING_SLICES_1BASED,
     deconvolve_omezarr_3ch_to_omezarr_skimage,
+)
+from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
+    configured_test_zarrs,
+    target_slice_for_volume,
+    volume_key,
 )
 
 
-def _parse_slices(value: str) -> tuple[int, ...]:
-    result = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
-    if not result:
-        raise ValueError("At least one QC slice is required")
-    return result
-
-
-def _find_zarrs(root: Path) -> list[Path]:
-    if root.name.endswith(".ome.zarr") and root.is_dir():
-        return [root]
-    return sorted(path for path in root.rglob("image.ome.zarr") if path.is_dir())
-
-
-def _select_zarr(root: Path) -> Path:
-    items = _find_zarrs(root)
-    if not items:
-        raise FileNotFoundError(f"No image.ome.zarr found under {root}")
-    if len(items) == 1:
-        return items[0]
-    print("\nAvailable 3D datasets")
-    for index, item in enumerate(items):
-        print(f"  [{index}] {item}")
-    selected = int(input(f"Select dataset [0-{len(items)-1}]: ").strip())
-    return items[selected]
+def _write_batch_summary(rows: list[dict[str, str]], out_root: Path) -> Path:
+    out_root.mkdir(parents=True, exist_ok=True)
+    path = out_root / "deconvolution_four_stack_test_summary.csv"
+    fieldnames = [
+        "generated_utc",
+        "status",
+        "sample",
+        "target_slice_1based",
+        "input_omezarr",
+        "output_omezarr",
+        "qc_directory",
+        "validation_report",
+        "error",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run raw-intensity-preserving 3D Richardson-Lucy deconvolution.",
+        description=(
+            "Run raw-intensity-preserving 3D Richardson-Lucy deconvolution. "
+            "Without --zarr, one configured stack from each of four acquisition folders is processed."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--zarr", type=Path, default=None, help="Input image.ome.zarr")
+    parser.add_argument(
+        "--zarr",
+        type=Path,
+        default=None,
+        help="Process one exact source image.ome.zarr instead of the fixed four-stack cohort",
+    )
     parser.add_argument("--root-3d", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
     parser.add_argument("--out-root", type=Path, default=PROJECT_ROOT / "results" / "deconv")
     parser.add_argument(
-        "--level", type=int, default=0, choices=(0,),
-        help="Fixed input pyramid level. The reusable master PSFs support only level 0",
+        "--level",
+        type=int,
+        default=0,
+        choices=(0,),
+        help="Fixed input pyramid level; reusable master PSFs support only level 0",
     )
     parser.add_argument("--model", choices=("BW", "GL", "RW"), default="BW")
-    parser.add_argument(
-        "--iters",
-        type=int,
-        default=5,
-        help="Default Richardson-Lucy iteration count used for channels without an explicit override",
-    )
-    parser.add_argument("--iters-blue", type=int, default=None, help="Iteration count for the 405 nm blue channel")
-    parser.add_argument("--iters-green", type=int, default=None, help="Iteration count for the 488 nm green channel")
-    parser.add_argument("--iters-red", type=int, default=None, help="Iteration count for the 561 nm red channel")
-    parser.add_argument("--background", type=float, default=0.0, help="Constant background subtracted before RL")
+    parser.add_argument("--iters", type=int, default=5)
+    parser.add_argument("--iters-blue", type=int, default=None)
+    parser.add_argument("--iters-green", type=int, default=None)
+    parser.add_argument("--iters-red", type=int, default=None)
+    parser.add_argument("--background", type=float, default=0.0)
     parser.add_argument("--filter-epsilon", type=float, default=None)
     parser.add_argument("--pyramid-max-layer", type=int, default=2)
-    parser.add_argument(
-        "--qc-slices",
-        default=",".join(str(value) for value in DEFAULT_TRAINING_SLICES_1BASED),
-        help="One-based slices included in before/after/difference figures",
-    )
     parser.add_argument("--no-overwrite", action="store_true")
+    parser.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop immediately when one stack fails; otherwise continue and record the failure",
+    )
     args = parser.parse_args()
 
-    input_zarr = args.zarr.expanduser().resolve() if args.zarr else _select_zarr(args.root_3d)
-    slices = _parse_slices(args.qc_slices)
+    root_3d = args.root_3d.expanduser().resolve()
+    if args.zarr is not None:
+        inputs = [args.zarr.expanduser().resolve()]
+        if not inputs[0].is_dir() or inputs[0].name != "image.ome.zarr":
+            raise FileNotFoundError(f"--zarr must point to image.ome.zarr: {inputs[0]}")
+    else:
+        inputs = configured_test_zarrs(root_3d)
+
     channel_iterations = {
         color: value
         for color, value in (
@@ -109,52 +115,82 @@ def main() -> int:
         )
         if value is not None
     }
-    if any(value < 1 for value in channel_iterations.values()):
-        raise ValueError("All per-channel iteration counts must be at least 1")
+    if args.iters < 1 or any(value < 1 for value in channel_iterations.values()):
+        raise ValueError("All Richardson-Lucy iteration counts must be at least 1")
+
     print("\nPFT 3D Richardson-Lucy deconvolution")
     print("=" * 72)
-    print(f"Input:              {input_zarr}")
-    print(f"Input level:        {args.level}")
-    print(f"PSF model:          {args.model}")
-    print("PSF source:         results/psf/master (three reusable wavelength PSFs)")
-    print("Channel mapping:    wavelength metadata; incompatible stacks stop with an error")
-    print(f"Default iterations: {args.iters}")
-    print(
-        "Per-channel iters: "
-        + (
-            ", ".join(f"{color}={value}" for color, value in channel_iterations.items())
-            if channel_iterations
-            else "none; default used for all channels"
-        )
-    )
-    print(f"Background:         {args.background}")
+    print(f"Input mode:          {'single stack' if args.zarr else 'fixed four-stack cohort'}")
+    print(f"Stacks:              {len(inputs)}")
+    print(f"Input level:         {args.level}")
+    print(f"PSF model:           {args.model}")
+    print("PSF source:          results/psf/master")
     print("Stored normalization: NONE")
-    print("Stored dtype:       float32")
-    print(f"Output pyramid:     levels 0-{args.pyramid_max_layer}")
-    print(f"QC slices:          {slices}")
+    print("Stored dtype:        float32")
+    print("QC:                  raw before/after + normalized before/after; no differences")
+    for index, path in enumerate(inputs, start=1):
+        target = target_slice_for_volume(path, image_root=root_3d)
+        print(f"  [{index}] {volume_key(path, root_3d)} | target Z{target}")
 
-    result = deconvolve_omezarr_3ch_to_omezarr_skimage(
-        in_omezarr=input_zarr,
-        out_root=args.out_root,
-        model=args.model,
-        iters=args.iters,
-        channel_iterations=channel_iterations,
-        background=args.background,
-        level=args.level,
-        overwrite=not args.no_overwrite,
-        clip=False,
-        filter_epsilon=args.filter_epsilon,
-        pyramid_max_layer=args.pyramid_max_layer,
-        preview_slices_1based=slices,
-    )
-    print("\nCompleted")
-    print(f"Preflight:      {result.preflight_report}")
-    print(f"OME-Zarr:       {result.out_zarr}")
-    print(f"Validation TXT: {result.report_txt}")
-    print(f"Validation JSON:{result.report_json}")
-    print(f"Statistics CSV: {result.stats_csv}")
-    print(f"QC figures:     {result.preview_dir}")
-    return 0
+    rows: list[dict[str, str]] = []
+    failures = 0
+    for index, input_zarr in enumerate(inputs, start=1):
+        sample = volume_key(input_zarr, root_3d)
+        target = target_slice_for_volume(input_zarr, image_root=root_3d)
+        print(f"\n[{index}/{len(inputs)}] {sample}")
+        print(f"Target QC slice: Z{target}; context Z{target-1}/Z{target}/Z{target+1}")
+        try:
+            result = deconvolve_omezarr_3ch_to_omezarr_skimage(
+                in_omezarr=input_zarr,
+                out_root=args.out_root,
+                model=args.model,
+                iters=args.iters,
+                channel_iterations=channel_iterations,
+                background=args.background,
+                level=args.level,
+                overwrite=not args.no_overwrite,
+                clip=False,
+                filter_epsilon=args.filter_epsilon,
+                pyramid_max_layer=args.pyramid_max_layer,
+                preview_slices_1based=(target,),
+            )
+            rows.append({
+                "generated_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "PASS",
+                "sample": sample,
+                "target_slice_1based": str(target),
+                "input_omezarr": str(input_zarr),
+                "output_omezarr": str(result.out_zarr),
+                "qc_directory": str(result.preview_dir),
+                "validation_report": str(result.report_txt),
+                "error": "",
+            })
+            print(f"PASS: {result.out_zarr}")
+            print(f"QC:   {result.preview_dir}")
+        except Exception as error:
+            failures += 1
+            rows.append({
+                "generated_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "FAIL",
+                "sample": sample,
+                "target_slice_1based": str(target),
+                "input_omezarr": str(input_zarr),
+                "output_omezarr": "",
+                "qc_directory": "",
+                "validation_report": "",
+                "error": f"{type(error).__name__}: {error}",
+            })
+            print(f"FAIL: {type(error).__name__}: {error}")
+            if args.stop_on_error:
+                summary = _write_batch_summary(rows, args.out_root)
+                print(f"Batch summary: {summary}")
+                raise
+
+    summary = _write_batch_summary(rows, args.out_root)
+    print("\nDeconvolution batch completed")
+    print(f"Passed: {len(inputs) - failures}/{len(inputs)}")
+    print(f"Batch summary: {summary}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

@@ -11,17 +11,15 @@ The established 2D mode opens a processed normalized TIFF or PNG and saves::
 3D/2.5D workflow
 ----------------
 The 3D mode discovers level-0 ``image.ome.zarr`` stores below
-``results/img/3d_data``. The user chooses one stack and one target Z-slice.
-Only the selected middle slice is manually labeled. The neighbouring slices
-are loaded as optional visual context, but are not annotated.
+``results/img/3d_data``. Each stack has one target slice in the shared mapping.
+Only that target is manually labeled; Z-1 and Z+1 are loaded as visual and
+2.5D model context. For configured target Zn::
 
-The only standard target slice is one-based Z10::
+    Z(n-1), Zn, Z(n+1) -> annotate Zn
 
-    Z9, Z10, Z11 -> annotate Z10
+The strict binary mask is saved as::
 
-For each selected target, the script saves a strict binary mask as::
-
-    results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif
+    results/training_files/U-net/3d_25d/<experiment>/<sample>/zNNN_mask.tif
 
 Mask semantics are always ``0=background`` and ``1=foreground``. A
 three-colour composite is built from wavelength metadata, with 405 nm shown in
@@ -36,20 +34,19 @@ Open the 3D selector directly
 -----------------------------
     python scripts/segmentation/labeling.py --mode 3d
 
-Open a specific OME-Zarr and target slice
------------------------------------------
+Open a specific OME-Zarr at its configured target
+--------------------------------------------------
     python scripts/segmentation/labeling.py \
         --mode 3d \
-        --zarr "results/img/3d_data/<experiment>/<sample>/image.ome.zarr" \
-        --slice 10
+        --zarr "results/img/3d_data/<experiment>/<sample>/image.ome.zarr"
 
-The ``--slice`` argument uses one-based biological slice numbering. Therefore,
-``--slice 10`` reads array index 9 and saves ``z010_mask.tif``.
+The target slice and output ``zNNN_mask.tif`` name are resolved automatically.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,7 +85,6 @@ PREFERRED_IMAGE_NAMES: tuple[str, ...] = (
     "preview_raw.png",
 )
 
-DEFAULT_3D_TARGET_SLICES_1BASED: tuple[int, ...] = (10,)
 WAVELENGTH_TO_RGB: tuple[tuple[float, int, str], ...] = (
     (405.0, 2, "blue"),
     (488.0, 1, "green"),
@@ -594,6 +590,17 @@ def volume_key_3d(project_root: Path, zarr_path: Path) -> str:
     return relative_volume_path_3d(project_root, zarr_path).as_posix()
 
 
+def configured_target_slice_3d(project_root: Path, zarr_path: Path) -> int:
+    """Resolve the single mapped target slice from the shared 3D configuration."""
+    source_root = project_root / "src"
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    from PFT.core_prog_parts.denoising.validation_3d import target_slice_for_volume
+
+    image_root = project_root / "results" / "img" / "3d_data"
+    return target_slice_for_volume(zarr_path, image_root=image_root)
+
+
 def mask_dir_3d(project_root: Path, zarr_path: Path) -> Path:
     return (
         project_root
@@ -610,10 +617,8 @@ def mask_path_3d(project_root: Path, zarr_path: Path, slice_1based: int) -> Path
 
 
 def completed_target_count(project_root: Path, zarr_path: Path) -> int:
-    return sum(
-        mask_path_3d(project_root, zarr_path, z).exists()
-        for z in DEFAULT_3D_TARGET_SLICES_1BASED
-    )
+    target = configured_target_slice_3d(project_root, zarr_path)
+    return int(mask_path_3d(project_root, zarr_path, target).exists())
 
 
 def relative_zarr_label(project_root: Path, zarr_path: Path) -> str:
@@ -629,16 +634,18 @@ def choose_zarr_3d_interactively(
     visible: list[Path] = []
     labels: list[str] = []
     for path in stores:
+        target = configured_target_slice_3d(project_root, path)
         completed = completed_target_count(project_root, path)
-        if not include_completed and completed == len(DEFAULT_3D_TARGET_SLICES_1BASED):
+        if not include_completed and completed:
             continue
         visible.append(path)
+        state = "MASK EXISTS" if completed else "MASK MISSING"
         labels.append(
-            f"{relative_zarr_label(project_root, path)} | "
-            f"{completed}/{len(DEFAULT_3D_TARGET_SLICES_1BASED)} target masks"
+            f"{relative_zarr_label(project_root, path)} | target Z{target} | "
+            f"context Z{target-1}/Z{target}/Z{target+1} | {state}"
         )
     if not visible:
-        print("\nAll 3D stacks have a mask for Z10.")
+        print("\nAll configured 3D target masks already exist.")
         return None
     selected = choose_number("Choose a 3D OME-Zarr stack", labels)
     return None if selected is None else visible[selected]
@@ -650,18 +657,15 @@ def choose_target_slice_interactively(
     *,
     include_completed: bool,
 ) -> int | None:
-    slices = list(DEFAULT_3D_TARGET_SLICES_1BASED)
-    if not include_completed:
-        slices = [z for z in slices if not mask_path_3d(project_root, zarr_path, z).exists()]
-    if not slices:
-        print(f"\nAll target masks already exist for {volume_key_3d(project_root, zarr_path)}.")
+    target = configured_target_slice_3d(project_root, zarr_path)
+    exists = mask_path_3d(project_root, zarr_path, target).exists()
+    if exists and not include_completed:
+        print(
+            f"\nThe configured target mask already exists for "
+            f"{volume_key_3d(project_root, zarr_path)}: Z{target}."
+        )
         return None
-    labels = []
-    for z in slices:
-        state = "MASK EXISTS" if mask_path_3d(project_root, zarr_path, z).exists() else "MASK MISSING"
-        labels.append(f"Z{z} | input context Z{z-1}, Z{z}, Z{z+1} | {state}")
-    selected = choose_number("Choose the middle Z-slice to annotate", labels)
-    return None if selected is None else slices[selected]
+    return target
 
 
 def _resolve_rgb_assignment(wavelength_nm: float) -> tuple[int, str]:
@@ -936,7 +940,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Create or correct PFT 2D masks and sparse 3D/2.5D masks in napari. "
-            "The 3D mode selects an OME-Zarr and annotates one middle Z-slice."
+            "The 3D mode selects an OME-Zarr and annotates its configured target slice."
         )
     )
     parser.add_argument(
@@ -963,7 +967,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="slice_1based",
         type=int,
         help=(
-            "One-based middle Z-slice for 3D annotation. The fixed target is Z10."
+            "Optional one-based target check. It must equal the configured slice for the selected volume."
         ),
     )
     parser.add_argument(
@@ -1065,10 +1069,16 @@ def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
 
     fixed_zarr = args.zarr.resolve() if args.zarr is not None else None
     fixed_slice = args.slice_1based
-    if fixed_slice is not None and fixed_slice not in DEFAULT_3D_TARGET_SLICES_1BASED:
-        raise SystemExit(
-            f"3D annotation is fixed to Z10; received --slice {fixed_slice}."
-        )
+    if fixed_slice is not None and fixed_zarr is None:
+        raise SystemExit("--slice requires --zarr so it can be checked against the configured target.")
+    if fixed_zarr is not None:
+        mapped = configured_target_slice_3d(project_root, fixed_zarr)
+        if fixed_slice is not None and fixed_slice != mapped:
+            raise SystemExit(
+                f"Configured target for {volume_key_3d(project_root, fixed_zarr)} is "
+                f"Z{mapped}; received --slice {fixed_slice}."
+            )
+        fixed_slice = mapped
 
     if fixed_zarr is not None and fixed_slice is not None:
         process_one_sample_3d(

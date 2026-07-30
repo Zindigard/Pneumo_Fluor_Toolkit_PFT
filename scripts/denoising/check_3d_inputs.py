@@ -1,9 +1,9 @@
 """Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
 
-The only manually annotated target slice is Z10, stored as one binary TIFF, for example
-``results/training_files/U-net/3d_25d/<experiment>/<sample>/z010_mask.tif``. Only the middle
-slice is annotated; neighbouring slices are read automatically during 2.5D
-training.
+Each source volume has one manually selected target slice defined in the shared
+3D target-slice map. The binary TIFF is stored as
+``results/training_files/U-net/3d_25d/<experiment>/<sample>/zNNN_mask.tif``.
+Neighbouring Z-1 and Z+1 slices are read automatically during 2.5D training.
 """
 
 from __future__ import annotations
@@ -26,18 +26,11 @@ PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
-    DEFAULT_TRAINING_SLICES_1BASED,
     annotation_sample_dir,
     check_3d_sample,
+    target_slice_for_volume,
     write_readiness_report,
 )
-
-
-def _parse_slices(value: str) -> tuple[int, ...]:
-    numbers = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
-    if not numbers or any(number < 2 for number in numbers):
-        raise ValueError("Training slices must be positive one-based indices with neighbours")
-    return numbers
 
 
 def _find_zarrs(root: Path) -> list[Path]:
@@ -59,14 +52,9 @@ def main() -> int:
         default=PROJECT_ROOT / "results" / "training_files" / "U-net" / "3d_25d",
     )
     parser.add_argument(
-        "--slices",
-        default=",".join(str(value) for value in DEFAULT_TRAINING_SLICES_1BASED),
-        help="One-based manually annotated target slices",
-    )
-    parser.add_argument(
         "--check-masks",
         action="store_true",
-        help="Require the Z10 mask in each checked sample folder",
+        help="Require the configured per-volume target mask in each checked sample folder",
     )
     parser.add_argument(
         "--annotated-only",
@@ -100,14 +88,14 @@ def main() -> int:
                 f"No annotated sample folders matching extracted OME-Zarr stores were found under {args.mask_root}"
             )
 
-    slices = _parse_slices(args.slices)
     failures = 0
     for zarr_path in zarrs:
+        target_slice = target_slice_for_volume(zarr_path)
         report = check_3d_sample(
             zarr_path,
             level=args.level,
             mask_root=args.mask_root,
-            training_slices_1based=slices,
+            training_slices_1based=(target_slice,),
             require_masks=require_masks,
         )
         text_path, json_path = write_readiness_report(report, args.out)
