@@ -1,8 +1,16 @@
-"""
-Train or fine-tune an initial instance-segmentation model for one PFT dataset.
+"""Train or fine-tune an initial instance-segmentation model for one PFT dataset.
+
+Each dataset and source mode is trained independently. Models are saved below::
+
+    models/segmentation/<family>/<dataset>/<source_mode>/<run_name>/
+
+Training images are the prepared float32 inputs. Manual masks must contain a
+unique positive integer for every cell instance and must be stored below::
 
     results/training_files/segmentation/<dataset>/<source_mode>/<sample>/mask.tif
 
+Examples
+--------
 Fine-tune Cellpose for 2d_time::
 
     python scripts/segmentation/train_segmentation_model.py `

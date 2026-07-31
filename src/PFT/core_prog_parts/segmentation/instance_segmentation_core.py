@@ -1,6 +1,20 @@
-"""
-Run, train, and tune 2D instance-segmentation models on prepared PFT inputs.
- results/training_files/segmentation/<dataset>/<source_mode>/<sample>/mask.tif
+"""Run, train, and tune 2D instance-segmentation models on prepared PFT inputs.
+
+All model families consume only ``segmentation_input.ome.zarr`` arrays created
+by :mod:`segmentation_input_core`. These arrays are already float32 in [0, 1].
+Model-side percentile normalization is therefore disabled to avoid the sparse
+zero-background normalization failure documented for U-Net-masked data.
+
+Canonical paths
+---------------
+Prepared inputs::
+
+    results/segmentation_inputs/<dataset>/<source_mode>/<sample>/
+        segmentation_input.ome.zarr
+
+Manual instance masks::
+
+    results/training_files/segmentation/<dataset>/<source_mode>/<sample>/mask.tif
 
 Models::
 

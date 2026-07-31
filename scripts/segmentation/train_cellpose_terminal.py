@@ -1,6 +1,8 @@
-"""
-Compatibility terminal entry point for Cellpose training or fine-tuning.
+"""Compatibility terminal entry point for Cellpose training or fine-tuning.
 
+The script delegates to :mod:`train_segmentation_model`, stores models below
+``models/segmentation/cellpose/<dataset>/<source_mode>/``, and requires manual
+instance masks below ``results/training_files/segmentation``.
 """
 
 from __future__ import annotations

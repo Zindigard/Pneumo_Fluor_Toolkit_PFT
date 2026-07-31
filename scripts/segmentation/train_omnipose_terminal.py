@@ -1,5 +1,4 @@
-"""
-Compatibility terminal entry point for Omnipose training or fine-tuning.
+"""Compatibility terminal entry point for Omnipose training or fine-tuning.
 
 The script delegates to :mod:`train_segmentation_model`, keeps every dataset
 and source mode independent, and stores all models below

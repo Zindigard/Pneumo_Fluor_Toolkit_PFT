@@ -1,6 +1,7 @@
-"""
-Compatibility terminal entry point for StarDist training.
+"""Compatibility terminal entry point for StarDist training.
 
+The script delegates to :mod:`train_segmentation_model` and stores each trained
+model below ``models/segmentation/stardist/<dataset>/<source_mode>/``.
 """
 
 from __future__ import annotations

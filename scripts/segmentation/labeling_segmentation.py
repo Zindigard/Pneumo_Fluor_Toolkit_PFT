@@ -1,20 +1,38 @@
-"""
-Create manual instance masks in Napari for prepared segmentation inputs.
+"""Create manual instance masks in Napari for prepared segmentation inputs.
+
+This script is separate from ``labeling.py`` used for binary U-Net foreground
+masks. Here every bacterial cell must receive a unique positive integer label:
 
 * 0 = background
 * 1 = first cell
 * 2 = second cell
 * ...
 
+The displayed image is the already prepared normalized float32 segmentation
+input. It is not normalized again in Napari. The quantitative input remains
+unchanged on disk.
+
+Inputs
+------
+
     results/segmentation_inputs/<dataset>/<source_mode>/<sample>/
         segmentation_input.ome.zarr
 
+Outputs
+-------
 
     results/training_files/segmentation/<dataset>/<source_mode>/<sample>/
         mask.tif
         annotation_report.json
         annotation_overlay.png
 
+Interactive use
+---------------
+
+    python scripts/segmentation/labeling_segmentation.py
+
+Open one exact sample
+---------------------
 
     python scripts/segmentation/labeling_segmentation.py `
         --dataset 2d_time `

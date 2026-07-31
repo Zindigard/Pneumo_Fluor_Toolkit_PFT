@@ -27,6 +27,9 @@ Each sample is saved as float32 in [0, 1] below::
 
     results/segmentation_inputs/<dataset>/<source_mode>/<sample>/
         segmentation_input.ome.zarr
+        preview_raw.png
+        preview_normalized.png
+        preview_comparison.png
 
 Examples
 --------
@@ -164,6 +167,7 @@ def main() -> int:
         print("Channel policy:       retain the dataset-defined numerical channels")
     print("Mask order:          normalize complete source, then apply mask")
     print("Saved dtype/range:   float32, [0, 1]")
+    print("Preview PNGs:       raw, normalized, and side-by-side comparison")
     print("Model normalization: must remain disabled")
 
     outputs = prepare_dataset_segmentation_inputs(
@@ -192,6 +196,7 @@ def main() -> int:
         print(f"  shape:    {output.output_shape}")
         print(f"  range:    {output.output_min:.6g} .. {output.output_max:.6g}")
         print(f"  nonzero:  {output.nonzero_pixels}")
+        print(f"  preview:  {output.preview_comparison_png}")
 
     summary = _write_summary(rows, outputs[0].output_zarr.parents[len(Path(outputs[0].sample_key).parts)])
     print(f"\nPrepared {len(outputs)} segmentation input(s).")

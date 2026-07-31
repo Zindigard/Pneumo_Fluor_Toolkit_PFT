@@ -1,10 +1,11 @@
-"""
-Run Cellpose, Omnipose, or StarDist on prepared PFT segmentation inputs.
+"""Run Cellpose, Omnipose, or StarDist on prepared PFT segmentation inputs.
 
 The script reads only ``segmentation_input.ome.zarr`` files. These files are
 already normalized to float32 [0, 1], so model-side normalization is explicitly
 disabled.
 
+Examples
+--------
 Run the Cellpose ``cpsam`` initial model on all 2d_time images::
 
     python scripts/segmentation/run_segmentation_model.py `

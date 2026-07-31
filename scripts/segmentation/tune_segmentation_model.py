@@ -1,5 +1,14 @@
-"""
-Tune prediction parameters against manual PFT instance masks.
+"""Tune prediction parameters against manual PFT instance masks.
+
+The script evaluates a family-specific parameter grid and ranks settings by
+mean instance F1 at IoU 0.5, followed by semantic Dice and IoU. It does not
+retrain the network and it never renormalizes the prepared input.
+
+Results are saved below::
+
+    models/segmentation/<family>/<dataset>/<source_mode>/tuning/<model>/
+        parameter_tuning.csv
+        best_parameters.json
 
 Examples
 --------

@@ -20,6 +20,9 @@ Prepared outputs are float32 OME-Zarr arrays in [0, 1] and are stored below::
 
     results/segmentation_inputs/<dataset>/<source_mode>/<sample>/
         segmentation_input.ome.zarr
+        preview_raw.png
+        preview_normalized.png
+        preview_comparison.png
 
 Manual instance masks are stored separately below::
 
@@ -35,6 +38,7 @@ from typing import Any, Iterable, Literal, Sequence
 import json
 
 import numpy as np
+from PIL import Image
 
 from PFT.core_prog_parts.common_paths import find_project_root, normalize_dataset_name
 from PFT.core_prog_parts.decoder_omezar import ensure_czyx, load_ome_zarr
@@ -95,6 +99,9 @@ class PreparedSegmentationInput:
     intensity_source_zarr: Path
     mask_zarr: Path | None
     output_zarr: Path
+    preview_raw_png: Path
+    preview_normalized_png: Path
+    preview_comparison_png: Path
     source_axes: str
     output_axes: str
     source_dtype: str
@@ -726,6 +733,88 @@ def _load_mip_mask(
     return (mask > 0).astype(np.uint8), "yx"
 
 
+
+def _normalize_plane_for_preview(plane: np.ndarray) -> np.ndarray:
+    """Convert one 2D numerical plane to uint8 for visual inspection only."""
+    array = np.asarray(plane, dtype=np.float32)
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+        return np.zeros(array.shape, dtype=np.uint8)
+    low = float(np.percentile(finite, 1.0))
+    high = float(np.percentile(finite, 99.8))
+    if not np.isfinite(low) or not np.isfinite(high) or high <= low:
+        low = float(np.min(finite))
+        high = float(np.max(finite))
+    if high <= low:
+        return np.zeros(array.shape, dtype=np.uint8)
+    scaled = np.clip((array - low) / (high - low), 0.0, 1.0)
+    return np.round(scaled * 255.0).astype(np.uint8)
+
+
+def _render_preview_rgb(image: np.ndarray, axes: str, dataset: str | None = None) -> np.ndarray:
+    """Render one numerical image to an RGB preview for PNG export."""
+    array = np.asarray(image)
+    axes = str(axes).lower()
+    if array.ndim == 2 or axes == 'yx':
+        gray = _normalize_plane_for_preview(array)
+        return np.stack([gray, gray, gray], axis=-1)
+
+    if 'c' not in axes:
+        raise ValueError(f"Preview rendering expected YX or explicit C axis, received {axes!r}")
+
+    c_index = axes.index('c')
+    moved = np.moveaxis(array, c_index, -1)
+    channels = moved.shape[-1]
+
+    if dataset == '2d_wga_dapi' and channels >= 2:
+        blue = _normalize_plane_for_preview(moved[..., 0])
+        green = _normalize_plane_for_preview(moved[..., 1])
+        red = np.zeros_like(blue, dtype=np.uint8)
+        return np.stack([red, green, blue], axis=-1)
+
+    if channels == 1:
+        gray = _normalize_plane_for_preview(moved[..., 0])
+        return np.stack([gray, gray, gray], axis=-1)
+
+    if channels >= 3:
+        red = _normalize_plane_for_preview(moved[..., 0])
+        green = _normalize_plane_for_preview(moved[..., 1])
+        blue = _normalize_plane_for_preview(moved[..., 2])
+        return np.stack([red, green, blue], axis=-1)
+
+    gray = _normalize_plane_for_preview(moved[..., 0])
+    return np.stack([gray, gray, gray], axis=-1)
+
+
+def _save_preview_pngs(
+    output_dir: Path,
+    *,
+    raw_image: np.ndarray,
+    raw_axes: str,
+    normalized_image: np.ndarray,
+    normalized_axes: str,
+    dataset: str,
+) -> tuple[Path, Path, Path]:
+    """Save raw, normalized, and side-by-side comparison previews."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    raw_rgb = _render_preview_rgb(raw_image, raw_axes, dataset=dataset)
+    normalized_rgb = _render_preview_rgb(normalized_image, normalized_axes, dataset=dataset)
+    if raw_rgb.shape[:2] != normalized_rgb.shape[:2]:
+        raise ValueError(
+            'Raw and normalized previews must share YX shape, received '
+            f'{raw_rgb.shape[:2]} and {normalized_rgb.shape[:2]}'
+        )
+    divider = np.full((raw_rgb.shape[0], 16, 3), 255, dtype=np.uint8)
+    comparison = np.concatenate([raw_rgb, divider, normalized_rgb], axis=1)
+
+    raw_path = output_dir / 'preview_raw.png'
+    normalized_path = output_dir / 'preview_normalized.png'
+    comparison_path = output_dir / 'preview_comparison.png'
+    Image.fromarray(raw_rgb, mode='RGB').save(raw_path)
+    Image.fromarray(normalized_rgb, mode='RGB').save(normalized_path)
+    Image.fromarray(comparison, mode='RGB').save(comparison_path)
+    return raw_path, normalized_path, comparison_path
+
 def prepare_one_segmentation_input(
     record: SegmentationSource,
     *,
@@ -829,6 +918,15 @@ def prepare_one_segmentation_input(
         coordinate_scale=coordinate_scale,
         extra_attrs={"pft_processing": processing},
     )
+    preview_raw_png, preview_normalized_png, preview_comparison_png = _save_preview_pngs(
+        Path(output).parent,
+        raw_image=intensity_array,
+        raw_axes=intensity_axes,
+        normalized_image=prepared,
+        normalized_axes=intensity_axes,
+        dataset=record.dataset,
+    )
+
     report = {
         "record": asdict(record),
         "processing": processing,
@@ -844,6 +942,9 @@ def prepare_one_segmentation_input(
         "output_max": float(np.max(prepared)),
         "output_nonzero": int(np.count_nonzero(prepared)),
         "mask_pixels": int(np.count_nonzero(mask_array)) if mask_array is not None else None,
+        "preview_raw_png": str(preview_raw_png),
+        "preview_normalized_png": str(preview_normalized_png),
+        "preview_comparison_png": str(preview_comparison_png),
     }
     report_path = Path(output).parent / "segmentation_input_report.json"
     report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
@@ -856,6 +957,9 @@ def prepare_one_segmentation_input(
         intensity_source_zarr=record.intensity_source_zarr,
         mask_zarr=record.mask_zarr,
         output_zarr=Path(output),
+        preview_raw_png=preview_raw_png,
+        preview_normalized_png=preview_normalized_png,
+        preview_comparison_png=preview_comparison_png,
         source_axes=source_axes,
         output_axes=intensity_axes,
         source_dtype=source_dtype,

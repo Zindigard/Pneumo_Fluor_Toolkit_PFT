@@ -1,8 +1,8 @@
-"""
-Compatibility terminal entry point for StarDist prediction.
+"""Compatibility terminal entry point for StarDist prediction.
 
 This script delegates to :mod:`run_segmentation_model` and fixes the model
-family to ``stardist``. 
+family to ``stardist``. The prepared input is supplied directly without a
+second percentile normalization.
 """
 
 from __future__ import annotations
