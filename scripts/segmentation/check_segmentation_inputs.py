@@ -12,17 +12,6 @@ The checker can be run before or after input preparation. It verifies:
 * manual training masks exist below ``results/training_files/segmentation``;
 * training masks are integer instance labels rather than only binary foreground;
 * one random sample is visualized as raw data and prepared normalized input.
-
-Missing manual masks are warnings, not fatal errors, because the checker is also
-used before Napari annotation. The visual report is written as HTML and contains
-two PNG images for one randomly selected sample: the raw source and the saved
-normalized segmentation input. Raw data are display-scaled only for viewing; the
-underlying raw values are not modified.
-
-Examples
---------
-Interactive::
-
     python scripts/segmentation/check_segmentation_inputs.py
 
 Check all WGA-DAPI inputs::
@@ -54,6 +43,7 @@ import numpy as np
 import tifffile as tiff
 
 SCRIPT_FILE = Path(__file__).resolve()
+CHECKER_VERSION = "2026-07-31-v3-single-channel-fix"
 
 
 def _project_root() -> Path:
@@ -71,6 +61,10 @@ from PFT.core_prog_parts.decoder_omezar import load_ome_zarr  # noqa: E402
 from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: E402
     SOURCE_MODES_BY_DATASET,
     SUPPORTED_DATASETS,
+    _load_mip_mask,
+    _load_projection_mip,
+    _processing_attrs,
+    create_segmentation_input,
     discover_segmentation_sources,
 )
 
@@ -155,6 +149,52 @@ def _add(
     message: str,
 ) -> None:
     issues.append({"severity": severity, "check": check, "message": message})
+
+
+def _channel_count(info: dict[str, Any]) -> int:
+    """Return the numerical channel count, treating YX as one channel."""
+    size = _axis_size(info, "c")
+    return 1 if size is None else int(size)
+
+
+def _compare_channel_count(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    issues: list[dict[str, str]],
+    *,
+    check_prefix: str,
+) -> None:
+    """Compare channels while accepting an omitted singleton C axis."""
+    left_channels = _channel_count(left)
+    right_channels = _channel_count(right)
+    if left_channels != right_channels:
+        _add(
+            issues,
+            "FAIL",
+            f"{check_prefix}_channel_count",
+            f"Numerical channel count differs: {left_channels} versus {right_channels} "
+            f"(axes {left['axes']} versus {right['axes']})",
+        )
+
+
+def _check_expected_channels(
+    info: dict[str, Any],
+    dataset: str,
+    issues: list[dict[str, str]],
+    *,
+    check_prefix: str,
+) -> None:
+    """Check the known channel structure of each independent dataset."""
+    expected = 2 if dataset == "2d_wga_dapi" else 1
+    observed = _channel_count(info)
+    if observed != expected:
+        _add(
+            issues,
+            "FAIL",
+            f"{check_prefix}_expected_channels",
+            f"{dataset} expects {expected} numerical channel(s), received {observed} "
+            f"with axes {info['axes']}",
+        )
 
 
 def _compare_named_axes(
@@ -419,6 +459,41 @@ def _save_preview_image(
     plt.close(figure)
 
 
+def _build_unsaved_normalized_preview(record: Any) -> tuple[np.ndarray, str]:
+    """Build the exact normalize-then-mask input in memory without saving data."""
+    if record.dataset == "3d_mip" and record.source_mode in {"raw_masked", "deconv_masked"}:
+        intensity, intensity_axes, _ = _load_projection_mip(record.intensity_source_zarr)
+        if record.mask_zarr is None:
+            raise FileNotFoundError("Masked MIP has no resolved U-Net mask")
+        processing = _processing_attrs(record.source_zarr)
+        target_slice = processing.get("target_slice_1based_for_qc_and_mask")
+        mask, mask_axes = _load_mip_mask(
+            record.mask_zarr,
+            target_slice_1based=int(target_slice) if target_slice is not None else None,
+            expected_yx=tuple(int(value) for value in intensity.shape[-2:]),
+        )
+    else:
+        intensity, intensity_axes = load_ome_zarr(
+            record.intensity_source_zarr,
+            level=0,
+            as_numpy=True,
+        )
+        intensity = np.asarray(intensity)
+        mask = None
+        mask_axes = None
+        if record.mask_zarr is not None:
+            mask, mask_axes = load_ome_zarr(record.mask_zarr, level=0, as_numpy=True)
+            mask = np.asarray(mask)
+
+    normalized, _ = create_segmentation_input(
+        np.asarray(intensity),
+        str(intensity_axes).lower(),
+        predicted_mask=mask,
+        mask_axes=str(mask_axes).lower() if mask_axes is not None else None,
+    )
+    return normalized, str(intensity_axes).lower()
+
+
 def _create_random_visualization(
     records: Sequence[Any],
     report_root: Path,
@@ -455,15 +530,30 @@ def _create_random_visualization(
     )
 
     normalized_available = record.output_zarr.is_dir()
+    normalized_preview_generated = False
     normalized_axes = ""
     normalized_selection = ""
     normalized_dtype = ""
     normalized_shape: list[int] | None = None
-    if normalized_available:
-        normalized_cyx, normalized_axes, normalized_selection = _load_preview_cyx(
-            record.output_zarr,
-            dataset=dataset,
-        )
+    normalized_source = "saved segmentation_input.ome.zarr"
+    try:
+        if normalized_available:
+            normalized_cyx, normalized_axes, normalized_selection = _load_preview_cyx(
+                record.output_zarr,
+                dataset=dataset,
+            )
+            title = "Prepared normalized segmentation input"
+        else:
+            normalized_array, normalized_axes = _build_unsaved_normalized_preview(record)
+            normalized_cyx, normalized_selection = _reduce_to_preview_cyx(
+                normalized_array,
+                normalized_axes,
+                dataset=dataset,
+            )
+            normalized_preview_generated = True
+            normalized_source = "in-memory preview; no OME-Zarr was written"
+            title = "Prospective normalized segmentation input"
+
         normalized_dtype = str(normalized_cyx.dtype)
         normalized_shape = [int(value) for value in normalized_cyx.shape]
         normalized_rgb = _channels_to_rgb(
@@ -474,21 +564,23 @@ def _create_random_visualization(
         _save_preview_image(
             normalized_png,
             normalized_rgb,
-            title="Prepared normalized segmentation input",
+            title=title,
             subtitle=(
                 f"Sample: {record.sample_key} | dtype={normalized_cyx.dtype} | "
-                f"axes={normalized_axes} | {normalized_selection} | actual [0,1] values"
+                f"axes={normalized_axes} | {normalized_selection} | actual [0,1] values | "
+                f"{normalized_source}"
             ),
         )
-    else:
+    except Exception as exc:
+        normalized_source = f"preview failed: {type(exc).__name__}: {exc}"
         _save_preview_image(
             normalized_png,
             None,
-            title="Prepared normalized segmentation input",
+            title="Normalized segmentation input preview",
             subtitle=f"Sample: {record.sample_key}",
             placeholder=(
-                "segmentation_input.ome.zarr has not been created.\n"
-                "Run prepare_segmentation_inputs.py and repeat this check."
+                "Normalized preview could not be generated.\n"
+                f"{type(exc).__name__}: {exc}"
             ),
         )
 
@@ -506,11 +598,16 @@ def _create_random_visualization(
         "normalized_input_zarr": str(record.output_zarr),
         "normalized_png": str(normalized_png),
         "normalized_available": normalized_available,
+        "normalized_preview_generated": normalized_preview_generated,
+        "normalized_source": normalized_source,
         "normalized_axes": normalized_axes,
         "normalized_selection": normalized_selection,
         "normalized_dtype": normalized_dtype,
         "normalized_shape_cyx": normalized_shape,
-        "normalized_display_note": "Saved [0,1] values are displayed without additional normalization",
+        "normalized_display_note": (
+            "The [0,1] segmentation input is displayed without additional normalization; "
+            "it is read from disk when available or calculated in memory for the pre-check"
+        ),
     }
 
 
@@ -558,8 +655,24 @@ def audit_record(record) -> dict[str, Any]:
             "Raw reference OME-Zarr could not be resolved for dtype/metadata comparison",
         )
 
+    if source_info:
+        _check_expected_channels(
+            source_info,
+            record.dataset,
+            issues,
+            check_prefix="source",
+        )
+    if intensity_info:
+        _check_expected_channels(
+            intensity_info,
+            record.dataset,
+            issues,
+            check_prefix="intensity_source",
+        )
+
     if source_info and raw_info:
-        _compare_named_axes(source_info, raw_info, ("c", "y", "x"), issues, check_prefix="source_raw")
+        _compare_named_axes(source_info, raw_info, ("y", "x"), issues, check_prefix="source_raw")
+        _compare_channel_count(source_info, raw_info, issues, check_prefix="source_raw")
         _compare_yx_scale(source_info, raw_info, issues, check_prefix="source_raw")
         if record.source_mode in {"filtered_unet", "raw_unmasked", "raw_masked"}:
             if source_info["dtype"] != raw_info["dtype"]:
@@ -580,7 +693,8 @@ def audit_record(record) -> dict[str, Any]:
 
     if source_info and intensity_info:
         # The deconvolved intensity source is a CZYX volume while the saved source is a CYX MIP.
-        _compare_named_axes(source_info, intensity_info, ("c", "y", "x"), issues, check_prefix="source_intensity")
+        _compare_named_axes(source_info, intensity_info, ("y", "x"), issues, check_prefix="source_intensity")
+        _compare_channel_count(source_info, intensity_info, issues, check_prefix="source_intensity")
 
     if record.output_zarr.is_dir():
         try:
@@ -604,7 +718,8 @@ def audit_record(record) -> dict[str, Any]:
             if output_info.get("nonzero", 0) == 0:
                 _add(issues, "FAIL", "prepared_nonzero", "Prepared input is completely black")
             if source_info:
-                _compare_named_axes(output_info, source_info, ("c", "y", "x"), issues, check_prefix="prepared_source")
+                _compare_named_axes(output_info, source_info, ("y", "x"), issues, check_prefix="prepared_source")
+                _compare_channel_count(output_info, source_info, issues, check_prefix="prepared_source")
                 _compare_yx_scale(output_info, source_info, issues, check_prefix="prepared_source")
             processing = output_info["attrs"].get("pft_processing", {})
             if processing.get("normalization_order") != "normalize_complete_source_then_apply_mask":
@@ -720,8 +835,12 @@ def _write_reports(
                 f"Raw PNG: {visualization['raw_png']}",
                 f"Normalized PNG: {visualization['normalized_png']}",
                 (
-                    "Normalized input available: "
+                    "Saved normalized input available: "
                     f"{visualization['normalized_available']}"
+                ),
+                (
+                    "In-memory normalized preview generated: "
+                    f"{visualization.get('normalized_preview_generated', False)}"
                 ),
                 "",
             ]
@@ -755,12 +874,18 @@ def _write_reports(
     if visualization is not None:
         raw_name = Path(visualization["raw_png"]).name
         normalized_name = Path(visualization["normalized_png"]).name
-        normalized_note = (
-            "The right image shows the saved normalized segmentation input without "
-            "additional display normalization."
-            if visualization["normalized_available"]
-            else "The prepared normalized input was missing, so the right image contains an instruction placeholder."
-        )
+        if visualization["normalized_available"]:
+            normalized_note = (
+                "The right image shows the saved normalized segmentation input without "
+                "additional display normalization."
+            )
+        elif visualization.get("normalized_preview_generated"):
+            normalized_note = (
+                "The prepared OME-Zarr is not created yet. The right image was calculated "
+                "in memory using the same normalize-then-mask procedure and was not saved as data."
+            )
+        else:
+            normalized_note = "The normalized preview could not be generated."
         visualization_html = f"""
         <h2>Random visual check</h2>
         <p><strong>Sample:</strong> {html.escape(visualization['sample_key'])}</p>
@@ -865,6 +990,8 @@ def main() -> int:
             parser.error(f"Unknown sample key: {args.sample}")
 
     print("\nChecking segmentation workflow inputs")
+    print(f"Checker version: {CHECKER_VERSION}")
+    print(f"Script path:     {SCRIPT_FILE}")
     print("=" * 72)
     print(f"Dataset:       {dataset}")
     print(f"Source mode:   {source_mode}")
