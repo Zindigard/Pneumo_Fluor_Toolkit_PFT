@@ -1,5 +1,4 @@
-"""
- PFT instance-segmentation inputs, provenance, metadata, and masks.
+"""Audit PFT instance-segmentation inputs, provenance, metadata, and masks.
 
 The checker can be run before or after input preparation. It verifies:
 
@@ -14,7 +13,17 @@ The checker can be run before or after input preparation. It verifies:
 * training masks are integer instance labels rather than only binary foreground;
 * one random sample is visualized as raw data and prepared normalized input.
 
- python scripts/segmentation/check_segmentation_inputs.py
+Missing manual masks are warnings, not fatal errors, because the checker is also
+used before Napari annotation. The visual report is written as HTML and contains
+two PNG images for one randomly selected sample: the raw source and the saved
+normalized segmentation input. Raw data are display-scaled only for viewing; the
+underlying raw values are not modified.
+
+Examples
+--------
+Interactive::
+
+    python scripts/segmentation/check_segmentation_inputs.py
 
 Check all WGA-DAPI inputs::
 
