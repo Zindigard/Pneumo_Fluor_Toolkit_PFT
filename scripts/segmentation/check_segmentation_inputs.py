@@ -5,13 +5,26 @@ The checker can be run before or after input preparation. It verifies:
 * required filtered images, MIPs, and U-Net prediction masks exist;
 * the prepared input, when present, is finite float32 in [0, 1];
 * the prepared input is not completely black;
-* spatial dimensions and channel counts agree with the quantitative source;
+* spatial dimensions and effective channel counts agree with the quantitative source;
+* ``2d_time`` always uses C=0 and ignores any additional stored channel;
 * raw 2D and raw-MIP products preserve the original raw dtype;
 * float32 is accepted for Richardson-Lucy-deconvolved MIPs;
 * OME-NGFF axes and physical Y/X coordinate scales remain consistent;
 * manual training masks exist below ``results/training_files/segmentation``;
 * training masks are integer instance labels rather than only binary foreground;
 * one random sample is visualized as raw data and prepared normalized input.
+
+Missing manual masks are warnings, not fatal errors, because the checker is also
+used before Napari annotation. The visual report is written as HTML and contains
+two PNG images for one randomly selected sample: the raw source and either the
+saved normalized segmentation input or an in-memory normalize-then-mask preview
+when the prepared OME-Zarr has not yet been created. Raw data are display-scaled only for viewing; the
+underlying raw values are not modified.
+
+Examples
+--------
+Interactive::
+
     python scripts/segmentation/check_segmentation_inputs.py
 
 Check all WGA-DAPI inputs::
@@ -43,7 +56,7 @@ import numpy as np
 import tifffile as tiff
 
 SCRIPT_FILE = Path(__file__).resolve()
-CHECKER_VERSION = "2026-07-31-v3-single-channel-fix"
+CHECKER_VERSION = "2026-07-31-v4-2d-time-channel0"
 
 
 def _project_root() -> Path:
@@ -66,6 +79,7 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
     _processing_attrs,
     create_segmentation_input,
     discover_segmentation_sources,
+    select_dataset_channels,
 )
 
 
@@ -152,9 +166,17 @@ def _add(
 
 
 def _channel_count(info: dict[str, Any]) -> int:
-    """Return the numerical channel count, treating YX as one channel."""
+    """Return the stored numerical channel count, treating YX as one channel."""
     size = _axis_size(info, "c")
     return 1 if size is None else int(size)
+
+
+def _effective_channel_count(info: dict[str, Any], dataset: str) -> int:
+    """Return the channel count after applying the dataset channel policy."""
+    observed = _channel_count(info)
+    if dataset == "2d_time":
+        return 1 if observed >= 1 else 0
+    return observed
 
 
 def _compare_channel_count(
@@ -162,18 +184,19 @@ def _compare_channel_count(
     right: dict[str, Any],
     issues: list[dict[str, str]],
     *,
+    dataset: str,
     check_prefix: str,
 ) -> None:
-    """Compare channels while accepting an omitted singleton C axis."""
-    left_channels = _channel_count(left)
-    right_channels = _channel_count(right)
+    """Compare effective channels after applying the dataset channel policy."""
+    left_channels = _effective_channel_count(left, dataset)
+    right_channels = _effective_channel_count(right, dataset)
     if left_channels != right_channels:
         _add(
             issues,
             "FAIL",
             f"{check_prefix}_channel_count",
-            f"Numerical channel count differs: {left_channels} versus {right_channels} "
-            f"(axes {left['axes']} versus {right['axes']})",
+            f"Effective numerical channel count differs: {left_channels} versus "
+            f"{right_channels} (stored axes {left['axes']} versus {right['axes']})",
         )
 
 
@@ -184,9 +207,19 @@ def _check_expected_channels(
     *,
     check_prefix: str,
 ) -> None:
-    """Check the known channel structure of each independent dataset."""
-    expected = 2 if dataset == "2d_wga_dapi" else 1
+    """Validate stored channels under the defined dataset-specific policy."""
     observed = _channel_count(info)
+    if dataset == "2d_time":
+        if observed < 1:
+            _add(
+                issues,
+                "FAIL",
+                f"{check_prefix}_expected_channels",
+                "2d_time contains no usable numerical channel",
+            )
+        return
+
+    expected = 2 if dataset == "2d_wga_dapi" else 1
     if observed != expected:
         _add(
             issues,
@@ -485,13 +518,18 @@ def _build_unsaved_normalized_preview(record: Any) -> tuple[np.ndarray, str]:
             mask, mask_axes = load_ome_zarr(record.mask_zarr, level=0, as_numpy=True)
             mask = np.asarray(mask)
 
-    normalized, _ = create_segmentation_input(
+    selected_intensity, selected_axes, _ = select_dataset_channels(
         np.asarray(intensity),
         str(intensity_axes).lower(),
+        record.dataset,
+    )
+    normalized, _ = create_segmentation_input(
+        selected_intensity,
+        selected_axes,
         predicted_mask=mask,
         mask_axes=str(mask_axes).lower() if mask_axes is not None else None,
     )
-    return normalized, str(intensity_axes).lower()
+    return normalized, selected_axes
 
 
 def _create_random_visualization(
@@ -672,7 +710,7 @@ def audit_record(record) -> dict[str, Any]:
 
     if source_info and raw_info:
         _compare_named_axes(source_info, raw_info, ("y", "x"), issues, check_prefix="source_raw")
-        _compare_channel_count(source_info, raw_info, issues, check_prefix="source_raw")
+        _compare_channel_count(source_info, raw_info, issues, dataset=record.dataset, check_prefix="source_raw")
         _compare_yx_scale(source_info, raw_info, issues, check_prefix="source_raw")
         if record.source_mode in {"filtered_unet", "raw_unmasked", "raw_masked"}:
             if source_info["dtype"] != raw_info["dtype"]:
@@ -694,7 +732,7 @@ def audit_record(record) -> dict[str, Any]:
     if source_info and intensity_info:
         # The deconvolved intensity source is a CZYX volume while the saved source is a CYX MIP.
         _compare_named_axes(source_info, intensity_info, ("y", "x"), issues, check_prefix="source_intensity")
-        _compare_channel_count(source_info, intensity_info, issues, check_prefix="source_intensity")
+        _compare_channel_count(source_info, intensity_info, issues, dataset=record.dataset, check_prefix="source_intensity")
 
     if record.output_zarr.is_dir():
         try:
@@ -719,7 +757,7 @@ def audit_record(record) -> dict[str, Any]:
                 _add(issues, "FAIL", "prepared_nonzero", "Prepared input is completely black")
             if source_info:
                 _compare_named_axes(output_info, source_info, ("y", "x"), issues, check_prefix="prepared_source")
-                _compare_channel_count(output_info, source_info, issues, check_prefix="prepared_source")
+                _compare_channel_count(output_info, source_info, issues, dataset=record.dataset, check_prefix="prepared_source")
                 _compare_yx_scale(output_info, source_info, issues, check_prefix="prepared_source")
             processing = output_info["attrs"].get("pft_processing", {})
             if processing.get("normalization_order") != "normalize_complete_source_then_apply_mask":
@@ -736,6 +774,22 @@ def audit_record(record) -> dict[str, Any]:
                     "model_normalization_disabled",
                     "Prepared metadata must state that model-side normalization is disabled",
                 )
+            if record.dataset == "2d_time":
+                channel_selection = processing.get("channel_selection", {})
+                if channel_selection.get("policy") != "use_channel_0_only":
+                    _add(
+                        issues,
+                        "FAIL",
+                        "prepared_channel_policy",
+                        "2d_time prepared input must record the use_channel_0_only policy",
+                    )
+                elif channel_selection.get("selected_channels") != [0]:
+                    _add(
+                        issues,
+                        "FAIL",
+                        "prepared_selected_channel",
+                        "2d_time prepared input must record selected channel [0]",
+                    )
         except Exception as exc:
             _add(issues, "FAIL", "prepared_readable", f"Cannot validate prepared input: {exc}")
     else:
@@ -769,6 +823,11 @@ def audit_record(record) -> dict[str, Any]:
         "prepared_input_zarr": str(record.output_zarr),
         "training_mask": str(record.training_mask),
         "source_dtype": source_info["dtype"] if source_info else "",
+        "stored_source_channels": _channel_count(source_info) if source_info else "",
+        "effective_segmentation_channels": (
+            _effective_channel_count(source_info, record.dataset) if source_info else ""
+        ),
+        "channel_policy": "use_channel_0_only" if record.dataset == "2d_time" else "retain_defined_channels",
         "raw_dtype": raw_info["dtype"] if raw_info else "",
         "prepared_dtype": output_info["dtype"] if output_info else "",
         "prepared_min": output_info.get("minimum", "") if output_info else "",
@@ -996,6 +1055,10 @@ def main() -> int:
     print(f"Dataset:       {dataset}")
     print(f"Source mode:   {source_mode}")
     print(f"Samples:       {len(records)}")
+    if dataset == "2d_time":
+        print("Channel policy: use C=0 only; additional channels are ignored")
+    else:
+        print("Channel policy: retain the dataset-defined numerical channels")
     print("Mask root:     results/training_files/segmentation")
 
     rows = []

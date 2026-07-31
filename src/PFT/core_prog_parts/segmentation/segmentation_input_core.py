@@ -1,5 +1,20 @@
-"""
-Prepare and validate quantitative inputs for downstream instance segmentation.
+"""Prepare and validate quantitative inputs for downstream instance segmentation.
+
+This module defines one preprocessing contract for Cellpose, Omnipose, and
+StarDist. It supports the two independent 2D datasets and the 3D-to-2D MIP
+products used by the PFT project.
+
+The critical rule for U-Net-masked data is::
+
+    segmentation_input = normalize(full_intensity_source) * foreground_mask
+
+Percentiles are calculated independently for each numerical channel from the
+complete, non-sparse intensity source. The mask is applied only after
+normalization. A sparse ``foreground_filtered.ome.zarr`` or masked MIP is never
+renormalized directly.
+
+For ``2d_time``, numerical channel 0 is always selected before normalization;
+any additional stored channel is ignored.
 
 Prepared outputs are float32 OME-Zarr arrays in [0, 1] and are stored below::
 
@@ -400,6 +415,110 @@ def discover_segmentation_sources(
     return records
 
 
+def select_dataset_channels(
+    image: Any,
+    axes: str,
+    dataset: str,
+) -> tuple[np.ndarray, str, dict[str, Any]]:
+    """Apply the numerical-channel policy defined for one PFT dataset.
+
+    ``2d_time`` contains HADA in numerical channel 0. Some source OME-Zarr
+    stores also contain a second channel, but that channel is not part of the
+    2d_time segmentation workflow. Therefore, channel 0 is selected and the C
+    axis is removed before normalization and mask application.
+
+    ``2d_wga_dapi`` retains its two numerical channels: DAPI at C=0 and WGA at
+    C=1. MIP inputs are not modified by this helper.
+    """
+    dataset = normalize_dataset_name(dataset)
+    current_axes = str(axes).lower()
+    array = image
+    if len(current_axes) != int(array.ndim):
+        raise ValueError(
+            f"Axes {current_axes!r} do not match image shape {tuple(array.shape)}"
+        )
+
+    metadata: dict[str, Any] = {
+        "dataset": dataset,
+        "input_axes": current_axes,
+        "input_shape": [int(value) for value in array.shape],
+        "policy": "retain_all_numerical_channels",
+        "selected_channels": None,
+        "ignored_channels": [],
+    }
+
+    if dataset == "2d_time":
+        metadata["policy"] = "use_channel_0_only"
+        if "c" not in current_axes:
+            metadata["selected_channels"] = [0]
+            metadata["input_channel_count"] = 1
+            metadata["output_axes"] = current_axes
+            metadata["output_shape"] = [int(value) for value in array.shape]
+            return np.asarray(array), current_axes, metadata
+
+        channel_axis = current_axes.index("c")
+        channel_count = int(array.shape[channel_axis])
+        if channel_count < 1:
+            raise ValueError("2d_time source contains no numerical channel")
+
+        selection: list[Any] = [slice(None)] * int(array.ndim)
+        selection[channel_axis] = 0
+        selected = np.asarray(array[tuple(selection)])
+        selected_axes = current_axes[:channel_axis] + current_axes[channel_axis + 1 :]
+        metadata.update(
+            {
+                "input_channel_count": channel_count,
+                "selected_channels": [0],
+                "ignored_channels": list(range(1, channel_count)),
+                "output_axes": selected_axes,
+                "output_shape": [int(value) for value in selected.shape],
+            }
+        )
+        return selected, selected_axes, metadata
+
+    if dataset == "2d_wga_dapi":
+        if "c" not in current_axes:
+            raise ValueError(
+                "2d_wga_dapi requires an explicit C axis with DAPI at C=0 and WGA at C=1"
+            )
+        channel_count = int(array.shape[current_axes.index("c")])
+        if channel_count != 2:
+            raise ValueError(
+                f"2d_wga_dapi requires exactly 2 numerical channels, received {channel_count}"
+            )
+        metadata.update(
+            {
+                "input_channel_count": channel_count,
+                "selected_channels": [0, 1],
+                "output_axes": current_axes,
+                "output_shape": [int(value) for value in array.shape],
+            }
+        )
+        return np.asarray(array), current_axes, metadata
+
+    metadata["output_axes"] = current_axes
+    metadata["output_shape"] = [int(value) for value in array.shape]
+    return np.asarray(array), current_axes, metadata
+
+
+def _coordinate_scale_after_channel_selection(
+    scale: Sequence[float] | None,
+    input_axes: str,
+    output_axes: str,
+) -> list[float] | None:
+    """Keep coordinate-scale metadata aligned after dropping a C axis."""
+    if scale is None:
+        return None
+    values = [float(value) for value in scale]
+    input_axes = str(input_axes).lower()
+    output_axes = str(output_axes).lower()
+    if len(values) == len(output_axes):
+        return values
+    if len(values) == len(input_axes) and "c" in input_axes and "c" not in output_axes:
+        channel_axis = input_axes.index("c")
+        return values[:channel_axis] + values[channel_axis + 1 :]
+    return None
+
 def _normalization_slices(shape: Sequence[int], axes: str) -> Iterable[tuple[Any, ...]]:
     """Yield one YX plane per frame and numerical channel."""
     axes = axes.lower()
@@ -619,6 +738,10 @@ def prepare_one_segmentation_input(
     source_dtype = str(source_array.dtype)
     mask_array: np.ndarray | None = None
     mask_axes: str | None = None
+    channel_selection: dict[str, Any] = {
+        "dataset": record.dataset,
+        "policy": "not_applied",
+    }
 
     if record.dataset == "3d_mip" and record.source_mode in {"raw_masked", "deconv_masked"}:
         intensity_array, intensity_axes, intensity_source_dtype = _load_projection_mip(
@@ -636,11 +759,31 @@ def prepare_one_segmentation_input(
             expected_yx=tuple(int(value) for value in intensity_array.shape[-2:]),
         )
         coordinate_scale = _coordinate_scale(record.source_zarr)
+        channel_selection = {
+            "dataset": record.dataset,
+            "policy": "retain_all_numerical_channels",
+            "selected_channels": None,
+            "ignored_channels": [],
+            "input_axes": intensity_axes,
+            "output_axes": intensity_axes,
+            "input_shape": [int(value) for value in intensity_array.shape],
+            "output_shape": [int(value) for value in intensity_array.shape],
+        }
     else:
         intensity_array = source_array
         intensity_axes = source_axes
         intensity_source_dtype = str(intensity_array.dtype)
-        coordinate_scale = _coordinate_scale(record.source_zarr)
+        original_intensity_axes = intensity_axes
+        intensity_array, intensity_axes, channel_selection = select_dataset_channels(
+            intensity_array,
+            intensity_axes,
+            record.dataset,
+        )
+        coordinate_scale = _coordinate_scale_after_channel_selection(
+            _coordinate_scale(record.source_zarr),
+            original_intensity_axes,
+            intensity_axes,
+        )
         if record.mask_zarr is not None:
             mask_array, mask_axes = _load_array(record.mask_zarr)
 
@@ -662,6 +805,7 @@ def prepare_one_segmentation_input(
         "intensity_source_omezarr": str(record.intensity_source_zarr),
         "predicted_mask_omezarr": str(record.mask_zarr) if record.mask_zarr else None,
         "normalization_order": "normalize_complete_source_then_apply_mask",
+        "channel_selection": channel_selection,
         "normalization": {
             "method": "percentile_linear_clip",
             "p_low": float(p_low),
@@ -689,6 +833,7 @@ def prepare_one_segmentation_input(
         "record": asdict(record),
         "processing": processing,
         "normalization_planes": normalization_records,
+        "channel_selection": channel_selection,
         "source_axes": source_axes,
         "source_dtype": source_dtype,
         "intensity_axes": intensity_axes,

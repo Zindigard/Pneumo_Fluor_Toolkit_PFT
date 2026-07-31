@@ -11,6 +11,7 @@ from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
 )
 from PFT.core_prog_parts.segmentation.segmentation_input_core import (
     create_segmentation_input,
+    select_dataset_channels,
 )
 
 
@@ -61,3 +62,29 @@ def test_instance_metrics_for_exact_match() -> None:
     assert semantic_dice(reference, reference) == 1.0
     assert semantic_iou(reference, reference) == 1.0
     assert instance_f1(reference, reference) == (1.0, 2, 0, 0)
+
+
+def test_2d_time_always_selects_channel_zero() -> None:
+    source = np.zeros((2, 8, 10), dtype=np.uint16)
+    source[0] = 125
+    source[1] = 5000
+
+    selected, axes, metadata = select_dataset_channels(source, "cyx", "2d_time")
+
+    assert axes == "yx"
+    assert selected.shape == (8, 10)
+    assert np.array_equal(selected, source[0])
+    assert metadata["policy"] == "use_channel_0_only"
+    assert metadata["selected_channels"] == [0]
+    assert metadata["ignored_channels"] == [1]
+
+
+def test_2d_time_yx_is_already_channel_zero() -> None:
+    source = np.arange(7 * 9, dtype=np.uint16).reshape(7, 9)
+
+    selected, axes, metadata = select_dataset_channels(source, "yx", "2d_time")
+
+    assert axes == "yx"
+    assert np.array_equal(selected, source)
+    assert metadata["selected_channels"] == [0]
+    assert metadata["ignored_channels"] == []

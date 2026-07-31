@@ -1,5 +1,36 @@
-"""
-Create normalized OME-Zarr inputs for downstream instance segmentation.
+"""Create normalized OME-Zarr inputs for downstream instance segmentation.
+
+The script keeps each biological dataset and MIP source mode independent.
+
+Supported inputs
+----------------
+``2d_time`` and ``2d_wga_dapi``
+    Uses the intensity-preserving local-threshold image together with the
+    matching U-Net ``pred_mask.ome.zarr``. For ``2d_time``, numerical channel 0
+    is always selected and any additional stored channel is ignored. The complete
+    selected image is normalized first and the U-Net mask is applied afterwards.
+
+``3d_mip``
+    Uses one of the already created 2D MIP products:
+
+    * ``raw_unmasked``
+    * ``raw_masked``
+    * ``deconv_masked``
+
+For masked MIPs, the script reconstructs the unmasked intensity projection from
+recorded provenance, normalizes that complete MIP, and only then reapplies the
+recorded 2.5D U-Net mask. It never renormalizes the sparse masked MIP directly.
+
+Outputs
+-------
+Each sample is saved as float32 in [0, 1] below::
+
+    results/segmentation_inputs/<dataset>/<source_mode>/<sample>/
+        segmentation_input.ome.zarr
+
+Examples
+--------
+Interactive::
 
     python scripts/segmentation/prepare_segmentation_inputs.py
 
@@ -127,6 +158,10 @@ def main() -> int:
     print(f"Source mode:         {source_mode}")
     print(f"Samples selected:    {len(records) if selected is None else 1}")
     print(f"Normalization:       P{args.p_low:g}-P{args.p_high:g}, per numerical channel")
+    if dataset == "2d_time":
+        print("Channel policy:       use C=0 only; ignore all additional channels")
+    else:
+        print("Channel policy:       retain the dataset-defined numerical channels")
     print("Mask order:          normalize complete source, then apply mask")
     print("Saved dtype/range:   float32, [0, 1]")
     print("Model normalization: must remain disabled")
