@@ -355,6 +355,11 @@ def _load_prediction_model(cfg: PredictionConfig):
     return StarDist2D.from_pretrained(model_value or "2D_versatile_fluo")
 
 
+
+def load_prediction_model(cfg: PredictionConfig):
+    """Load one pretrained or user-supplied prediction model for reuse."""
+    return _load_prediction_model(cfg)
+
 def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
     kwargs = {
         "diameter": cfg.diameter,
@@ -926,6 +931,7 @@ __all__ = [
     "instance_f1",
     "list_prepared_inputs",
     "load_instance_mask",
+    "load_prediction_model",
     "load_prepared_image",
     "predict_one",
     "run_prediction_dataset",
