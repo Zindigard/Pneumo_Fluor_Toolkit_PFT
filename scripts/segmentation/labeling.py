@@ -1,4 +1,5 @@
-"""Interactive manual labeling for PFT 2D and sparse 2.5D U-Net training.
+"""
+Interactive manual labeling for PFT 2D and sparse 2.5D U-Net training.
 
 The script supports two independent annotation workflows.
 

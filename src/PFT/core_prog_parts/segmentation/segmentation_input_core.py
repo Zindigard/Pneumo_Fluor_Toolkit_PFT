@@ -810,12 +810,137 @@ def _load_array(path: Path, level: int = 0) -> tuple[np.ndarray, str]:
     return np.asarray(array), str(axes).lower()
 
 
+def _declared_channel_count(path: Path) -> int | None:
+    """Return the channel count declared by a derived OME-Zarr store.
+
+    Legacy deconvolution products may contain a five-dimensional array whose
+    three fluorescence channels were stored under the ``t`` axis while ``c``
+    remained singleton. The metadata and the standard deconvolution directory
+    tag provide independent evidence for repairing that representation.
+    """
+    candidates: list[int] = []
+
+    try:
+        import zarr
+
+        root = zarr.open_group(str(path), mode="r")
+        attrs = dict(root.attrs)
+
+        omero = attrs.get("omero")
+        if isinstance(omero, dict):
+            channels = omero.get("channels")
+            if isinstance(channels, list) and channels:
+                candidates.append(len(channels))
+
+        processing = attrs.get("pft_processing")
+        if isinstance(processing, dict):
+            for key in ("iterations_by_channel", "channel_psf_mapping", "channel_display_colors"):
+                records = processing.get(key)
+                if isinstance(records, list) and records:
+                    candidates.append(len(records))
+    except Exception:
+        # Metadata evidence is optional. The path contract below remains
+        # available for legacy stores that cannot be opened directly by zarr.
+        pass
+
+    directory_name = path.parent.name
+    if "__iterB" in directory_name and "_G" in directory_name and "_R" in directory_name:
+        candidates.append(3)
+
+    positive = {int(value) for value in candidates if int(value) > 0}
+    if len(positive) == 1:
+        return positive.pop()
+    return None
+
+
+def _normalize_legacy_projection_axes(
+    array: Any,
+    axes: str,
+    path: Path,
+) -> tuple[Any, str]:
+    """Normalize legacy time/channel layouts without losing image data.
+
+    Supported repairs
+    -----------------
+    ``T=1``
+        Remove the redundant singleton time axis.
+
+    ``TCYX`` with shape ``(channels, z, y, x)``
+        Some legacy PFT deconvolution stores contain the correct numerical
+        CZYX array but expose the axis label TCYX. When the first dimension
+        matches the independently declared fluorescence-channel count and the
+        second dimension is a plausible Z stack, only the axis names are
+        corrected. The numerical array is not transposed.
+
+    singleton ``C`` with ``T=channels``
+        Repair legacy five-dimensional layouts such as CZTYX with shape
+        ``(1, z, channels, y, x)`` by removing singleton C and moving T to the
+        canonical channel position.
+
+    Genuine multi-time-point data remain an error because a temporal selection
+    policy is required before a two-dimensional MIP can be defined.
+    """
+    axes = str(axes).lower()
+    if "t" not in axes:
+        return array, axes
+
+    time_axis = axes.index("t")
+    time_count = int(array.shape[time_axis])
+    if time_count == 1:
+        return select_index_along_axis(array, axes, "t", 0)
+
+    declared_channel_count = _declared_channel_count(path)
+
+    # Legacy four-dimensional deconvolution output:
+    #   declared axes: TCYX
+    #   actual order:  CZYX
+    #   shape example: (3, 40, 2560, 2560)
+    # No transpose is required because the numerical order is already CZYX.
+    if axes == "tcyx" and int(array.ndim) == 4:
+        first_size = int(array.shape[0])
+        second_size = int(array.shape[1])
+        channel_evidence = (
+            declared_channel_count == first_size
+            if declared_channel_count is not None
+            else 1 <= first_size <= 4
+        )
+        plausible_z_stack = second_size > max(first_size, 4)
+        if channel_evidence and plausible_z_stack:
+            return array, "czyx"
+
+    channel_count = int(array.shape[axes.index("c")]) if "c" in axes else 1
+
+    # Legacy five-dimensional output with a singleton C axis and fluorescence
+    # channels incorrectly represented by T.
+    if channel_count == 1 and declared_channel_count == time_count:
+        if "c" in axes:
+            array, axes = select_index_along_axis(array, axes, "c", 0)
+
+        time_axis = axes.index("t")
+        permutation = [time_axis] + [
+            index for index in range(int(array.ndim)) if index != time_axis
+        ]
+        array = array.transpose(tuple(permutation))
+        axes = "c" + "".join(axis for axis in axes if axis != "t")
+        return array, axes
+
+    raise ValueError(
+        "MIP preparation found a multi-time-point projection source that "
+        "cannot be repaired safely. "
+        f"axes={axes!r}, shape={tuple(array.shape)}, T={time_count}, "
+        f"C={channel_count}, declared_channels={declared_channel_count}, "
+        f"path={path}. A genuine time series must be split or supplied with "
+        "an explicit time-point selection policy."
+    )
+
+
 def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
     """Load a portable CYX MIP or create one from a 3D projection source.
 
-    Legacy stores containing a singleton time axis, such as CZTYX or TCZYX,
-    are accepted by selecting T=0. Multiple time points are rejected because
-    silently selecting one would change the biological sample.
+    Canonical three-dimensional inputs use ``CZYX``. The loader also supports
+    legacy derived stores with a singleton time axis, legacy ``TCYX`` metadata
+    over numerically CZYX arrays, and legacy ``CZTYX`` products in which the
+    fluorescence channels were incorrectly represented by ``T``.
     """
     from PFT.core_prog_parts.segmentation.mip_3d_core import (
         maximum_intensity_projection_cyx,
@@ -833,17 +958,9 @@ def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
             f"axes={axes!r}, shape={tuple(array.shape)}, path={path}"
         )
 
-    if "t" in axes:
-        time_axis = axes.index("t")
-        time_count = int(array.shape[time_axis])
-        if time_count != 1:
-            raise ValueError(
-                "MIP preparation requires one 3D volume, but the projection "
-                f"source contains T={time_count} time points: {path}"
-            )
-        array, axes = select_index_along_axis(array, axes, "t", 0)
-
+    array, axes = _normalize_legacy_projection_axes(array, axes, path)
     source_dtype = str(np.dtype(array.dtype))
+
     if "z" in axes:
         array, axes = ensure_czyx(array, axes)
         mip = maximum_intensity_projection_cyx(array)
@@ -855,8 +972,8 @@ def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
         mip = np.asarray(array)[None, ...]
     else:
         raise ValueError(
-            "Expected a CYX portable MIP or a CZYX 3D source after singleton "
-            f"time-axis handling, received axes={axes!r}: {path}"
+            "Expected a CYX portable MIP or a CZYX 3D source after legacy-axis "
+            f"normalization, received axes={axes!r}, shape={tuple(array.shape)}: {path}"
         )
 
     if mip.ndim != 3 or mip.shape[-2] < 1 or mip.shape[-1] < 1:

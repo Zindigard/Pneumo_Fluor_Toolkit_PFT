@@ -25,7 +25,10 @@ import zarr
 from skimage.restoration import richardson_lucy
 
 from PFT.core_prog_parts.common_paths import find_project_root, project_relative_path
-from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
+from PFT.core_prog_parts.decoder_omezar import (
+    extract_ome_zarr_meta_for_compare,
+    load_ome_zarr,
+)
 from PFT.core_prog_parts.denoising.metadata_3d import (
     coordinate_scale_for_level,
     copyable_root_metadata,
@@ -57,6 +60,9 @@ _OUTPUT_OWNED_ROOT_ATTRS: frozenset[str] = frozenset(
         "pft_multiscale_enabled",
         "pft_pyramid_max_layer",
         "pft_pyramid_downscale",
+        "pft_axis_contract_version",
+        "multiscales",
+        "pft_processing",
     }
 )
 _SOURCE_DERIVED_METADATA_KEY = "pft_source_derived_root_metadata"
@@ -332,6 +338,7 @@ def _create_output_store(
     for key, value in source_attrs.items():
         root.attrs[key] = value
     root.attrs["pft_axes"] = "czyx"
+    root.attrs["pft_axis_contract_version"] = 1
     root.attrs["pft_level0_shape"] = list(shape_czyx)
     root.attrs["pft_level0_dtype"] = "float32"
     root.attrs["pft_multiscale_enabled"] = pyramid_max_layer > 0
@@ -824,6 +831,30 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     # Reopen from disk before validation so reports describe stored values.
     stored_root = zarr.open_group(str(out_zarr), mode="r")
     stored_level0 = stored_root["0"]
+
+    expected_output_shape = (c_size, z_size, y_size, x_size)
+    stored_meta = extract_ome_zarr_meta_for_compare(out_zarr, level=0)
+    stored_axes = str(stored_meta.get("axes") or "").lower()
+    stored_shape = tuple(int(value) for value in stored_meta.get("shape") or ())
+    if stored_axes != "czyx" or stored_shape != expected_output_shape:
+        raise ValueError(
+            "Invalid deconvolution OME-Zarr axis contract after writing: "
+            f"expected axes='czyx', shape={expected_output_shape}; "
+            f"received axes={stored_axes!r}, shape={stored_shape}, path={out_zarr}"
+        )
+
+    # Validate the public reader as well as the direct Zarr metadata. This
+    # catches reader/metadata disagreements before downstream MIP preparation.
+    reader_array, reader_axes = load_ome_zarr(out_zarr, level=0, as_numpy=False)
+    reader_shape = tuple(int(value) for value in reader_array.shape)
+    if str(reader_axes).lower() != "czyx" or reader_shape != expected_output_shape:
+        raise ValueError(
+            "Deconvolution output cannot be read with the canonical CZYX axis "
+            "contract: "
+            f"reader_axes={reader_axes!r}, reader_shape={reader_shape}, "
+            f"expected_shape={expected_output_shape}, path={out_zarr}"
+        )
+
     metadata_mismatches = _metadata_mismatches(
         stored_root,
         direct_source_attrs=source_attrs,
@@ -866,6 +897,8 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "input_omezarr": str(in_omezarr),
         "output_omezarr": str(out_zarr),
         "input_level": int(level),
+        "output_axes": "czyx",
+        "output_axis_contract_version": 1,
         "output_level0_shape": list(stored_level0.shape),
         "output_levels": pyramid_max_layer + 1,
         "psf_model": model,

@@ -22,6 +22,23 @@ def normalize_axes(axes: str) -> str:
     return axes.strip().lower()
 
 
+
+
+def _valid_axes_contract(axes: object, ndim: int) -> str | None:
+    """Return a normalized axes contract when it is structurally valid."""
+    if not isinstance(axes, str):
+        return None
+    normalized = normalize_axes(axes)
+    if len(normalized) != int(ndim):
+        return None
+    if any(axis not in "tczyx" for axis in normalized):
+        return None
+    if len(set(normalized)) != len(normalized):
+        return None
+    if "y" not in normalized or "x" not in normalized:
+        return None
+    return normalized
+
 def select_index_along_axis(arr: Any, axes: str, letter: str, idx: int) -> tuple[Any, str]:
     """
     Select a single index along `letter` axis and remove that axis from axes string.
@@ -210,6 +227,18 @@ def load_ome_zarr(
 
     axes = normalize_axes(axes)
 
+    # The ome-zarr Reader can expose a legacy/permuted axis label even when
+    # the on-disk array and PFT metadata define a different canonical order.
+    # Read the direct Zarr metadata and align the reader output before any
+    # downstream code interprets T, C, or Z.
+    try:
+        meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
+        data, axes = _align_loaded_array_to_metadata(data, axes, meta)
+    except Exception:
+        # Loading must remain possible for minimally annotated external stores.
+        # Strict validation is performed by the specialized workflow loaders.
+        pass
+
     if as_numpy:
         data = np.asarray(data)
 
@@ -254,10 +283,28 @@ def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -
             if ok:
                 axes_str = "".join(names)
 
-    if axes_str is None:
-        # Fallbacks (best effort)
+    axes_from_multiscales = normalize_axes(axes_str) if axes_str is not None else None
+
+    # PFT-derived stores write an explicit axis contract and level-0 shape.
+    # This contract is used to repair legacy stores where the multiscales axes
+    # were recorded as TCYX although the numerical array is CZYX.
+    pft_axes = _valid_axes_contract(root.attrs.get("pft_axes"), int(arr.ndim))
+    pft_shape_raw = root.attrs.get("pft_level0_shape")
+    try:
+        pft_shape = tuple(int(value) for value in pft_shape_raw)
+    except Exception:
+        pft_shape = None
+
+    if pft_axes is not None and pft_shape == tuple(arr.shape):
+        axes_str = pft_axes
+    elif axes_from_multiscales is not None:
+        axes_str = axes_from_multiscales
+    else:
+        # Fallbacks (best effort). Keep the historical generic four-dimensional
+        # interpretation as TCYX; specialized 3D loaders apply the stricter PFT
+        # CZYX contract using pft_axes or workflow-specific evidence.
         if arr.ndim == 4:
-            axes_str = "czyx"
+            axes_str = "tcyx"
         elif arr.ndim == 5:
             axes_str = "tczyx"
         elif arr.ndim == 3:
@@ -313,6 +360,13 @@ def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -
         "dtype": str(getattr(arr, "dtype", "")),
         "chunks": getattr(arr, "chunks", None),
         "axes": normalize_axes(axes_str),
+        "axes_multiscales": axes_from_multiscales,
+        "pft_axes": pft_axes,
+        "axis_metadata_consistent": (
+            axes_from_multiscales is None
+            or pft_axes is None
+            or axes_from_multiscales == pft_axes
+        ),
         "voxel_size_um": voxel_um,
         "channel_names": channel_names,
         "pft_meta_available": isinstance(pft_meta, dict),
