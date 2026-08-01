@@ -1600,18 +1600,24 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     model = models.CellposeModel(
         **_supported_kwargs(models.CellposeModel, constructor_values)
     )
-    # Omnipose 1.1.4 requires link collections to be iterable even when
-    # no linked labels are present. Each item corresponds to one image.
+    # Omnipose 1.1.4 requires train_links to be iterable even when no
+    # linked labels are present. Each entry corresponds to one image.
     train_links: list[None] = [None] * len(train_y)
-    test_links: list[None] | None = [None] * len(val_y) if val_y else None
 
+    # Do not pass the held-out validation arrays into CellposeModel.train().
+    # In Omnipose 1.1.4, internal test-label flow generation may create CUDA
+    # tensors and then concatenate them with NumPy, which raises:
+    # "can't convert cuda:0 device type tensor to numpy".
+    # The same held-out validation set is evaluated immediately after training
+    # by _evaluate_validation_after_training(), so validation remains complete
+    # and independent while training itself continues on the GPU.
     train_values: dict[str, Any] = {
         "train_data": train_x,
         "train_labels": train_y,
         "train_links": train_links,
-        "test_data": val_x or None,
-        "test_labels": val_y or None,
-        "test_links": test_links,
+        "test_data": None,
+        "test_labels": None,
+        "test_links": None,
         "channels": None,
         "channel_axis": -1,
         "normalize": False,
@@ -1666,6 +1672,15 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "automatic_validation": validation,
         "validation_improvement": improvement,
         "normalization_inside_training": False,
+        "omnipose_internal_validation": {
+            "enabled": False,
+            "reason": (
+                "Omnipose 1.1.4 internal test-label flow generation is disabled "
+                "because its CUDA path mixes torch tensors with NumPy. The held-out "
+                "validation set is evaluated by PFT after model training."
+            ),
+            "held_out_samples": val_names,
+        },
         "omnipose_api_kwargs": {
             key: value
             for key, value in supported_train_values.items()

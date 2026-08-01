@@ -24,12 +24,14 @@ import shutil
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
+from openpyxl import Workbook
 from scipy import ndimage as ndi
 
 SCRIPT_FILE = Path(__file__).resolve()
@@ -176,6 +178,96 @@ def profile_minmax(profile: np.ndarray) -> np.ndarray:
     return np.clip(output, 0.0, 1.0)
 
 
+def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
+    """Return scalar descriptors of a normalized pole-to-pole profile.
+
+    The 50% axial extent is a profile-based signal length: the fraction of the
+    normalized cell axis occupied by values at least 50% of the profile peak.
+    """
+    values = np.asarray(profile, dtype=np.float64)
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return {
+            "axial_auc": math.nan,
+            "axial_centroid": math.nan,
+            "axial_spread": math.nan,
+            "axial_peak_position": math.nan,
+            "axial_extent_50_fraction": math.nan,
+            "axial_extent_25_fraction": math.nan,
+            "pole1_intensity": math.nan,
+            "midcell_intensity": math.nan,
+            "pole2_intensity": math.nan,
+            "mean_pole_intensity": math.nan,
+            "midcell_to_pole_ratio": math.nan,
+            "pole_asymmetry": math.nan,
+        }
+    values = np.where(finite, values, 0.0)
+    x = np.linspace(0.0, 1.0, values.size)
+    total = float(np.sum(values))
+    centroid = float(np.sum(x * values) / (total + EPS))
+    spread = float(np.sqrt(np.sum(values * (x - centroid) ** 2) / (total + EPS)))
+
+    def extent_fraction(level: float) -> float:
+        selected = np.flatnonzero(values >= level)
+        if selected.size == 0:
+            return 0.0
+        if values.size <= 1:
+            return 0.0
+        bin_width = 1.0 / (values.size - 1)
+        return float(min(1.0, (selected[-1] - selected[0]) * bin_width + bin_width))
+
+    region = max(1, int(round(values.size * 0.10)))
+    centre_half = max(1, int(round(values.size * 0.05)))
+    centre = values.size // 2
+    centre_start = max(0, centre - centre_half)
+    centre_end = min(values.size, centre + centre_half + 1)
+    pole1 = float(np.mean(values[:region]))
+    pole2 = float(np.mean(values[-region:]))
+    midcell = float(np.mean(values[centre_start:centre_end]))
+    mean_pole = 0.5 * (pole1 + pole2)
+    return {
+        "axial_auc": float(np.trapz(values, x=x)),
+        "axial_centroid": centroid,
+        "axial_spread": spread,
+        "axial_peak_position": float(x[int(np.argmax(values))]),
+        "axial_extent_50_fraction": extent_fraction(0.50),
+        "axial_extent_25_fraction": extent_fraction(0.25),
+        "pole1_intensity": pole1,
+        "midcell_intensity": midcell,
+        "pole2_intensity": pole2,
+        "mean_pole_intensity": mean_pole,
+        "midcell_to_pole_ratio": (midcell / mean_pole) if mean_pole > EPS else math.nan,
+        "pole_asymmetry": abs(pole1 - pole2),
+    }
+
+
+def radial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
+    """Return scalar descriptors of a normalized centre-to-boundary profile."""
+    values = np.asarray(profile, dtype=np.float64)
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return {
+            "radial_auc": math.nan,
+            "radial_centroid": math.nan,
+            "centre_intensity": math.nan,
+            "boundary_intensity": math.nan,
+            "boundary_to_centre_ratio": math.nan,
+        }
+    values = np.where(finite, values, 0.0)
+    x = np.linspace(0.0, 1.0, values.size)
+    total = float(np.sum(values))
+    region = max(1, int(round(values.size * 0.20)))
+    centre_intensity = float(np.mean(values[:region]))
+    boundary_intensity = float(np.mean(values[-region:]))
+    return {
+        "radial_auc": float(np.trapz(values, x=x)),
+        "radial_centroid": float(np.sum(x * values) / (total + EPS)),
+        "centre_intensity": centre_intensity,
+        "boundary_intensity": boundary_intensity,
+        "boundary_to_centre_ratio": (boundary_intensity / centre_intensity) if centre_intensity > EPS else math.nan,
+    }
+
+
 def axial_profile(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Average intensity across cell width at each normalized axial position."""
     width = mask.shape[1]
@@ -314,6 +406,47 @@ def pearson_inside(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float:
     if av.size < 3 or np.std(av) <= EPS or np.std(bv) <= EPS:
         return math.nan
     return float(np.corrcoef(av, bv)[0, 1])
+
+
+def channel_overlap_metrics(
+    first: np.ndarray,
+    second: np.ndarray,
+    mask: np.ndarray,
+    first_positive_threshold: float,
+    second_positive_threshold: float,
+) -> dict[str, float]:
+    """Compute descriptive intensity-overlap metrics inside one cell."""
+    first_values = np.asarray(first[mask], dtype=np.float64)
+    second_values = np.asarray(second[mask], dtype=np.float64)
+    finite = np.isfinite(first_values) & np.isfinite(second_values)
+    first_values = first_values[finite]
+    second_values = second_values[finite]
+    if first_values.size == 0:
+        return {
+            "overlap_cosine": math.nan,
+            "positive_overlap_fraction": math.nan,
+            "positive_union_fraction": math.nan,
+            "manders_first_in_second": math.nan,
+            "manders_second_in_first": math.nan,
+        }
+    first_positive = first_values > first_positive_threshold
+    second_positive = second_values > second_positive_threshold
+    intersection = first_positive & second_positive
+    union = first_positive | second_positive
+    denominator = float(
+        np.sqrt(np.sum(first_values**2) * np.sum(second_values**2))
+    )
+    return {
+        "overlap_cosine": float(np.sum(first_values * second_values) / (denominator + EPS)),
+        "positive_overlap_fraction": float(np.mean(intersection)),
+        "positive_union_fraction": float(np.mean(union)),
+        "manders_first_in_second": float(
+            np.sum(first_values[second_positive]) / (np.sum(first_values) + EPS)
+        ),
+        "manders_second_in_first": float(
+            np.sum(second_values[first_positive]) / (np.sum(second_values) + EPS)
+        ),
+    }
 
 
 def condition_sort_key(spec: DatasetSpec, condition: str) -> tuple[int, str]:
@@ -481,70 +614,117 @@ def plot_axial_profiles(
     output_dir: Path,
     dataset: str,
 ) -> None:
-    for channel in channel_names:
-        available = [condition for condition in conditions if profile_store.get((condition, channel))]
-        if not available:
-            continue
+    cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
+        "color", [f"C{i}" for i in range(10)]
+    )
 
-        fig, ax = plt.subplots(figsize=(8.0, 5.0), constrained_layout=True)
-        if dataset == "2d_time":
-            times = sorted(
-                {
-                    int(re.search(r"(\d+)min", condition).group(1))
-                    for condition in available
-                }
-            )
-            cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
-                "color", [f"C{i}" for i in range(10)]
-            )
-            time_colors = {
-                time: cycle[index % len(cycle)] for index, time in enumerate(times)
+    if dataset == "2d_time":
+        times = sorted(
+            {
+                int(match.group(1))
+                for condition in conditions
+                for match in [re.search(r"(\d+)min", condition)]
+                if match is not None
             }
+        )
+        for channel in channel_names:
             for time in times:
-                for medium, linestyle in (("THY", "-"), ("NHS", "--")):
+                fig, ax = plt.subplots(figsize=(7.2, 4.6), constrained_layout=True)
+                plotted = False
+                for medium, linestyle, color in (("THY", "-", cycle[0]), ("NHS", "--", cycle[1])):
                     condition = f"{medium}_{time}min"
                     profiles = profile_store.get((condition, channel), [])
                     if not profiles:
                         continue
+                    plotted = True
                     matrix = np.vstack(profiles)
-                    mean = np.nanmean(matrix, axis=0)
+                    mean, low, high = mean_and_band(matrix)
                     x = np.linspace(0.0, 1.0, mean.size)
-                    ax.plot(
-                        x,
-                        mean,
-                        color=time_colors[time],
-                        linestyle=linestyle,
-                        linewidth=1.7,
-                        label=f"{medium}, {time} min",
-                    )
-            ax.set_title(f"2D time-lapse {channel} axial boundary profile")
-        else:
-            cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
-                "color", [f"C{i}" for i in range(10)]
-            )
-            for index, condition in enumerate(available):
-                matrix = np.vstack(profile_store[(condition, channel)])
+                    ax.plot(x, mean, color=color, linestyle=linestyle, linewidth=1.8, label=medium)
+                    ax.fill_between(x, low, high, color=color, alpha=0.12)
+                if not plotted:
+                    plt.close(fig)
+                    continue
+                ax.axvline(0.5, linestyle="--", linewidth=0.8, color="0.45")
+                ax.set_xticks([0.0, 0.5, 1.0], ["Pole 1", "Midcell", "Pole 2"])
+                ax.set_xlabel("Normalized axial coordinate")
+                ax.set_ylabel("Normalized fluorescence intensity")
+                ax.set_title(f"{channel} axial fluorescence profile, {time} min")
+                ax.grid(alpha=0.2)
+                ax.legend(title="Medium")
+                add_note(fig)
+                save_figure(fig, output_dir, f"axial_profile_{channel.lower()}_{time}min")
+        return
+
+    if dataset == "2d_wga_dapi":
+        comparison_specs = [
+            ("thy_vs_csp", "THY vs THY + CSP", [("THY_noCSP", "THY"), ("THY_CSP", "THY + CSP")]),
+            ("nhs_vs_csp", "NHS vs NHS + CSP", [("NHS_noCSP", "NHS"), ("NHS_CSP", "NHS + CSP")]),
+            ("thy_vs_nhs_pooled", "All THY vs all NHS", [(["THY_noCSP", "THY_CSP"], "All THY"), (["NHS_noCSP", "NHS_CSP"], "All NHS")]),
+        ]
+        for channel in channel_names:
+            for stem_suffix, title, groups in comparison_specs:
+                fig, ax = plt.subplots(figsize=(7.4, 4.7), constrained_layout=True)
+                plotted = False
+                for index, group in enumerate(groups):
+                    key_or_keys, label = group
+                    if isinstance(key_or_keys, str):
+                        profiles = profile_store.get((key_or_keys, channel), [])
+                    else:
+                        profiles = []
+                        for condition in key_or_keys:
+                            profiles.extend(profile_store.get((condition, channel), []))
+                    if not profiles:
+                        continue
+                    plotted = True
+                    matrix = np.vstack(profiles)
+                    mean, low, high = mean_and_band(matrix)
+                    x = np.linspace(0.0, 1.0, mean.size)
+                    color = cycle[index % len(cycle)]
+                    ax.plot(x, mean, color=color, linewidth=1.8, label=label)
+                    ax.fill_between(x, low, high, color=color, alpha=0.12)
+                if not plotted:
+                    plt.close(fig)
+                    continue
+                ax.axvline(0.5, linestyle="--", linewidth=0.8, color="0.45")
+                ax.set_xticks([0.0, 0.5, 1.0], ["Pole 1", "Midcell", "Pole 2"])
+                ax.set_xlabel("Normalized axial coordinate")
+                ax.set_ylabel("Normalized fluorescence intensity")
+                ax.set_title(f"{channel} axial fluorescence profiles: {title}")
+                ax.grid(alpha=0.2)
+                ax.legend()
+                add_note(fig)
+                save_figure(fig, output_dir, f"axial_profile_{channel.lower()}_{stem_suffix}")
+        return
+
+    if dataset == "3d_mip":
+        for condition in conditions:
+            fig, ax = plt.subplots(figsize=(7.4, 4.7), constrained_layout=True)
+            plotted = False
+            for index, channel in enumerate(channel_names):
+                profiles = profile_store.get((condition, channel), [])
+                if not profiles:
+                    continue
+                plotted = True
+                matrix = np.vstack(profiles)
                 mean, low, high = mean_and_band(matrix)
                 x = np.linspace(0.0, 1.0, mean.size)
                 color = cycle[index % len(cycle)]
-                ax.plot(
-                    x,
-                    mean,
-                    color=color,
-                    linewidth=1.7,
-                    label=condition_display(condition),
-                )
-                ax.fill_between(x, low, high, color=color, alpha=0.10)
-            ax.set_title(f"Axial {channel} fluorescence profiles")
-
-        ax.axvline(0.5, linestyle="--", linewidth=0.8, color="0.45")
-        ax.set_xticks([0.0, 0.5, 1.0], ["Pole 1", "Midcell", "Pole 2"])
-        ax.set_xlabel("Normalized axial coordinate")
-        ax.set_ylabel("Normalized fluorescence intensity")
-        ax.grid(alpha=0.2)
-        ax.legend()
-        add_note(fig)
-        save_figure(fig, output_dir, f"axial_profile_{channel.lower()}")
+                ax.plot(x, mean, color=color, linewidth=1.8, label=channel)
+                ax.fill_between(x, low, high, color=color, alpha=0.12)
+            if not plotted:
+                plt.close(fig)
+                continue
+            ax.axvline(0.5, linestyle="--", linewidth=0.8, color="0.45")
+            ax.set_xticks([0.0, 0.5, 1.0], ["Pole 1", "Midcell", "Pole 2"])
+            ax.set_xlabel("Normalized axial coordinate")
+            ax.set_ylabel("Normalized fluorescence intensity")
+            ax.set_title(f"3D SIM axial fluorescence profiles: {condition_display(condition)}")
+            ax.grid(alpha=0.2)
+            ax.legend(title="Channel")
+            add_note(fig)
+            save_figure(fig, output_dir, f"axial_profile_{condition.lower()}")
+        return
 
 
 def plot_heatmaps(
@@ -676,93 +856,123 @@ def plot_radial_profiles(
 ) -> None:
     if not radial_store:
         return
-    if dataset == "2d_wga_dapi":
-        fig, ax = plt.subplots(figsize=(8.0, 5.0), constrained_layout=True)
-        cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
-            "color", [f"C{i}" for i in range(10)]
+    cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
+        "color", [f"C{i}" for i in range(10)]
+    )
+
+    if dataset == "2d_time":
+        times = sorted(
+            {
+                int(match.group(1))
+                for condition in conditions
+                for match in [re.search(r"(\d+)min", condition)]
+                if match is not None
+            }
         )
-        condition_handles: list[Line2D] = []
-        channel_styles = {"WGA": "-", "DAPI": "--"}
-        for index, condition in enumerate(conditions):
-            color = cycle[index % len(cycle)]
-            condition_handles.append(
-                Line2D(
-                    [0],
-                    [0],
-                    color=color,
-                    linewidth=2.0,
-                    label=condition_display(condition),
-                )
-            )
-            for channel in ("WGA", "DAPI"):
+        channel = channel_names[0]
+        for time in times:
+            fig, ax = plt.subplots(figsize=(7.2, 4.6), constrained_layout=True)
+            plotted = False
+            for medium, linestyle, color in (("THY", "-", cycle[0]), ("NHS", "--", cycle[1])):
+                condition = f"{medium}_{time}min"
                 profiles = radial_store.get((condition, channel), [])
                 if not profiles:
                     continue
+                plotted = True
                 matrix = np.vstack(profiles)
-                mean = np.nanmean(matrix, axis=0)
+                mean, low, high = mean_and_band(matrix)
                 x = np.linspace(0.0, 1.0, mean.size)
-                ax.plot(
-                    x,
-                    mean,
-                    color=color,
-                    linestyle=channel_styles[channel],
-                    linewidth=1.8,
-                )
-        ax.set_xticks(
-            [0.0, 0.5, 1.0],
-            ["Cell centre", "Intermediate radius", "Cell boundary"],
-        )
-        ax.set_xlabel("Normalized radial distance")
-        ax.set_ylabel("Normalized fluorescence intensity")
-        ax.set_title("2D WGA-DAPI radial fluorescence profiles")
-        ax.grid(alpha=0.2)
-        condition_legend = ax.legend(
-            handles=condition_handles, title="Condition", loc="center right"
-        )
-        ax.add_artist(condition_legend)
-        channel_handles = [
-            Line2D(
-                [0], [0], color="black", linestyle="-", linewidth=1.8, label="WGA"
-            ),
-            Line2D(
-                [0], [0], color="black", linestyle="--", linewidth=1.8, label="DAPI"
-            ),
-        ]
-        ax.legend(handles=channel_handles, title="Channel", loc="lower center")
-        add_note(fig)
-        save_figure(fig, output_dir, "radial_profiles_wga_dapi")
+                ax.plot(x, mean, color=color, linestyle=linestyle, linewidth=1.8, label=medium)
+                ax.fill_between(x, low, high, color=color, alpha=0.12)
+            if not plotted:
+                plt.close(fig)
+                continue
+            ax.set_xticks([0.0, 0.5, 1.0], ["Cell centre", "Intermediate radius", "Cell boundary"])
+            ax.set_xlabel("Normalized radial distance")
+            ax.set_ylabel("Normalized fluorescence intensity")
+            ax.set_title(f"{channel} radial fluorescence profile, {time} min")
+            ax.grid(alpha=0.2)
+            ax.legend(title="Medium")
+            add_note(fig)
+            save_figure(fig, output_dir, f"radial_profile_{channel.lower()}_{time}min")
         return
 
-    if dataset == "3d_mip":
-        pairs = (("HADA", "NADA"), ("HADA", "TADA"), ("NADA", "TADA"))
-        for first, second in pairs:
-            fig, axes = plt.subplots(
-                1,
-                len(conditions),
-                figsize=(5 * len(conditions), 4.3),
-                sharex=True,
-                sharey=True,
-                constrained_layout=True,
-            )
-            axes = np.atleast_1d(axes)
-            for axis, condition in zip(axes, conditions):
-                for channel in (first, second):
-                    profiles = radial_store.get((condition, channel), [])
+    if dataset == "2d_wga_dapi":
+        comparison_specs = [
+            ("thy_vs_csp", "THY vs THY + CSP", [("THY_noCSP", "THY"), ("THY_CSP", "THY + CSP")]),
+            ("nhs_vs_csp", "NHS vs NHS + CSP", [("NHS_noCSP", "NHS"), ("NHS_CSP", "NHS + CSP")]),
+            ("thy_vs_nhs_pooled", "All THY vs all NHS", [(["THY_noCSP", "THY_CSP"], "All THY"), (["NHS_noCSP", "NHS_CSP"], "All NHS")]),
+        ]
+        channel_styles = {"WGA": "-", "DAPI": "--"}
+        for stem_suffix, title, groups in comparison_specs:
+            fig, ax = plt.subplots(figsize=(7.8, 4.8), constrained_layout=True)
+            condition_handles: list[Line2D] = []
+            plotted = False
+            for index, group in enumerate(groups):
+                key_or_keys, label = group
+                color = cycle[index % len(cycle)]
+                condition_handles.append(Line2D([0], [0], color=color, linewidth=2.0, label=label))
+                for channel in ("WGA", "DAPI"):
+                    if isinstance(key_or_keys, str):
+                        profiles = radial_store.get((key_or_keys, channel), [])
+                    else:
+                        profiles = []
+                        for condition in key_or_keys:
+                            profiles.extend(radial_store.get((condition, channel), []))
                     if not profiles:
                         continue
+                    plotted = True
                     matrix = np.vstack(profiles)
                     mean, low, high = mean_and_band(matrix)
                     x = np.linspace(0.0, 1.0, mean.size)
-                    axis.plot(x, mean, label=channel)
-                    axis.fill_between(x, low, high, alpha=0.12)
-                axis.set_title(condition_display(condition))
-                axis.set_xlabel("Normalized radial coordinate")
-                axis.grid(alpha=0.2)
-                axis.legend()
-            axes[0].set_ylabel("Normalized fluorescence")
-            fig.suptitle(f"Radial profiles: {first} versus {second}")
+                    ax.plot(x, mean, color=color, linestyle=channel_styles[channel], linewidth=1.8)
+                    ax.fill_between(x, low, high, color=color, alpha=0.08)
+            if not plotted:
+                plt.close(fig)
+                continue
+            ax.set_xticks([0.0, 0.5, 1.0], ["Cell centre", "Intermediate radius", "Cell boundary"])
+            ax.set_xlabel("Normalized radial distance")
+            ax.set_ylabel("Normalized fluorescence intensity")
+            ax.set_title(f"WGA-DAPI radial fluorescence profiles: {title}")
+            ax.grid(alpha=0.2)
+            condition_legend = ax.legend(handles=condition_handles, title="Condition", loc="center right")
+            ax.add_artist(condition_legend)
+            channel_handles = [
+                Line2D([0], [0], color="black", linestyle="-", linewidth=1.8, label="WGA"),
+                Line2D([0], [0], color="black", linestyle="--", linewidth=1.8, label="DAPI"),
+            ]
+            ax.legend(handles=channel_handles, title="Channel", loc="lower center")
             add_note(fig)
-            save_figure(fig, output_dir, f"radial_{first.lower()}_vs_{second.lower()}")
+            save_figure(fig, output_dir, f"radial_profiles_wga_dapi_{stem_suffix}")
+        return
+
+    if dataset == "3d_mip":
+        for condition in conditions:
+            fig, ax = plt.subplots(figsize=(7.4, 4.7), constrained_layout=True)
+            plotted = False
+            for index, channel in enumerate(channel_names):
+                profiles = radial_store.get((condition, channel), [])
+                if not profiles:
+                    continue
+                plotted = True
+                matrix = np.vstack(profiles)
+                mean, low, high = mean_and_band(matrix)
+                x = np.linspace(0.0, 1.0, mean.size)
+                color = cycle[index % len(cycle)]
+                ax.plot(x, mean, color=color, linewidth=1.8, label=channel)
+                ax.fill_between(x, low, high, color=color, alpha=0.12)
+            if not plotted:
+                plt.close(fig)
+                continue
+            ax.set_xticks([0.0, 0.5, 1.0], ["Cell centre", "Intermediate radius", "Cell boundary"])
+            ax.set_xlabel("Normalized radial distance")
+            ax.set_ylabel("Normalized fluorescence intensity")
+            ax.set_title(f"3D SIM radial fluorescence profiles: {condition_display(condition)}")
+            ax.grid(alpha=0.2)
+            ax.legend(title="Channel")
+            add_note(fig)
+            save_figure(fig, output_dir, f"radial_profile_{condition.lower()}")
+        return
 
 
 def plot_standardized_maps(
@@ -860,6 +1070,309 @@ def plot_wga_dapi_overlap_maps(
     )
     add_note(fig)
     save_figure(fig, output_dir, "wga_dapi_standardized_overlap_map")
+
+
+def _numeric_metrics(records: list[dict[str, object]]) -> list[str]:
+    excluded = {
+        "dataset",
+        "annotation_id",
+        "sample_name",
+        "condition",
+        "medium",
+        "time_min",
+        "csp",
+        "source_label",
+        "pixel_size_um",
+        "n_cells",
+    }
+    metrics: list[str] = []
+    for row in records:
+        for key, value in row.items():
+            if key in excluded or key in metrics:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(number):
+                metrics.append(key)
+    return sorted(metrics)
+
+
+def _profile_comparison_plan(dataset: str) -> list[tuple[str, str, list[str], str, list[str]]]:
+    if dataset == "2d_time":
+        return [
+            (f"{time} min", "THY", [f"THY_{time}min"], "NHS", [f"NHS_{time}min"])
+            for time in (5, 20, 40, 120)
+        ]
+    if dataset == "2d_wga_dapi":
+        return [
+            ("THY CSP effect", "THY", ["THY_noCSP"], "THY + CSP", ["THY_CSP"]),
+            ("NHS CSP effect", "NHS", ["NHS_noCSP"], "NHS + CSP", ["NHS_CSP"]),
+            ("No-CSP medium effect", "THY", ["THY_noCSP"], "NHS", ["NHS_noCSP"]),
+            ("CSP medium effect", "THY + CSP", ["THY_CSP"], "NHS + CSP", ["NHS_CSP"]),
+            ("Pooled medium comparison", "All THY", ["THY_noCSP", "THY_CSP"], "All NHS", ["NHS_noCSP", "NHS_CSP"]),
+        ]
+    if dataset == "3d_mip":
+        return [("THY vs NHS", "THY", ["THY"], "NHS", ["NHS"])]
+    return []
+
+
+def _records_for_conditions(
+    records: list[dict[str, object]], conditions: list[str]
+) -> list[dict[str, object]]:
+    condition_set = set(conditions)
+    return [row for row in records if str(row.get("condition", "")) in condition_set]
+
+
+def _profile_values(
+    store: dict[tuple[str, str], list[np.ndarray]],
+    conditions: list[str],
+    channel: str,
+) -> list[np.ndarray]:
+    values: list[np.ndarray] = []
+    for condition in conditions:
+        values.extend(store.get((condition, channel), []))
+    return values
+
+
+def _append_profile_difference_sheet(
+    workbook: Workbook,
+    sheet_name: str,
+    dataset: str,
+    store: dict[tuple[str, str], list[np.ndarray]],
+    channel_names: tuple[str, ...],
+    coordinate_name: str,
+) -> None:
+    sheet = workbook.create_sheet(sheet_name)
+    sheet.append([
+        "dataset",
+        "comparison",
+        "channel",
+        coordinate_name,
+        "group_a",
+        "n_a",
+        "mean_a",
+        "std_a",
+        "group_b",
+        "n_b",
+        "mean_b",
+        "std_b",
+        "difference_b_minus_a",
+        "propagated_sd",
+        "percent_difference_vs_a",
+    ])
+    for comparison_name, label_a, conditions_a, label_b, conditions_b in _profile_comparison_plan(dataset):
+        for channel in channel_names:
+            profiles_a = _profile_values(store, conditions_a, channel)
+            profiles_b = _profile_values(store, conditions_b, channel)
+            if not profiles_a or not profiles_b:
+                continue
+            matrix_a = np.vstack(profiles_a)
+            matrix_b = np.vstack(profiles_b)
+            mean_a = np.nanmean(matrix_a, axis=0)
+            mean_b = np.nanmean(matrix_b, axis=0)
+            std_a = np.nanstd(matrix_a, axis=0, ddof=1) if matrix_a.shape[0] > 1 else np.zeros(matrix_a.shape[1])
+            std_b = np.nanstd(matrix_b, axis=0, ddof=1) if matrix_b.shape[0] > 1 else np.zeros(matrix_b.shape[1])
+            x = np.linspace(0.0, 1.0, mean_a.size)
+            for index, coordinate in enumerate(x):
+                difference = float(mean_b[index] - mean_a[index])
+                propagated_sd = float(np.sqrt(std_a[index] ** 2 + std_b[index] ** 2))
+                percent = float(100.0 * difference / (abs(mean_a[index]) + EPS))
+                sheet.append([
+                    dataset,
+                    comparison_name,
+                    channel,
+                    float(coordinate),
+                    label_a,
+                    int(matrix_a.shape[0]),
+                    float(mean_a[index]),
+                    float(std_a[index]),
+                    label_b,
+                    int(matrix_b.shape[0]),
+                    float(mean_b[index]),
+                    float(std_b[index]),
+                    difference,
+                    propagated_sd,
+                    percent,
+                ])
+
+
+def write_condition_metric_workbook(
+    dataset: str,
+    records: list[dict[str, object]],
+    axial_store: dict[tuple[str, str], list[np.ndarray]],
+    radial_store: dict[tuple[str, str], list[np.ndarray]],
+    channel_names: tuple[str, ...],
+    output_path: Path,
+) -> None:
+    if not records:
+        return
+    metrics = _numeric_metrics(records)
+    if not metrics:
+        return
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "condition_summary"
+    summary_sheet.append(["dataset", "condition", "metric", "n", "mean", "std"])
+    condition_names = sorted({str(row.get("condition", "")) for row in records})
+    for condition in condition_names:
+        group_rows = _records_for_conditions(records, [condition])
+        for metric in metrics:
+            values = np.asarray([safe_float(row.get(metric)) for row in group_rows], dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+            summary_sheet.append([
+                dataset,
+                condition_display(condition),
+                metric,
+                int(values.size),
+                float(np.mean(values)),
+                float(np.std(values, ddof=1)) if values.size > 1 else 0.0,
+            ])
+
+    planned_sheet = workbook.create_sheet("planned_differences")
+    planned_sheet.append([
+        "dataset",
+        "comparison",
+        "metric",
+        "group_a",
+        "n_a",
+        "mean_a",
+        "std_a",
+        "group_b",
+        "n_b",
+        "mean_b",
+        "std_b",
+        "difference_b_minus_a",
+        "propagated_sd",
+        "percent_difference_vs_a",
+    ])
+    for comparison_name, label_a, conditions_a, label_b, conditions_b in _profile_comparison_plan(dataset):
+        rows_a = _records_for_conditions(records, conditions_a)
+        rows_b = _records_for_conditions(records, conditions_b)
+        for metric in metrics:
+            values_a = np.asarray([safe_float(row.get(metric)) for row in rows_a], dtype=float)
+            values_b = np.asarray([safe_float(row.get(metric)) for row in rows_b], dtype=float)
+            values_a = values_a[np.isfinite(values_a)]
+            values_b = values_b[np.isfinite(values_b)]
+            if values_a.size == 0 or values_b.size == 0:
+                continue
+            mean_a = float(np.mean(values_a))
+            mean_b = float(np.mean(values_b))
+            std_a = float(np.std(values_a, ddof=1)) if values_a.size > 1 else 0.0
+            std_b = float(np.std(values_b, ddof=1)) if values_b.size > 1 else 0.0
+            difference = mean_b - mean_a
+            planned_sheet.append([
+                dataset,
+                comparison_name,
+                metric,
+                label_a,
+                int(values_a.size),
+                mean_a,
+                std_a,
+                label_b,
+                int(values_b.size),
+                mean_b,
+                std_b,
+                difference,
+                float(np.sqrt(std_a**2 + std_b**2)),
+                float(100.0 * difference / (abs(mean_a) + EPS)),
+            ])
+
+    all_pairs_sheet = workbook.create_sheet("all_pairwise_conditions")
+    all_pairs_sheet.append([
+        "dataset",
+        "metric",
+        "condition_a",
+        "n_a",
+        "mean_a",
+        "std_a",
+        "condition_b",
+        "n_b",
+        "mean_b",
+        "std_b",
+        "difference_b_minus_a",
+        "propagated_sd",
+        "percent_difference_vs_a",
+    ])
+    for condition_a, condition_b in combinations(condition_names, 2):
+        rows_a = _records_for_conditions(records, [condition_a])
+        rows_b = _records_for_conditions(records, [condition_b])
+        for metric in metrics:
+            values_a = np.asarray([safe_float(row.get(metric)) for row in rows_a], dtype=float)
+            values_b = np.asarray([safe_float(row.get(metric)) for row in rows_b], dtype=float)
+            values_a = values_a[np.isfinite(values_a)]
+            values_b = values_b[np.isfinite(values_b)]
+            if values_a.size == 0 or values_b.size == 0:
+                continue
+            mean_a = float(np.mean(values_a))
+            mean_b = float(np.mean(values_b))
+            std_a = float(np.std(values_a, ddof=1)) if values_a.size > 1 else 0.0
+            std_b = float(np.std(values_b, ddof=1)) if values_b.size > 1 else 0.0
+            difference = mean_b - mean_a
+            all_pairs_sheet.append([
+                dataset,
+                metric,
+                condition_display(condition_a),
+                int(values_a.size),
+                mean_a,
+                std_a,
+                condition_display(condition_b),
+                int(values_b.size),
+                mean_b,
+                std_b,
+                difference,
+                float(np.sqrt(std_a**2 + std_b**2)),
+                float(100.0 * difference / (abs(mean_a) + EPS)),
+            ])
+
+    _append_profile_difference_sheet(
+        workbook,
+        "axial_profile_differences",
+        dataset,
+        axial_store,
+        channel_names,
+        "normalized_axial_coordinate",
+    )
+    _append_profile_difference_sheet(
+        workbook,
+        "radial_profile_differences",
+        dataset,
+        radial_store,
+        channel_names,
+        "normalized_radial_coordinate",
+    )
+
+    definitions_sheet = workbook.create_sheet("metric_definitions")
+    definitions_sheet.append(["metric pattern", "definition"])
+    definitions = [
+        ("*_axial_extent_50_fraction", "Fraction of normalized pole-to-pole axis with profile intensity at least 50% of its peak; this is the profile-based signal length."),
+        ("*_axial_extent_50_pixels", "50% axial signal extent multiplied by PCA-derived cell length in pixels."),
+        ("*_axial_extent_50_um", "50% axial signal extent in micrometres when --pixel-size-um is supplied."),
+        ("*_axial_spread", "Intensity-weighted standard deviation along the normalized pole-to-pole coordinate."),
+        ("*_axial_centroid", "Intensity-weighted position along the normalized pole-to-pole coordinate."),
+        ("*_radial_centroid", "Intensity-weighted radial position from cell centre 0 to boundary 1."),
+        ("*_boundary_to_centre_ratio", "Mean boundary-region intensity divided by mean centre-region intensity."),
+        ("wga_dapi_pearson", "Within-cell Pearson correlation of background-corrected WGA and DAPI intensities."),
+        ("wga_dapi_overlap_cosine", "Cosine overlap coefficient of background-corrected WGA and DAPI intensities."),
+        ("wga_dapi_positive_overlap_fraction", "Fraction of cell pixels positive in both WGA and DAPI."),
+        ("wga_manders_in_dapi", "Fraction of WGA intensity located in DAPI-positive pixels."),
+        ("dapi_manders_in_wga", "Fraction of DAPI intensity located in WGA-positive pixels."),
+        ("propagated_sd", "Descriptive combination sqrt(SD_A^2 + SD_B^2), not the SD of paired differences."),
+    ]
+    for metric, definition in definitions:
+        definitions_sheet.append([metric, definition])
+
+    notes_sheet = workbook.create_sheet("notes")
+    notes_sheet.append(["field", "value"])
+    notes_sheet.append(["difference_definition", "difference_b_minus_a = mean(group_b) - mean(group_a)"])
+    notes_sheet.append(["records_used", "Cell-level records in example mode; independent image/ROI-level records in full mode."])
+    notes_sheet.append(["inference", "This workbook is descriptive. Significance testing should use full-mode ROI-level records."])
+    notes_sheet.append(["DAPI_length", "DAPI length is represented by dapi_axial_extent_50_fraction and, when calibrated, dapi_axial_extent_50_um."])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
 
 
 def plot_detected_cells(
@@ -1252,6 +1765,25 @@ def process_dataset(
                         standardized_absolute[channel_index], standardized_mask, radial_bins
                     )
                 )
+                axial_metrics = axial_profile_metrics(axial)
+                radial_metrics = radial_profile_metrics(radial)
+                for metric_name, metric_value in axial_metrics.items():
+                    channel_metrics[f"{channel_name.lower()}_{metric_name}"] = metric_value
+                for metric_name, metric_value in radial_metrics.items():
+                    channel_metrics[f"{channel_name.lower()}_{metric_name}"] = metric_value
+                extent_fraction = axial_metrics.get("axial_extent_50_fraction", math.nan)
+                channel_metrics[f"{channel_name.lower()}_axial_extent_50_pixels"] = (
+                    float(extent_fraction) * length_px
+                    if np.isfinite(extent_fraction)
+                    else math.nan
+                )
+                if pixel_size_um is not None:
+                    channel_metrics[f"{channel_name.lower()}_axial_extent_50_um"] = (
+                        float(extent_fraction) * length_px * pixel_size_um
+                        if np.isfinite(extent_fraction)
+                        else math.nan
+                    )
+
                 cell_profile_store[(condition, channel_name)].append(axial)
                 cell_radial_store[(condition, channel_name)].append(radial)
                 annotation_profile_store[(annotation_id, condition, channel_name)].append(axial)
@@ -1301,6 +1833,24 @@ def process_dataset(
                 channel_metrics["wga_dapi_pearson"] = pearson_inside(
                     wga_corrected, dapi_corrected, cell_mask
                 )
+                channel_metrics["dapi_positive_area_fraction"] = float(
+                    np.mean(dapi_corrected[cell_mask] > (3.0 * bg[0]["mad"]))
+                )
+                channel_metrics["wga_positive_area_fraction"] = float(
+                    np.mean(wga_corrected[cell_mask] > (3.0 * bg[1]["mad"]))
+                )
+                overlap = channel_overlap_metrics(
+                    wga_corrected,
+                    dapi_corrected,
+                    cell_mask,
+                    first_positive_threshold=3.0 * bg[1]["mad"],
+                    second_positive_threshold=3.0 * bg[0]["mad"],
+                )
+                channel_metrics["wga_dapi_overlap_cosine"] = overlap["overlap_cosine"]
+                channel_metrics["wga_dapi_positive_overlap_fraction"] = overlap["positive_overlap_fraction"]
+                channel_metrics["wga_dapi_positive_union_fraction"] = overlap["positive_union_fraction"]
+                channel_metrics["wga_manders_in_dapi"] = overlap["manders_first_in_second"]
+                channel_metrics["dapi_manders_in_wga"] = overlap["manders_second_in_first"]
 
             record: dict[str, object] = {
                 "dataset": dataset,
@@ -1360,6 +1910,14 @@ def process_dataset(
     plot_records = cell_records if example else roi_records
     profile_store_for_lines = cell_profile_store if example else roi_profile_store
     radial_store_for_lines = cell_radial_store if example else roi_radial_store
+    write_condition_metric_workbook(
+        dataset,
+        plot_records,
+        profile_store_for_lines,
+        radial_store_for_lines,
+        spec.channel_names,
+        output_root / "condition_difference_metrics.xlsx",
+    )
     length_key = "length_um" if pixel_size_um is not None else "length_pixels"
     if example:
         length_label = (
@@ -1456,6 +2014,68 @@ def process_dataset(
             "Three-channel homogeneity",
             output_root,
             "3d_channel_homogeneity",
+        )
+
+    extent_unit_suffix = "um" if pixel_size_um is not None else "fraction"
+    extent_ylabel = (
+        "Axial signal extent at 50% peak, µm"
+        if pixel_size_um is not None
+        else "Axial signal extent at 50% peak, fraction of cell length"
+    )
+    if dataset == "2d_time":
+        plot_2d_time_metric_over_time(
+            plot_records,
+            f"hada_axial_extent_50_{extent_unit_suffix}",
+            extent_ylabel,
+            "HADA axial signal extent over time",
+            output_root,
+            "hada_axial_signal_extent_over_time",
+        )
+    elif dataset == "2d_wga_dapi":
+        boxplot_metric(
+            plot_records,
+            conditions,
+            f"dapi_axial_extent_50_{extent_unit_suffix}",
+            extent_ylabel,
+            "DAPI axial signal length by condition",
+            output_root,
+            "dapi_axial_signal_length",
+        )
+        boxplot_metric(
+            plot_records,
+            conditions,
+            f"wga_axial_extent_50_{extent_unit_suffix}",
+            extent_ylabel,
+            "WGA axial signal extent by condition",
+            output_root,
+            "wga_axial_signal_extent",
+        )
+    elif dataset == "3d_mip":
+        extent_rows: list[dict[str, object]] = []
+        for row in plot_records:
+            for channel in spec.channel_names:
+                extent_rows.append(
+                    {
+                        "condition": f"{channel}_{row['condition']}",
+                        "extent": row.get(
+                            f"{channel.lower()}_axial_extent_50_{extent_unit_suffix}",
+                            math.nan,
+                        ),
+                    }
+                )
+        extent_conditions = [
+            f"{channel}_{condition}"
+            for channel in spec.channel_names
+            for condition in conditions
+        ]
+        boxplot_metric(
+            extent_rows,
+            extent_conditions,
+            "extent",
+            extent_ylabel,
+            "Three-channel axial signal extent",
+            output_root,
+            "3d_channel_axial_signal_extent",
         )
 
     plot_axial_profiles(
