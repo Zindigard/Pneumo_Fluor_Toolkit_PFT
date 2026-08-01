@@ -49,6 +49,7 @@ from PFT.core_prog_parts.common_paths import (
 from PFT.core_prog_parts.decoder_omezar import (
     ensure_czyx,
     load_ome_zarr,
+    load_ome_zarr_direct,
     select_index_along_axis,
 )
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
@@ -950,7 +951,9 @@ def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
     if not path.is_dir():
         raise FileNotFoundError(path)
 
-    array, axes = load_ome_zarr(path, level=0, as_numpy=False)
+    # Use direct Zarr access only for the 3D projection source. The standard
+    # shared loader remains active for the working 2D preparation workflows.
+    array, axes = load_ome_zarr_direct(path, level=0, as_numpy=False)
     axes = str(axes).lower()
     if len(axes) != int(array.ndim):
         raise ValueError(

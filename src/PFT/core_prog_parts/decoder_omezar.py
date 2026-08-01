@@ -244,6 +244,111 @@ def load_ome_zarr(
 
     return data, axes
 
+
+def load_ome_zarr_direct(
+    zarr_dir: str | Path,
+    *,
+    level: int = 0,
+    as_numpy: bool = False,
+) -> Tuple[Any, str]:
+    """Read one OME-Zarr level directly from its Zarr dataset.
+
+    This is a targeted reader for internally generated large 3D products.
+    The standard :func:`load_ome_zarr` remains unchanged and continues to use
+    ``ome_zarr.reader.Reader`` for the established 2D workflows.
+
+    Direct access is required because some valid PFT deconvolution stores were
+    observed to return a correctly shaped but zero-filled lazy array through
+    the high-level reader, while direct Zarr access returned the stored values.
+    """
+    zarr_dir = Path(zarr_dir).expanduser().resolve()
+    if not zarr_dir.is_dir():
+        raise FileNotFoundError(zarr_dir)
+
+    try:
+        import dask.array as da
+        import zarr
+    except Exception as exc:
+        raise ImportError(
+            "Direct OME-Zarr loading requires zarr and dask. "
+            "Install with: pip install zarr numcodecs dask"
+        ) from exc
+
+    root = zarr.open_group(str(zarr_dir), mode="r")
+    multiscales = root.attrs.get("multiscales")
+
+    array_path = str(level)
+    axes_from_multiscales: str | None = None
+
+    if isinstance(multiscales, list) and multiscales:
+        first_multiscale = multiscales[0]
+        datasets = first_multiscale.get("datasets")
+        if isinstance(datasets, list) and datasets:
+            if not 0 <= int(level) < len(datasets):
+                raise IndexError(
+                    f"Requested level={level}, but {len(datasets)} level(s) "
+                    f"are declared in {zarr_dir}"
+                )
+            selected_path = datasets[int(level)].get("path")
+            if isinstance(selected_path, str) and selected_path.strip():
+                array_path = selected_path.strip()
+
+        axes_entries = first_multiscale.get("axes")
+        if isinstance(axes_entries, list) and axes_entries:
+            names: list[str] = []
+            for entry in axes_entries:
+                name = entry.get("name") if isinstance(entry, dict) else entry
+                if not isinstance(name, str) or len(name) != 1:
+                    names = []
+                    break
+                names.append(name.lower())
+            if names:
+                axes_from_multiscales = "".join(names)
+
+    try:
+        stored_array = root[array_path]
+    except Exception as exc:
+        raise KeyError(
+            f"OME-Zarr dataset path {array_path!r} was not found in {zarr_dir}. "
+            f"Available arrays: {list(root.array_keys())}"
+        ) from exc
+
+    # Prefer the explicit PFT contract when it matches the selected level-0
+    # array. This repairs legacy metadata such as TCYX on a numerical CZYX
+    # deconvolution array without changing the data order.
+    pft_axes = _valid_axes_contract(root.attrs.get("pft_axes"), int(stored_array.ndim))
+    pft_shape_raw = root.attrs.get("pft_level0_shape")
+    try:
+        pft_shape = tuple(int(value) for value in pft_shape_raw)
+    except Exception:
+        pft_shape = None
+
+    if int(level) == 0 and pft_axes is not None and pft_shape == tuple(stored_array.shape):
+        axes = pft_axes
+    elif axes_from_multiscales is not None:
+        axes = normalize_axes(axes_from_multiscales)
+    else:
+        axes = infer_axes_from_ndim(int(stored_array.ndim))
+
+    if len(axes) != int(stored_array.ndim):
+        raise ValueError(
+            "OME-Zarr axes/shape mismatch during direct loading: "
+            f"axes={axes!r}, shape={tuple(stored_array.shape)}, path={zarr_dir}"
+        )
+
+    try:
+        data = da.from_zarr(str(zarr_dir), component=array_path)
+    except (TypeError, ValueError):
+        # Compatibility fallback for Dask/Zarr combinations that expect an
+        # already opened zarr.Array instead of a store plus component.
+        data = da.from_zarr(stored_array)
+
+    if as_numpy:
+        data = np.asarray(data)
+
+    return data, axes
+
+
 def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -> dict[str, object]:
     """Helper function used by this module."""
     zarr_dir = Path(zarr_dir)
