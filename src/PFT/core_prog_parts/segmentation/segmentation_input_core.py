@@ -1042,22 +1042,114 @@ def _normalize_plane_for_preview(plane: np.ndarray) -> np.ndarray:
     return np.round(scaled * 255.0).astype(np.uint8)
 
 
-def _render_preview_rgb(image: np.ndarray, axes: str, dataset: str | None = None) -> np.ndarray:
-    """Render one numerical image to an RGB preview for PNG export."""
+_RGB_DESTINATION_BY_NAME: dict[str, int] = {
+    "red": 0,
+    "green": 1,
+    "blue": 2,
+}
+
+
+def _rgb_destination_from_hex(value: Any) -> int | None:
+    """Return the dominant RGB destination encoded by an OME color value."""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 8:
+        text = text[:6]
+    if len(text) != 6:
+        return None
+    try:
+        red = int(text[0:2], 16)
+        green = int(text[2:4], 16)
+        blue = int(text[4:6], 16)
+    except ValueError:
+        return None
+    values = (red, green, blue)
+    maximum = max(values)
+    if maximum <= 0 or values.count(maximum) != 1:
+        return None
+    return values.index(maximum)
+
+
+def _preview_rgb_destinations(
+    source_zarr: Path | None,
+    channel_count: int,
+) -> tuple[int, ...] | None:
+    """Resolve numerical-channel to RGB-display mapping from OME-Zarr metadata.
+
+    Numerical channels are never reordered. This helper only determines where
+    each channel is placed in an RGB preview. The preferred source is the
+    ``pft_processing.channel_display_colors`` record written during
+    deconvolution. OME ``omero.channels[].color`` metadata is used as a fallback.
+    """
+    if source_zarr is None or channel_count <= 0:
+        return None
+
+    try:
+        import zarr
+
+        root = zarr.open_group(str(Path(source_zarr)), mode="r")
+        attrs = dict(root.attrs)
+    except Exception:
+        return None
+
+    destinations: list[int | None] = [None] * int(channel_count)
+
+    processing = attrs.get("pft_processing")
+    if isinstance(processing, dict):
+        records = processing.get("channel_display_colors")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    channel_index = int(record.get("channel_index"))
+                except (TypeError, ValueError):
+                    continue
+                color_name = str(record.get("display_color") or "").strip().lower()
+                destination = _RGB_DESTINATION_BY_NAME.get(color_name)
+                if 0 <= channel_index < channel_count and destination is not None:
+                    destinations[channel_index] = destination
+
+    if all(item is not None for item in destinations):
+        return tuple(int(item) for item in destinations)
+
+    omero = attrs.get("omero")
+    channels = omero.get("channels") if isinstance(omero, dict) else None
+    if isinstance(channels, list):
+        for channel_index, record in enumerate(channels[:channel_count]):
+            if destinations[channel_index] is not None or not isinstance(record, dict):
+                continue
+            destination = _rgb_destination_from_hex(record.get("color"))
+            if destination is not None:
+                destinations[channel_index] = destination
+
+    if all(item is not None for item in destinations):
+        return tuple(int(item) for item in destinations)
+    return None
+
+
+def _render_preview_rgb(
+    image: np.ndarray,
+    axes: str,
+    dataset: str | None = None,
+    rgb_destinations: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Render one numerical image to RGB without changing channel order."""
     array = np.asarray(image)
     axes = str(axes).lower()
-    if array.ndim == 2 or axes == 'yx':
+    if array.ndim == 2 or axes == "yx":
         gray = _normalize_plane_for_preview(array)
         return np.stack([gray, gray, gray], axis=-1)
 
-    if 'c' not in axes:
-        raise ValueError(f"Preview rendering expected YX or explicit C axis, received {axes!r}")
+    if "c" not in axes:
+        raise ValueError(
+            f"Preview rendering expected YX or explicit C axis, received {axes!r}"
+        )
 
-    c_index = axes.index('c')
+    c_index = axes.index("c")
     moved = np.moveaxis(array, c_index, -1)
-    channels = moved.shape[-1]
+    channels = int(moved.shape[-1])
 
-    if dataset == '2d_wga_dapi' and channels >= 2:
+    if dataset == "2d_wga_dapi" and channels >= 2:
         blue = _normalize_plane_for_preview(moved[..., 0])
         green = _normalize_plane_for_preview(moved[..., 1])
         red = np.zeros_like(blue, dtype=np.uint8)
@@ -1067,13 +1159,32 @@ def _render_preview_rgb(image: np.ndarray, axes: str, dataset: str | None = None
         gray = _normalize_plane_for_preview(moved[..., 0])
         return np.stack([gray, gray, gray], axis=-1)
 
-    if channels >= 3:
-        red = _normalize_plane_for_preview(moved[..., 0])
-        green = _normalize_plane_for_preview(moved[..., 1])
-        blue = _normalize_plane_for_preview(moved[..., 2])
-        return np.stack([red, green, blue], axis=-1)
+    if rgb_destinations is not None:
+        if len(rgb_destinations) < channels:
+            raise ValueError(
+                "RGB preview mapping is shorter than the numerical channel count: "
+                f"mapping={tuple(rgb_destinations)}, channels={channels}"
+            )
+        output = np.zeros((*moved.shape[:2], 3), dtype=np.uint8)
+        for channel_index in range(channels):
+            destination = int(rgb_destinations[channel_index])
+            if destination not in (0, 1, 2):
+                raise ValueError(
+                    f"Invalid RGB destination {destination} for channel {channel_index}"
+                )
+            rendered = _normalize_plane_for_preview(moved[..., channel_index])
+            output[..., destination] = np.maximum(output[..., destination], rendered)
+        return output
 
-    gray = _normalize_plane_for_preview(moved[..., 0])
+    # A missing metadata mapping must not silently imply that C0 is red.
+    # Use a neutral grayscale preview until a valid color contract is available.
+    gray = np.max(
+        np.stack(
+            [_normalize_plane_for_preview(moved[..., index]) for index in range(channels)],
+            axis=-1,
+        ),
+        axis=-1,
+    )
     return np.stack([gray, gray, gray], axis=-1)
 
 
@@ -1085,26 +1196,48 @@ def _save_preview_pngs(
     normalized_image: np.ndarray,
     normalized_axes: str,
     dataset: str,
-) -> tuple[Path, Path, Path]:
-    """Save raw, normalized, and side-by-side comparison previews."""
+    display_source_zarr: Path | None = None,
+) -> tuple[Path, Path, Path, tuple[int, ...] | None]:
+    """Save raw, normalized, and comparison previews with metadata colors."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    raw_rgb = _render_preview_rgb(raw_image, raw_axes, dataset=dataset)
-    normalized_rgb = _render_preview_rgb(normalized_image, normalized_axes, dataset=dataset)
+
+    raw_array = np.asarray(raw_image)
+    raw_axes_lower = str(raw_axes).lower()
+    channel_count = (
+        int(raw_array.shape[raw_axes_lower.index("c")])
+        if "c" in raw_axes_lower
+        else 1
+    )
+    destinations = _preview_rgb_destinations(display_source_zarr, channel_count)
+
+    raw_rgb = _render_preview_rgb(
+        raw_image,
+        raw_axes,
+        dataset=dataset,
+        rgb_destinations=destinations,
+    )
+    normalized_rgb = _render_preview_rgb(
+        normalized_image,
+        normalized_axes,
+        dataset=dataset,
+        rgb_destinations=destinations,
+    )
     if raw_rgb.shape[:2] != normalized_rgb.shape[:2]:
         raise ValueError(
-            'Raw and normalized previews must share YX shape, received '
-            f'{raw_rgb.shape[:2]} and {normalized_rgb.shape[:2]}'
+            "Raw and normalized previews must share YX shape, received "
+            f"{raw_rgb.shape[:2]} and {normalized_rgb.shape[:2]}"
         )
     divider = np.full((raw_rgb.shape[0], 16, 3), 255, dtype=np.uint8)
     comparison = np.concatenate([raw_rgb, divider, normalized_rgb], axis=1)
 
-    raw_path = output_dir / 'preview_raw.png'
-    normalized_path = output_dir / 'preview_normalized.png'
-    comparison_path = output_dir / 'preview_comparison.png'
-    Image.fromarray(raw_rgb, mode='RGB').save(raw_path)
-    Image.fromarray(normalized_rgb, mode='RGB').save(normalized_path)
-    Image.fromarray(comparison, mode='RGB').save(comparison_path)
-    return raw_path, normalized_path, comparison_path
+    raw_path = output_dir / "preview_raw.png"
+    normalized_path = output_dir / "preview_normalized.png"
+    comparison_path = output_dir / "preview_comparison.png"
+    Image.fromarray(raw_rgb, mode="RGB").save(raw_path)
+    Image.fromarray(normalized_rgb, mode="RGB").save(normalized_path)
+    Image.fromarray(comparison, mode="RGB").save(comparison_path)
+    return raw_path, normalized_path, comparison_path, destinations
+
 
 def prepare_one_segmentation_input(
     record: SegmentationSource,
@@ -1222,13 +1355,19 @@ def prepare_one_segmentation_input(
         coordinate_scale=coordinate_scale,
         extra_attrs={"pft_processing": processing},
     )
-    preview_raw_png, preview_normalized_png, preview_comparison_png = _save_preview_pngs(
+    (
+        preview_raw_png,
+        preview_normalized_png,
+        preview_comparison_png,
+        preview_rgb_destinations,
+    ) = _save_preview_pngs(
         Path(output).parent,
         raw_image=intensity_array,
         raw_axes=intensity_axes,
         normalized_image=prepared,
         normalized_axes=intensity_axes,
         dataset=record.dataset,
+        display_source_zarr=record.intensity_source_zarr,
     )
 
     report = {
@@ -1249,6 +1388,16 @@ def prepare_one_segmentation_input(
         "preview_raw_png": str(preview_raw_png),
         "preview_normalized_png": str(preview_normalized_png),
         "preview_comparison_png": str(preview_comparison_png),
+        "preview_rgb_destinations": (
+            list(preview_rgb_destinations)
+            if preview_rgb_destinations is not None
+            else None
+        ),
+        "preview_rgb_destination_definition": {
+            "0": "red",
+            "1": "green",
+            "2": "blue",
+        },
     }
     report_path = Path(output).parent / "segmentation_input_report.json"
     report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
