@@ -164,6 +164,7 @@ def main(default_family: str | None = None) -> int:
     print(f"Samples:             {len(items) if selected is None else 1}")
     print("Input contract:      prepared float32 [0,1]")
     print("Model normalization: DISABLED")
+    print("Saved visuals:       prediction_labels.png, prediction_overlay.png, prediction_comparison.png")
 
     output = run_prediction_dataset(cfg)
     print(f"\nSaved predictions to:\n{output}")

@@ -88,3 +88,51 @@ def test_2d_time_yx_is_already_channel_zero() -> None:
     assert np.array_equal(selected, source)
     assert metadata["selected_channels"] == [0]
     assert metadata["ignored_channels"] == []
+
+
+def test_omnipose_2d_time_adds_zero_second_channel() -> None:
+    from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
+        _prepare_omnipose_image,
+    )
+
+    source = np.ones((12, 14), dtype=np.float32)
+    prepared, metadata = _prepare_omnipose_image(source, "2d_time")
+
+    assert prepared.shape == (12, 14, 2)
+    assert np.array_equal(prepared[..., 0], source)
+    assert np.count_nonzero(prepared[..., 1]) == 0
+    assert metadata["policy"] == "channel0_plus_zero"
+
+
+def test_omnipose_wga_dapi_reorders_wga_first() -> None:
+    from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
+        _prepare_omnipose_image,
+    )
+
+    source = np.zeros((8, 9, 2), dtype=np.float32)
+    source[..., 0] = 0.2  # DAPI
+    source[..., 1] = 0.8  # WGA
+    prepared, metadata = _prepare_omnipose_image(source, "2d_wga_dapi")
+
+    assert np.allclose(prepared[..., 0], 0.8)
+    assert np.allclose(prepared[..., 1], 0.2)
+    assert metadata["policy"] == "wga_then_dapi"
+
+
+def test_explicit_split_reports_source_overlap() -> None:
+    from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
+        _split_train_validation,
+    )
+
+    image = np.ones((8, 8), dtype=np.float32)
+    mask = np.ones((8, 8), dtype=np.int32)
+    names = [
+        "sample_a/crops/train/crop_001",
+        "sample_a/crops/validation/crop_002",
+    ]
+    _train, _validation, diagnostics = _split_train_validation(
+        [image, image], [mask, mask], names, 0.2, 1
+    )
+
+    assert diagnostics["source_sample_overlap"] == ["sample_a"]
+    assert diagnostics["source_sample_overlap_warning"] is True

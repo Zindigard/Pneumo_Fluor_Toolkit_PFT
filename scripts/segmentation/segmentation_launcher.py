@@ -18,9 +18,11 @@ ACTIONS: tuple[tuple[str, str], ...] = (
     ("Prepare normalized segmentation inputs", "prepare_segmentation_inputs.py"),
     ("Check sources, metadata, dtype, and masks", "check_segmentation_inputs.py"),
     ("Create or edit manual instance masks in Napari", "labeling_segmentation.py"),
+    ("Check full-image and crop annotations before fine-tuning", "check_finetuning_annotations.py"),
+    ("Screen pretrained Cellpose-SAM or Omnipose against U-Net masks", "screen_pretrained_segmentation.py"),
     ("Run Cellpose, Omnipose, or StarDist prediction", "run_segmentation_model.py"),
     ("Train or fine-tune an initial model", "train_segmentation_model.py"),
-    ("Tune prediction parameters against manual masks", "tune_segmentation_model.py"),
+    ("Tune prediction parameters on manual validation masks", "tune_segmentation_model.py"),
 )
 
 

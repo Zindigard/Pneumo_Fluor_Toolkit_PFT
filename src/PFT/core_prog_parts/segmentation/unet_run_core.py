@@ -6,8 +6,7 @@ non-overlapping tiles, and reconstructs the original image dimensions. It can
 save the binary mask, probability map, and a non-normalized background-
 suppressed OME-Zarr image. Pixels inside the predicted foreground mask retain
 their filtered intensities, whereas pixels outside the mask are attenuated by
-98% by default and therefore retain 2% of their original intensity. ROI-SNR is
-calculated only after this attenuated image has been saved.
+98% by default and therefore retain 2% of their original intensity. 
 
 The most important adjustable values are defined in :class:`UNetRunConfig`.
 Inference is not a second training stage. Parameters such as ``threshold``,
@@ -116,14 +115,12 @@ class UNetRunConfig:
     save_foreground_image:
         Save the non-normalized, background-suppressed OME-Zarr image. The input
         dtype and axis order are retained. Pixels inside the predicted mask keep
-        their original filtered values; pixels outside the mask are multiplied
-        by ``1 - outside_mask_depletion``. This output must be enabled when SNR
-        is calculated because SNR is intentionally measured from the saved file.
+        their original filtered values.
+        
     compute_metrics:
         Calculate IoU, Dice, and available ROI-SNR values when references exist.
-        SNR before is calculated from the raw image. SNR after is calculated by
-        reloading the saved background-suppressed OME-Zarr image, which confirms
-        that the reported metric corresponds to the actual stored result.
+        SNR before is calculated from the raw image and SNR after from the unmasked
+        filtered input.
     strict_metrics:
         When ``False`` (default), samples without a hand-labelled reference mask
         are still processed and saved, but their quantitative metrics are marked
@@ -172,11 +169,6 @@ def validate_run_config(cfg: UNetRunConfig) -> None:
         raise ValueError("predict_batch_size must be positive")
     if not 0.0 <= cfg.outside_mask_depletion <= 1.0:
         raise ValueError("outside_mask_depletion must be in [0,1]")
-    if cfg.compute_metrics and not cfg.save_foreground_image:
-        raise ValueError(
-            "SNR is calculated from the saved background-suppressed OME-Zarr; "
-            "save_foreground_image must be True when compute_metrics is True"
-        )
     if cfg.epsilon <= 0:
         raise ValueError("epsilon must be positive")
 
@@ -419,25 +411,54 @@ def binary_dice(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 
     return float((2 * intersection + epsilon) / (denominator + epsilon))
 
 
-def roi_snr(image: np.ndarray, reference_mask: np.ndarray, epsilon: float = 1e-12) -> float:
-    """Compute the thesis-defined ROI SNR using sample SD of background pixels.
+def roi_snr(
+    image: np.ndarray,
+    reference_mask: np.ndarray,
+    epsilon: float = 1e-12,
+    *,
+    relative_sd_floor: float = 1e-8,
+) -> float:
+    """Compute ROI SNR and reject zero or numerically negligible background SD.
 
-    Formula: ``(mean(signal) - mean(background)) / (SD(background) + epsilon)``.
-    The hand-labelled reference mask defines both regions. ``epsilon`` is only a
-    numerical safeguard and should not be enlarged to improve an SNR value.
+    Formula: ``(mean(signal) - mean(background)) / SD(background)``.
+    The same hand-labelled reference mask must define both regions for every
+    compared image. ``epsilon`` remains a numerical safeguard only; it must not
+    turn a zero-variance background into an enormous finite SNR.
     """
     image = np.asarray(image, dtype=np.float64)
     reference_mask = np.asarray(reference_mask, dtype=bool)
-    signal = image[reference_mask]
-    background = image[~reference_mask]
+    if image.shape != reference_mask.shape:
+        raise ValueError(
+            f"ROI SNR image/mask shape mismatch: {image.shape} versus "
+            f"{reference_mask.shape}"
+        )
+
+    finite = np.isfinite(image)
+    signal = image[reference_mask & finite]
+    background = image[(~reference_mask) & finite]
     if signal.size == 0:
-        raise ValueError("ROI SNR requires at least one signal pixel")
+        raise ValueError("ROI SNR requires at least one finite signal pixel")
     if background.size < 2:
-        raise ValueError("ROI SNR requires at least two background pixels")
+        raise ValueError("ROI SNR requires at least two finite background pixels")
+
     signal_mean = float(np.mean(signal))
     background_mean = float(np.mean(background))
     background_sd = float(np.std(background, ddof=1))
-    return float((signal_mean - background_mean) / (background_sd + epsilon))
+
+    finite_values = image[finite]
+    dynamic_range = float(np.ptp(finite_values)) if finite_values.size else 0.0
+    numerical_scale = max(
+        dynamic_range,
+        abs(signal_mean),
+        abs(background_mean),
+        abs(signal_mean - background_mean),
+        1.0,
+    )
+    sd_floor = max(float(epsilon), float(relative_sd_floor) * numerical_scale)
+    if not np.isfinite(background_sd) or background_sd <= sd_floor:
+        return float("nan")
+
+    return float((signal_mean - background_mean) / background_sd)
 
 
 def _normalized_hwc_with_reference(
@@ -642,10 +663,11 @@ def run_2d_unet_on_omezarr(
     3. Apply the masks to the original non-normalized filtered OME-Zarr array.
     4. Remove ``cfg.outside_mask_depletion`` of the intensity outside masks.
     5. Save the attenuated array as OME-Zarr with source axes and dtype.
-    6. Reload the saved OME-Zarr and calculate SNR from that stored result.
+    6. Calculate ROI-SNR from raw and unmasked filtered images using the same
+       hand-labelled reference mask.
 
-    This order prevents accidental SNR calculation from normalized tensors or
-    from an in-memory array that differs from the saved quantitative output.
+    The attenuated output is excluded from SNR because outside-mask suppression
+    changes the background distribution and can create artificial SNR inflation.
     """
     zarr_path = Path(zarr_path)
     sample = _sample_name_from_zarr(zarr_path)
@@ -789,10 +811,6 @@ def run_2d_unet_on_omezarr(
 
     metric_rows: list[dict[str, Any]] = []
     if cfg.compute_metrics:
-        if foreground_zarr is None:
-            raise RuntimeError(
-                "SNR requires the saved background-suppressed OME-Zarr output"
-            )
         if reference is None:
             message = (
                 f"Reference mask is missing for {sample}; inference outputs were saved, "
@@ -821,7 +839,7 @@ def run_2d_unet_on_omezarr(
                 for channel_index in range(filtered_frame.shape[-1]):
                     snr_before = roi_snr(raw_frame[..., channel_index], reference, cfg.epsilon)
                     snr_after = roi_snr(
-                        suppressed_frame[..., channel_index], reference, cfg.epsilon
+                        filtered_frame[..., channel_index], reference, cfg.epsilon
                     )
                     metric_rows.append(
                         {
@@ -840,9 +858,17 @@ def run_2d_unet_on_omezarr(
                             "filtered_zarr": str(zarr_path),
                             "reference_mask": str(mask_path),
                             "predicted_mask": str(mask_zarr),
-                            "background_suppressed_output": str(foreground_zarr),
+                            "snr_before_source": str(raw_path),
+                            "snr_after_source": str(zarr_path),
+                            "snr_after_source_is_unmasked": True,
+                            "snr_mask_source": str(mask_path),
+                            "background_suppressed_output": (
+                                str(foreground_zarr) if foreground_zarr is not None else ""
+                            ),
                             # Retained for compatibility with earlier result readers.
-                            "foreground_output": str(foreground_zarr),
+                            "foreground_output": (
+                                str(foreground_zarr) if foreground_zarr is not None else ""
+                            ),
                         }
                     )
 
@@ -886,8 +912,13 @@ def run_2d_unet_on_omezarr(
                     "threshold": cfg.threshold,
                     "outside_mask_depletion": cfg.outside_mask_depletion,
                     "outside_mask_residual": 1.0 - cfg.outside_mask_depletion,
-                    "snr_after_source": str(foreground_zarr),
-                    "snr_after_source_is_saved_omezarr": True,
+                    "snr_before_source": str(raw_path),
+                    "snr_after_source": str(zarr_path),
+                    "snr_after_source_is_unmasked": True,
+                    "snr_reference_mask": str(mask_path),
+                    "background_suppressed_output_excluded_from_snr": (
+                        str(foreground_zarr) if foreground_zarr is not None else None
+                    ),
                     "iou_mean": iou_mean,
                     "iou_standard_deviation": iou_sd,
                     "dice_mean": dice_mean,
@@ -1065,10 +1096,12 @@ def run_dataset(
             "Saved enhanced image: foreground_filtered.ome.zarr; source dtype and axes retained",
             "Saved image normalization: none; only temporary U-Net inputs are normalized",
             "SNR formula: (mean_signal - mean_background) / (background_sample_SD + epsilon)",
-            "SNR after is calculated after reloading the saved background-suppressed OME-Zarr.",
+            "SNR before is calculated from the raw image.",
+            "SNR after is calculated from the unmasked filtered input image.",
             "The same hand-labelled reference mask defines signal/background ROIs before and after.",
+            "The background-suppressed U-Net output is excluded from SNR calculation.",
             "",
-            "Sample | IoU mean | Dice mean | SNR before | SNR after | Delta SNR",
+            "Sample | IoU mean | Dice mean | SNR raw | SNR filtered unmasked | Delta SNR",
         ]
         for row in sample_summaries:
             summary_lines.append(

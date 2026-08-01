@@ -16,6 +16,13 @@ Manual instance masks::
 
     results/training_files/segmentation/<dataset>/<source_mode>/<sample>/mask.tif
 
+Crop-based fine-tuning pairs::
+
+    results/training_files/segmentation/<dataset>/<source_mode>/<sample>/
+        crops/<train|validation>/<crop_id>/
+            segmentation_input.ome.zarr
+            mask.tif
+
 Models::
 
     models/segmentation/<family>/<dataset>/<source_mode>/<run_name>/
@@ -55,6 +62,8 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (
 
 ModelFamily = Literal["cellpose", "omnipose", "stardist"]
 MODEL_FAMILIES: tuple[str, ...] = ("cellpose", "omnipose", "stardist")
+ANNOTATION_SOURCES: tuple[str, ...] = ("crops-only", "full-images-only", "all")
+ANNOTATION_SPLITS: tuple[str, ...] = ("train", "validation", "any")
 
 
 @dataclass(frozen=True)
@@ -112,6 +121,14 @@ class TrainingConfig:
     steps_per_epoch: int = 100
     patch_size: tuple[int, int] = (256, 256)
     omnipose_nclasses: int = 3
+    annotation_source: str = "crops-only"
+    require_validation: bool = True
+    validation_diameter: float | None = None
+    validation_flow_threshold: float = 0.6
+    validation_cellprob_threshold: float = -0.5
+    validation_mask_threshold: float = 0.0
+    validation_min_size: int = 15
+    save_validation_labels: bool = True
     extra_cli: list[str] = field(default_factory=list)
 
 
@@ -127,7 +144,8 @@ class TuneConfig:
     model_name: str | None = None
     gpu: bool = True
     selected_sample_keys: set[str] | None = None
-    instance_iou_threshold: float = 0.5
+    annotation_source: str = "crops-only"
+    annotation_split: str = "validation"
     diameter_values: tuple[float | None, ...] = (None,)
     flow_threshold_values: tuple[float, ...] = (0.2, 0.4, 0.6)
     cellprob_threshold_values: tuple[float, ...] = (-1.0, 0.0, 1.0)
@@ -172,6 +190,79 @@ def list_prepared_inputs(
                 training_mask=mask_root / relative / "mask.tif",
             )
         )
+    return items
+
+
+def _annotation_kind(sample_key: str) -> str:
+    return "crop" if "/crops/" in sample_key.replace("\\", "/") else "full_image"
+
+
+def _annotation_split(sample_key: str) -> str | None:
+    normalized = sample_key.replace("\\", "/")
+    if "/crops/train/" in normalized:
+        return "train"
+    if "/crops/validation/" in normalized:
+        return "validation"
+    return None
+
+
+def _source_sample_key(sample_key: str) -> str:
+    normalized = sample_key.replace("\\", "/")
+    return normalized.split("/crops/", 1)[0]
+
+
+def list_training_inputs(
+    project_root: Path,
+    dataset: str,
+    source_mode: str,
+    *,
+    annotation_source: str = "all",
+    annotation_split: str = "any",
+) -> list[PreparedInputItem]:
+    """List full-image and crop-based image/mask pairs for fine-tuning.
+
+    Full-image annotations retain their original sample key. Crop pairs use a
+    key of the form ``<sample>/crops/<train|validation>/<crop_id>``. The split
+    encoded in this key is respected by the train/validation splitter.
+    """
+    items = list_prepared_inputs(project_root, dataset, source_mode)
+    mask_root = segmentation_mask_root(project_root, dataset, source_mode)
+    crop_inputs = sorted(
+        mask_root.glob("**/crops/*/crop_*/segmentation_input.ome.zarr")
+    )
+    for input_zarr in crop_inputs:
+        crop_dir = input_zarr.parent
+        try:
+            relative = crop_dir.relative_to(mask_root)
+        except ValueError:
+            continue
+        parts = relative.parts
+        if len(parts) < 4 or parts[-3] != "crops" or parts[-2] not in {"train", "validation"}:
+            continue
+        items.append(
+            PreparedInputItem(
+                sample_key=relative.as_posix(),
+                input_zarr=input_zarr,
+                training_mask=crop_dir / "mask.tif",
+            )
+        )
+    if annotation_source not in ANNOTATION_SOURCES:
+        raise ValueError(
+            f"annotation_source must be one of {ANNOTATION_SOURCES}, received {annotation_source!r}"
+        )
+    if annotation_split not in ANNOTATION_SPLITS:
+        raise ValueError(
+            f"annotation_split must be one of {ANNOTATION_SPLITS}, received {annotation_split!r}"
+        )
+    if annotation_source == "crops-only":
+        items = [item for item in items if _annotation_kind(item.sample_key) == "crop"]
+    elif annotation_source == "full-images-only":
+        items = [item for item in items if _annotation_kind(item.sample_key) == "full_image"]
+    if annotation_split != "any":
+        items = [
+            item for item in items
+            if _annotation_split(item.sample_key) == annotation_split
+        ]
     return items
 
 
@@ -236,9 +327,17 @@ def collect_training_data(
     source_mode: str,
     *,
     selected_sample_keys: set[str] | None = None,
+    annotation_source: str = "all",
+    annotation_split: str = "any",
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[str]]:
-    """Load all prepared image/mask pairs with strict instance-label checks."""
-    items = list_prepared_inputs(project_root, dataset, source_mode)
+    """Load selected full-image or crop-based pairs with strict checks."""
+    items = list_training_inputs(
+        project_root,
+        dataset,
+        source_mode,
+        annotation_source=annotation_source,
+        annotation_split=annotation_split,
+    )
     if selected_sample_keys is not None:
         items = [item for item in items if item.sample_key in selected_sample_keys]
     images: list[np.ndarray] = []
@@ -324,7 +423,7 @@ def _load_prediction_model(cfg: PredictionConfig):
                 return models.CellposeModel(
                     gpu=cfg.gpu,
                     pretrained_model=str(cfg.model),
-                    nchan=2 if cfg.dataset == "2d_wga_dapi" else 1,
+                    nchan=2,
                     nclasses=3,
                     dim=2,
                 )
@@ -335,7 +434,7 @@ def _load_prediction_model(cfg: PredictionConfig):
             return models.Cellpose(
                 gpu=cfg.gpu,
                 model_type=model_type,
-                nchan=2 if cfg.dataset == "2d_wga_dapi" else 1,
+                nchan=2,
                 nclasses=3,
                 dim=2,
             )
@@ -360,6 +459,59 @@ def load_prediction_model(cfg: PredictionConfig):
     """Load one pretrained or user-supplied prediction model for reuse."""
     return _load_prediction_model(cfg)
 
+def _prepare_omnipose_image(image: np.ndarray, dataset: str) -> tuple[np.ndarray, dict[str, Any]]:
+    """Return a two-channel YXC image compatible with bact_fluor_omni.
+
+    The named ``bact_fluor_omni`` weights use ``nchan=2`` and ``nclasses=3``.
+    For ``2d_time``, HADA is placed in channel 0 and channel 1 is zero-filled.
+    For ``2d_wga_dapi``, WGA is placed first as the cell-boundary signal and
+    DAPI second. Other datasets retain their first two numerical channels.
+    """
+    array = np.asarray(image, dtype=np.float32)
+    if array.ndim == 2:
+        first = array
+        second = np.zeros_like(first, dtype=np.float32)
+        policy = "channel0_plus_zero"
+    elif array.ndim == 3 and array.shape[-1] >= 1:
+        if dataset == "2d_wga_dapi" and array.shape[-1] >= 2:
+            first = array[..., 1]  # WGA primary
+            second = array[..., 0]  # DAPI secondary
+            policy = "wga_then_dapi"
+        elif array.shape[-1] == 1:
+            first = array[..., 0]
+            second = np.zeros_like(first, dtype=np.float32)
+            policy = "channel0_plus_zero"
+        else:
+            first = array[..., 0]
+            second = array[..., 1]
+            policy = "first_two_channels"
+    else:
+        raise ValueError(f"Unsupported Omnipose image shape: {array.shape}")
+    prepared = np.stack([first, second], axis=-1).astype(np.float32, copy=False)
+    return prepared, {
+        "policy": policy,
+        "output_channels": 2,
+        "output_shape": [int(value) for value in prepared.shape],
+    }
+
+
+def _prepare_family_images(
+    images: Sequence[np.ndarray], family: str, dataset: str
+) -> tuple[list[np.ndarray], list[dict[str, Any]]]:
+    if family != "omnipose":
+        return [np.asarray(image) for image in images], [
+            {"policy": "unchanged", "output_shape": list(np.asarray(image).shape)}
+            for image in images
+        ]
+    prepared: list[np.ndarray] = []
+    records: list[dict[str, Any]] = []
+    for image in images:
+        converted, record = _prepare_omnipose_image(image, dataset)
+        prepared.append(converted)
+        records.append(record)
+    return prepared, records
+
+
 def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
     kwargs = {
         "diameter": cfg.diameter,
@@ -376,17 +528,18 @@ def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
 
 
 def _omnipose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
-    channels = [0, 0] if image.ndim == 2 or image.shape[-1] == 1 else [2, 1]
+    prepared, _channel_record = _prepare_omnipose_image(image, cfg.dataset)
     kwargs = {
         "diameter": cfg.diameter,
-        "channels": channels,
+        "channels": None,
+        "channel_axis": -1,
         "omni": True,
         "mask_threshold": cfg.mask_threshold,
         "flow_threshold": cfg.flow_threshold,
         "min_size": cfg.min_size,
         "normalize": False,
     }
-    result = model.eval([image], **kwargs)
+    result = model.eval([prepared], **_supported_kwargs(model.eval, kwargs))
     masks = result[0]
     if isinstance(masks, (list, tuple)):
         masks = masks[0]
@@ -500,13 +653,47 @@ def _split_train_validation(
     names: list[str],
     fraction: float,
     seed: int,
-) -> tuple[tuple[list[np.ndarray], list[np.ndarray], list[str]], tuple[list[np.ndarray], list[np.ndarray], list[str]]]:
+) -> tuple[
+    tuple[list[np.ndarray], list[np.ndarray], list[str]],
+    tuple[list[np.ndarray], list[np.ndarray], list[str]],
+    dict[str, Any],
+]:
+    """Split pairs while respecting explicit crop assignments.
+
+    Explicit ``crops/train`` and ``crops/validation`` folders are authoritative.
+    When no explicit validation crop exists, a seeded random validation split is
+    created. A warning is recorded when training and validation originate from
+    the same full-resolution sample.
+    """
     if not 0.0 <= fraction < 1.0:
         raise ValueError("validation_fraction must be in [0,1)")
-    indices = list(range(len(images)))
-    random.Random(seed).shuffle(indices)
-    n_validation = max(1, int(round(len(indices) * fraction))) if len(indices) > 1 and fraction > 0 else 0
-    validation_indices = set(indices[:n_validation])
+
+    explicit_train = {
+        index for index, name in enumerate(names) if _annotation_split(name) == "train"
+    }
+    explicit_validation = {
+        index for index, name in enumerate(names) if _annotation_split(name) == "validation"
+    }
+    all_indices = set(range(len(images)))
+    unspecified = sorted(all_indices - explicit_train - explicit_validation)
+    validation_indices = set(explicit_validation)
+    train_indices = set(explicit_train)
+
+    if explicit_validation:
+        train_indices.update(unspecified)
+        split_policy = "explicit_validation_crops"
+    else:
+        candidates = sorted(train_indices | set(unspecified))
+        random.Random(seed).shuffle(candidates)
+        n_validation = (
+            max(1, int(round(len(candidates) * fraction)))
+            if len(candidates) > 1 and fraction > 0
+            else 0
+        )
+        validation_indices.update(candidates[:n_validation])
+        train_indices.update(candidates[n_validation:])
+        split_policy = "seeded_random_split"
+
     train_x: list[np.ndarray] = []
     train_y: list[np.ndarray] = []
     train_names: list[str] = []
@@ -514,24 +701,333 @@ def _split_train_validation(
     val_y: list[np.ndarray] = []
     val_names: list[str] = []
     for index, (image, mask, name) in enumerate(zip(images, masks, names)):
-        target = (val_x, val_y, val_names) if index in validation_indices else (train_x, train_y, train_names)
-        target[0].append(image)
-        target[1].append(mask)
-        target[2].append(name)
+        if index in validation_indices:
+            val_x.append(image)
+            val_y.append(mask)
+            val_names.append(name)
+        elif index in train_indices:
+            train_x.append(image)
+            train_y.append(mask)
+            train_names.append(name)
+
     if not train_x:
         raise RuntimeError("Training split is empty")
-    return (train_x, train_y, train_names), (val_x, val_y, val_names)
+    train_sources = {_source_sample_key(name) for name in train_names}
+    validation_sources = {_source_sample_key(name) for name in val_names}
+    leakage_sources = sorted(train_sources & validation_sources)
+    diagnostics = {
+        "split_policy": split_policy,
+        "train_pair_count": len(train_names),
+        "validation_pair_count": len(val_names),
+        "train_source_samples": sorted(train_sources),
+        "validation_source_samples": sorted(validation_sources),
+        "source_sample_overlap": leakage_sources,
+        "source_sample_overlap_warning": bool(leakage_sources),
+    }
+    return (train_x, train_y, train_names), (val_x, val_y, val_names), diagnostics
+
+
+def _numeric_sequence(value: Any) -> list[float]:
+    if value is None:
+        return []
+    try:
+        array = np.asarray(value, dtype=np.float64).reshape(-1)
+    except Exception:
+        return []
+    if array.size == 0 or not np.all(np.isfinite(array)):
+        return []
+    return [float(item) for item in array]
+
+
+def _extract_training_result(
+    result: Any, run_dir: Path, run_name: str
+) -> tuple[Path | None, list[float], list[float], str]:
+    model_path: Path | None = None
+    train_losses: list[float] = []
+    validation_losses: list[float] = []
+    if isinstance(result, (tuple, list)):
+        if len(result) >= 1 and result[0] is not None:
+            candidate = Path(str(result[0])).expanduser()
+            if candidate.exists():
+                model_path = candidate.resolve()
+            elif not candidate.is_absolute():
+                joined = run_dir / candidate
+                if joined.exists():
+                    model_path = joined.resolve()
+        if len(result) >= 2:
+            train_losses = _numeric_sequence(result[1])
+        if len(result) >= 3:
+            validation_losses = _numeric_sequence(result[2])
+    elif result is not None:
+        candidate = Path(str(result)).expanduser()
+        if candidate.exists():
+            model_path = candidate.resolve()
+        elif not candidate.is_absolute() and (run_dir / candidate).exists():
+            model_path = (run_dir / candidate).resolve()
+
+    if model_path is None:
+        candidates = [
+            path for path in run_dir.rglob("*")
+            if path.is_file()
+            and run_name.lower() in path.name.lower()
+            and path.suffix.lower() not in {".json", ".csv", ".png", ".txt"}
+        ]
+        if candidates:
+            candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+            model_path = candidates[0].resolve()
+    return model_path, train_losses, validation_losses, repr(result)
+
+
+def _save_loss_outputs(
+    run_dir: Path,
+    train_losses: Sequence[float],
+    validation_losses: Sequence[float],
+) -> dict[str, str | None]:
+    if not train_losses and not validation_losses:
+        return {"loss_csv": None, "loss_curve_png": None}
+    csv_path = run_dir / "training_losses.csv"
+    count = max(len(train_losses), len(validation_losses))
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["epoch", "training_loss", "validation_loss"]
+        )
+        writer.writeheader()
+        for index in range(count):
+            writer.writerow(
+                {
+                    "epoch": index + 1,
+                    "training_loss": train_losses[index] if index < len(train_losses) else "",
+                    "validation_loss": (
+                        validation_losses[index] if index < len(validation_losses) else ""
+                    ),
+                }
+            )
+    import matplotlib.pyplot as plt
+
+    figure, axis = plt.subplots(figsize=(8, 5))
+    if train_losses:
+        axis.plot(range(1, len(train_losses) + 1), train_losses, label="training loss")
+    if validation_losses:
+        axis.plot(
+            range(1, len(validation_losses) + 1),
+            validation_losses,
+            label="validation loss",
+        )
+    axis.set_xlabel("Epoch")
+    axis.set_ylabel("Loss")
+    axis.set_title("Fine-tuning loss")
+    axis.legend()
+    axis.grid(True, alpha=0.3)
+    figure.tight_layout()
+    curve_path = run_dir / "training_loss_curve.png"
+    figure.savefig(curve_path, dpi=180)
+    plt.close(figure)
+    return {"loss_csv": str(csv_path), "loss_curve_png": str(curve_path)}
+
+
+def _display_rgb(image: np.ndarray, dataset: str) -> np.ndarray:
+    array = np.asarray(image, dtype=np.float32)
+    if array.ndim == 2:
+        rgb = np.zeros((*array.shape, 3), dtype=np.float32)
+        rgb[..., 2] = array
+        return np.clip(rgb, 0.0, 1.0)
+    rgb = np.zeros((*array.shape[:2], 3), dtype=np.float32)
+    if dataset == "2d_wga_dapi" and array.shape[-1] >= 2:
+        rgb[..., 2] = array[..., 0]
+        rgb[..., 1] = array[..., 1]
+    else:
+        rgb[..., 2] = array[..., 0]
+        if array.shape[-1] > 1:
+            rgb[..., 1] = array[..., 1]
+        if array.shape[-1] > 2:
+            rgb[..., 0] = array[..., 2]
+    return np.clip(rgb, 0.0, 1.0)
+
+
+def _save_validation_comparison(
+    image: np.ndarray,
+    reference: np.ndarray,
+    prediction: np.ndarray,
+    output_png: Path,
+    dataset: str,
+    dice: float,
+    iou: float,
+) -> None:
+    import matplotlib.pyplot as plt
+    from skimage.segmentation import find_boundaries
+
+    rgb = _display_rgb(image, dataset)
+    overlay = np.array(rgb, copy=True)
+    ref_boundary = find_boundaries(reference > 0, mode="outer")
+    pred_boundary = find_boundaries(prediction > 0, mode="outer")
+    overlay[ref_boundary] = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    overlay[pred_boundary] = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+    figure, axes = plt.subplots(1, 4, figsize=(16, 4))
+    axes[0].imshow(rgb)
+    axes[0].set_title("Prepared input")
+    axes[1].imshow(reference > 0, cmap="gray")
+    axes[1].set_title("Manual reference")
+    axes[2].imshow(prediction, cmap="nipy_spectral")
+    axes[2].set_title("Prediction")
+    axes[3].imshow(overlay)
+    axes[3].set_title(f"Overlay\nDice={dice:.4f}, IoU={iou:.4f}")
+    for axis in axes:
+        axis.axis("off")
+    figure.tight_layout()
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_png, dpi=180)
+    plt.close(figure)
+
+
+def _validation_prediction_config(cfg: TrainingConfig, model_path: Path) -> PredictionConfig:
+    return PredictionConfig(
+        project_root=cfg.project_root,
+        family=cfg.family,
+        dataset=cfg.dataset,
+        source_mode=cfg.source_mode,
+        model=model_path,
+        model_name=cfg.run_name,
+        gpu=cfg.gpu,
+        diameter=cfg.validation_diameter,
+        flow_threshold=cfg.validation_flow_threshold,
+        cellprob_threshold=cfg.validation_cellprob_threshold,
+        mask_threshold=cfg.validation_mask_threshold,
+        min_size=cfg.validation_min_size,
+        batch_size=cfg.batch_size,
+    )
+
+
+def _evaluate_validation_after_training(
+    cfg: TrainingConfig,
+    run_dir: Path,
+    model_path: Path | None,
+    validation_images: list[np.ndarray],
+    validation_masks: list[np.ndarray],
+    validation_names: list[str],
+) -> dict[str, Any]:
+    output_dir = run_dir / "validation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not validation_images:
+        payload = {
+            "status": "skipped_no_validation_pairs",
+            "validation_pair_count": 0,
+        }
+        (output_dir / "validation_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+    if model_path is None or not model_path.exists():
+        payload = {
+            "status": "skipped_model_path_unresolved",
+            "validation_pair_count": len(validation_images),
+        }
+        (output_dir / "validation_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+
+    prediction_cfg = _validation_prediction_config(cfg, model_path)
+    model = _load_prediction_model(prediction_cfg)
+    rows: list[dict[str, Any]] = []
+    for image, reference, name in zip(
+        validation_images, validation_masks, validation_names
+    ):
+        prediction = predict_one(model, image, prediction_cfg)
+        dice = semantic_dice(reference, prediction)
+        iou = semantic_iou(reference, prediction)
+        sample_dir = output_dir / _safe_name(name)
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        comparison_png = sample_dir / "comparison.png"
+        _save_validation_comparison(
+            image, reference, prediction, comparison_png, cfg.dataset, dice, iou
+        )
+        label_path: Path | None = None
+        if cfg.save_validation_labels:
+            max_label = int(np.max(prediction)) if prediction.size else 0
+            dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
+            label_path = sample_dir / "predicted_labels.tif"
+            tiff.imwrite(label_path, prediction.astype(dtype, copy=False))
+        ref_pixels = int(np.count_nonzero(reference))
+        pred_pixels = int(np.count_nonzero(prediction))
+        rows.append(
+            {
+                "sample_key": name,
+                "semantic_dice": dice,
+                "semantic_iou": iou,
+                "reference_foreground_pixels": ref_pixels,
+                "prediction_foreground_pixels": pred_pixels,
+                "foreground_area_ratio": (
+                    float(pred_pixels / ref_pixels) if ref_pixels else float("nan")
+                ),
+                "predicted_instances": int(np.unique(prediction[prediction > 0]).size),
+                "comparison_png": str(comparison_png),
+                "predicted_labels_tif": str(label_path) if label_path else "",
+            }
+        )
+    aggregate = {
+        "sample_key": "__MEAN__",
+        "semantic_dice": float(np.mean([row["semantic_dice"] for row in rows])),
+        "semantic_iou": float(np.mean([row["semantic_iou"] for row in rows])),
+        "reference_foreground_pixels": int(
+            sum(row["reference_foreground_pixels"] for row in rows)
+        ),
+        "prediction_foreground_pixels": int(
+            sum(row["prediction_foreground_pixels"] for row in rows)
+        ),
+        "foreground_area_ratio": float(
+            np.nanmean([row["foreground_area_ratio"] for row in rows])
+        ),
+        "predicted_instances": float(
+            np.mean([row["predicted_instances"] for row in rows])
+        ),
+        "comparison_png": "",
+        "predicted_labels_tif": "",
+    }
+    all_rows = rows + [aggregate]
+    csv_path = output_dir / "validation_metrics.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(all_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(all_rows)
+    payload = {
+        "status": "completed",
+        "model_path": str(model_path),
+        "normalization_inside_model": False,
+        "validation_parameters": {
+            "diameter": cfg.validation_diameter,
+            "flow_threshold": cfg.validation_flow_threshold,
+            "cellprob_threshold": cfg.validation_cellprob_threshold,
+            "mask_threshold": cfg.validation_mask_threshold,
+            "min_size": cfg.validation_min_size,
+        },
+        "mean_semantic_dice": aggregate["semantic_dice"],
+        "mean_semantic_iou": aggregate["semantic_iou"],
+        "metrics_csv": str(csv_path),
+        "rows": rows,
+    }
+    (output_dir / "validation_summary.json").write_text(
+        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+    )
+    return payload
 
 
 def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     from cellpose import models, train
 
     images, masks, names = collect_training_data(
-        cfg.project_root, cfg.dataset, cfg.source_mode
+        cfg.project_root,
+        cfg.dataset,
+        cfg.source_mode,
+        annotation_source=cfg.annotation_source,
     )
-    (train_x, train_y, train_names), (val_x, val_y, val_names) = _split_train_validation(
-        images, masks, names, cfg.validation_fraction, cfg.seed
+    (train_x, train_y, train_names), (val_x, val_y, val_names), split_info = (
+        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
     )
+    if cfg.require_validation and not val_x:
+        raise RuntimeError(
+            "No validation pairs were selected. Create crops/validation annotations "
+            "or use --allow-no-validation explicitly."
+        )
     pretrained = str(cfg.pretrained_model or _select_cellpose_builtin(models))
     model = models.CellposeModel(gpu=cfg.gpu, pretrained_model=pretrained)
     channel_axis = -1 if train_x[0].ndim == 3 else None
@@ -553,11 +1049,25 @@ def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         min_train_masks=cfg.min_train_masks,
         model_name=cfg.run_name,
     )
+    model_path, train_losses, validation_losses, result_repr = _extract_training_result(
+        result, run_dir, cfg.run_name
+    )
+    loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
+    validation = _evaluate_validation_after_training(
+        cfg, run_dir, model_path, val_x, val_y, val_names
+    )
     return {
         "pretrained_model": pretrained,
+        "model_path": str(model_path) if model_path else None,
+        "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
         "validation_samples": val_names,
-        "train_result": str(result),
+        "split_diagnostics": split_info,
+        "train_result_repr": result_repr,
+        "training_losses": train_losses,
+        "validation_losses": validation_losses,
+        **loss_outputs,
+        "automatic_validation": validation,
         "normalization_inside_training": False,
     }
 
@@ -580,24 +1090,40 @@ def _prepare_omnipose_folder(
 
 
 def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
-    """Train Omnipose through its Python API with normalization disabled."""
+    """Fine-tune Omnipose with explicit two-channel bact_fluor_omni inputs."""
     from cellpose_omni import models
 
     images, masks, names = collect_training_data(
-        cfg.project_root, cfg.dataset, cfg.source_mode
+        cfg.project_root,
+        cfg.dataset,
+        cfg.source_mode,
+        annotation_source=cfg.annotation_source,
     )
-    (train_x, train_y, train_names), (val_x, val_y, val_names) = _split_train_validation(
-        images, masks, names, cfg.validation_fraction, cfg.seed
+    (train_raw, train_y, train_names), (val_raw, val_y, val_names), split_info = (
+        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
     )
-    data_dir = _prepare_omnipose_folder(run_dir, images, masks, names)
-    nchan = 1 if images[0].ndim == 2 else int(images[0].shape[-1])
+    if cfg.require_validation and not val_raw:
+        raise RuntimeError(
+            "No validation pairs were selected. Create crops/validation annotations "
+            "or use --allow-no-validation explicitly."
+        )
+    train_x, train_channel_records = _prepare_family_images(
+        train_raw, "omnipose", cfg.dataset
+    )
+    val_x, val_channel_records = _prepare_family_images(
+        val_raw, "omnipose", cfg.dataset
+    )
+    all_images = train_x + val_x
+    all_masks = train_y + val_y
+    all_names = train_names + val_names
+    data_dir = _prepare_omnipose_folder(run_dir, all_images, all_masks, all_names)
     pretrained = str(cfg.pretrained_model or "bact_fluor_omni")
     pretrained_path = Path(pretrained).expanduser()
 
     constructor_values: dict[str, Any] = {
         "gpu": cfg.gpu,
-        "nchan": nchan,
-        "nclasses": cfg.omnipose_nclasses,
+        "nchan": 2,
+        "nclasses": 3,
         "dim": 2,
         "omni": True,
     }
@@ -617,7 +1143,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "test_data": val_x or None,
         "test_labels": val_y or None,
         "channels": None,
-        "channel_axis": -1 if train_x[0].ndim == 3 else None,
+        "channel_axis": -1,
         "normalize": False,
         "save_path": str(run_dir),
         "save_every": cfg.save_every,
@@ -632,17 +1158,34 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     supported_train_values = _supported_kwargs(model.train, train_values)
     if "normalize" not in supported_train_values:
         raise RuntimeError(
-            "The installed Omnipose version does not expose a training normalization "
-            "switch. Upgrade Omnipose or use a compatible environment; training was "
-            "stopped to prevent unintended second normalization."
+            "The installed Omnipose version does not expose normalize=False for "
+            "training. Training was stopped to avoid unintended second normalization."
         )
-    model_path = model.train(**supported_train_values)
+    result = model.train(**supported_train_values)
+    model_path, train_losses, validation_losses, result_repr = _extract_training_result(
+        result, run_dir, cfg.run_name
+    )
+    loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
+    validation = _evaluate_validation_after_training(
+        cfg, run_dir, model_path, val_raw, val_y, val_names
+    )
     return {
         "pretrained_model": pretrained,
+        "model_path": str(model_path) if model_path else None,
+        "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
         "validation_samples": val_names,
+        "split_diagnostics": split_info,
         "prepared_training_data": str(data_dir),
-        "model_path": str(model_path),
+        "train_channel_policy": train_channel_records,
+        "validation_channel_policy": val_channel_records,
+        "nchan": 2,
+        "nclasses": 3,
+        "train_result_repr": result_repr,
+        "training_losses": train_losses,
+        "validation_losses": validation_losses,
+        **loss_outputs,
+        "automatic_validation": validation,
         "normalization_inside_training": False,
         "omnipose_api_kwargs": {
             key: value
@@ -656,11 +1199,16 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     from stardist.models import Config2D, StarDist2D
 
     images, masks, names = collect_training_data(
-        cfg.project_root, cfg.dataset, cfg.source_mode
+        cfg.project_root,
+        cfg.dataset,
+        cfg.source_mode,
+        annotation_source=cfg.annotation_source,
     )
-    (train_x, train_y, train_names), (val_x, val_y, val_names) = _split_train_validation(
-        images, masks, names, cfg.validation_fraction, cfg.seed
+    (train_x, train_y, train_names), (val_x, val_y, val_names), split_info = (
+        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
     )
+    if cfg.require_validation and not val_x:
+        raise RuntimeError("No validation pairs were selected")
     n_channel_in = 1 if train_x[0].ndim == 2 else int(train_x[0].shape[-1])
     config = Config2D(
         n_rays=cfg.n_rays,
@@ -674,22 +1222,44 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         use_gpu=cfg.gpu,
     )
     model = StarDist2D(config, name=run_dir.name, basedir=str(run_dir.parent))
-    model.train(train_x, train_y, validation_data=(val_x, val_y) if val_x else None)
+    history = model.train(
+        train_x, train_y, validation_data=(val_x, val_y) if val_x else None
+    )
     if val_x:
         model.optimize_thresholds(val_x, val_y)
+    model_path = run_dir
+    train_losses: list[float] = []
+    validation_losses: list[float] = []
+    history_dict = getattr(history, "history", {}) if history is not None else {}
+    if isinstance(history_dict, dict):
+        train_losses = _numeric_sequence(history_dict.get("loss"))
+        validation_losses = _numeric_sequence(history_dict.get("val_loss"))
+    loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
+    validation = _evaluate_validation_after_training(
+        cfg, run_dir, model_path, val_x, val_y, val_names
+    )
     return {
+        "model_path": str(model_path),
+        "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
         "validation_samples": val_names,
+        "split_diagnostics": split_info,
         "n_channel_in": n_channel_in,
+        "training_losses": train_losses,
+        "validation_losses": validation_losses,
+        **loss_outputs,
+        "automatic_validation": validation,
         "normalization_inside_training": False,
     }
 
 
 def train_initial_model(cfg: TrainingConfig) -> Path:
-    """Train or fine-tune one initial model and save it under ``models``."""
+    """Train or fine-tune one model and save structured validation outputs."""
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )
+    if cfg.annotation_source not in ANNOTATION_SOURCES:
+        raise ValueError(f"Invalid annotation_source: {cfg.annotation_source}")
     cfg.family, cfg.dataset, cfg.source_mode = family, dataset, source_mode
     family_root = segmentation_model_root(
         cfg.project_root, family, dataset, source_mode
@@ -827,7 +1397,7 @@ def _parameter_grid(cfg: TuneConfig) -> list[dict[str, Any]]:
 
 
 def tune_model_parameters(cfg: TuneConfig) -> Path:
-    """Evaluate a parameter grid against manual masks and save the best setting."""
+    """Tune inference parameters on manual masks using binary Dice and IoU."""
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )
@@ -837,6 +1407,8 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
         dataset,
         source_mode,
         selected_sample_keys=cfg.selected_sample_keys,
+        annotation_source=cfg.annotation_source,
+        annotation_split=cfg.annotation_split,
     )
     base_prediction = PredictionConfig(
         project_root=cfg.project_root,
@@ -850,57 +1422,82 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
         batch_size=cfg.batch_size,
     )
     model = _load_prediction_model(base_prediction)
+    model_name = _model_display_name(base_prediction)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_root = (
+        segmentation_model_root(cfg.project_root, family, dataset, source_mode)
+        / "tuning"
+        / model_name
+        / timestamp
+    )
+    output_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     for parameter_index, parameters in enumerate(_parameter_grid(cfg), start=1):
-        scores = []
+        sample_rows: list[dict[str, Any]] = []
         for image, reference, sample_name in zip(images, masks, names):
             prediction_cfg = PredictionConfig(**asdict(base_prediction))
             for key, value in parameters.items():
                 setattr(prediction_cfg, key, value)
             prediction = predict_one(model, image, prediction_cfg)
-            f1, tp, fp, fn = instance_f1(
-                reference,
-                prediction,
-                iou_threshold=cfg.instance_iou_threshold,
+            dice = semantic_dice(reference, prediction)
+            iou = semantic_iou(reference, prediction)
+            ref_pixels = int(np.count_nonzero(reference))
+            pred_pixels = int(np.count_nonzero(prediction))
+            sample_dir = output_root / f"parameter_{parameter_index:03d}" / _safe_name(sample_name)
+            comparison_png = sample_dir / "comparison.png"
+            _save_validation_comparison(
+                image, reference, prediction, comparison_png, dataset, dice, iou
             )
+            sample_dir.mkdir(parents=True, exist_ok=True)
+            label_path = sample_dir / "predicted_labels.tif"
+            max_label = int(np.max(prediction)) if prediction.size else 0
+            dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
+            tiff.imwrite(label_path, prediction.astype(dtype, copy=False))
             sample_row = {
                 "parameter_index": parameter_index,
                 "sample_key": sample_name,
                 **parameters,
-                "semantic_dice": semantic_dice(reference, prediction),
-                "semantic_iou": semantic_iou(reference, prediction),
-                "instance_f1": f1,
-                "true_positive_instances": tp,
-                "false_positive_instances": fp,
-                "false_negative_instances": fn,
+                "semantic_dice": dice,
+                "semantic_iou": iou,
+                "reference_foreground_pixels": ref_pixels,
+                "prediction_foreground_pixels": pred_pixels,
+                "foreground_area_ratio": (
+                    float(pred_pixels / ref_pixels) if ref_pixels else float("nan")
+                ),
+                "predicted_instances": int(np.unique(prediction[prediction > 0]).size),
+                "comparison_png": str(comparison_png),
+                "predicted_labels_tif": str(label_path),
             }
-            scores.append(sample_row)
+            sample_rows.append(sample_row)
         aggregate = {
             "parameter_index": parameter_index,
             "sample_key": "__MEAN__",
             **parameters,
-            "semantic_dice": float(np.mean([row["semantic_dice"] for row in scores])),
-            "semantic_iou": float(np.mean([row["semantic_iou"] for row in scores])),
-            "instance_f1": float(np.mean([row["instance_f1"] for row in scores])),
-            "true_positive_instances": int(sum(row["true_positive_instances"] for row in scores)),
-            "false_positive_instances": int(sum(row["false_positive_instances"] for row in scores)),
-            "false_negative_instances": int(sum(row["false_negative_instances"] for row in scores)),
+            "semantic_dice": float(np.mean([row["semantic_dice"] for row in sample_rows])),
+            "semantic_iou": float(np.mean([row["semantic_iou"] for row in sample_rows])),
+            "reference_foreground_pixels": int(
+                sum(row["reference_foreground_pixels"] for row in sample_rows)
+            ),
+            "prediction_foreground_pixels": int(
+                sum(row["prediction_foreground_pixels"] for row in sample_rows)
+            ),
+            "foreground_area_ratio": float(
+                np.nanmean([row["foreground_area_ratio"] for row in sample_rows])
+            ),
+            "predicted_instances": float(
+                np.mean([row["predicted_instances"] for row in sample_rows])
+            ),
+            "comparison_png": "",
+            "predicted_labels_tif": "",
         }
-        rows.extend(scores)
+        rows.extend(sample_rows)
         rows.append(aggregate)
 
     aggregate_rows = [row for row in rows if row["sample_key"] == "__MEAN__"]
     best = max(
         aggregate_rows,
-        key=lambda row: (row["instance_f1"], row["semantic_dice"], row["semantic_iou"]),
+        key=lambda row: (row["semantic_iou"], row["semantic_dice"]),
     )
-    model_name = _model_display_name(base_prediction)
-    output_root = (
-        segmentation_model_root(cfg.project_root, family, dataset, source_mode)
-        / "tuning"
-        / model_name
-    )
-    output_root.mkdir(parents=True, exist_ok=True)
     csv_path = output_root / "parameter_tuning.csv"
     fieldnames = sorted({key for row in rows for key in row})
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -912,6 +1509,7 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
         "configuration": asdict(cfg),
         "best_parameters_and_metrics": best,
         "evaluated_samples": names,
+        "ranking": "mean semantic IoU, then mean semantic Dice",
         "normalization_inside_model": False,
         "csv": str(csv_path),
     }
@@ -922,6 +1520,8 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
 
 
 __all__ = [
+    "ANNOTATION_SOURCES",
+    "ANNOTATION_SPLITS",
     "MODEL_FAMILIES",
     "PredictionConfig",
     "PreparedInputItem",
@@ -930,6 +1530,7 @@ __all__ = [
     "collect_training_data",
     "instance_f1",
     "list_prepared_inputs",
+    "list_training_inputs",
     "load_instance_mask",
     "load_prediction_model",
     "load_prepared_image",
