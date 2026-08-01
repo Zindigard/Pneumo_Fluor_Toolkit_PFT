@@ -1657,6 +1657,12 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "n_epochs": cfg.epochs,
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
+        # Omnipose 1.1.4 defaults to 224 x 224 crops. Some 2048 x 2048
+        # fluorescence fields contain cells only in a limited region, so repeated
+        # random 224-pixel crops can contain background only and trigger the
+        # package's "Sparse or over-dense image detected" recursion guard.
+        # Use the user-configurable PFT patch size instead.
+        "tyx": tuple(int(value) for value in cfg.patch_size),
         "rescale": False,
         "min_train_masks": cfg.min_train_masks,
         "netstr": cfg.run_name,
@@ -1695,6 +1701,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "validation_channel_policy": val_channel_records,
         "nchan": 2,
         "nclasses": 3,
+        "training_patch_size": [int(value) for value in cfg.patch_size],
         "train_result_repr": result_repr,
         "training_losses": train_losses,
         "validation_losses": validation_losses,
