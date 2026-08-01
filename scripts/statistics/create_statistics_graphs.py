@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """Create quantitative-analysis graphs for one dataset or all supported datasets.
 
@@ -226,7 +226,7 @@ def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
     midcell = float(np.mean(values[centre_start:centre_end]))
     mean_pole = 0.5 * (pole1 + pole2)
     return {
-        "axial_auc": float(np.trapz(values, x=x)),
+        "axial_auc": float(np.trapezoid(values, x=x)),
         "axial_centroid": centroid,
         "axial_spread": spread,
         "axial_peak_position": float(x[int(np.argmax(values))]),
@@ -260,7 +260,7 @@ def radial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
     centre_intensity = float(np.mean(values[:region]))
     boundary_intensity = float(np.mean(values[-region:]))
     return {
-        "radial_auc": float(np.trapz(values, x=x)),
+        "radial_auc": float(np.trapezoid(values, x=x)),
         "radial_centroid": float(np.sum(x * values) / (total + EPS)),
         "centre_intensity": centre_intensity,
         "boundary_intensity": boundary_intensity,
@@ -1921,13 +1921,13 @@ def process_dataset(
     length_key = "length_um" if pixel_size_um is not None else "length_pixels"
     if example:
         length_label = (
-            "PCA-derived cell length, µm"
+            "PCA-derived cell length, Âµm"
             if pixel_size_um is not None
             else "PCA-derived cell length, pixels"
         )
     else:
         length_label = (
-            "ROI mean PCA-derived cell length, µm"
+            "ROI mean PCA-derived cell length, Âµm"
             if pixel_size_um is not None
             else "ROI mean PCA-derived cell length, pixels"
         )
@@ -2018,7 +2018,7 @@ def process_dataset(
 
     extent_unit_suffix = "um" if pixel_size_um is not None else "fraction"
     extent_ylabel = (
-        "Axial signal extent at 50% peak, µm"
+        "Axial signal extent at 50% peak, Âµm"
         if pixel_size_um is not None
         else "Axial signal extent at 50% peak, fraction of cell length"
     )
@@ -2273,3 +2273,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

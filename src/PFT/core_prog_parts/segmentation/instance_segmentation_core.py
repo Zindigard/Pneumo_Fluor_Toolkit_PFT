@@ -1600,6 +1600,36 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     model = models.CellposeModel(
         **_supported_kwargs(models.CellposeModel, constructor_values)
     )
+
+    # Omnipose 1.1.4 compatibility: _set_criterion() assigns a probability-
+    # based BCELoss to self.BCELoss, although the boundary branch supplies raw
+    # network logits. Modern PyTorch correctly rejects logits outside [0, 1].
+    # Replace only that model-level criterion with BCEWithLogitsLoss. The
+    # separate affinity-boundary loss keeps its original probability BCE.
+    import types
+    import torch
+
+    class _BatchMeanBCEWithLogits(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.loss = torch.nn.BCEWithLogitsLoss(reduction="none")
+
+        def forward(
+            self, prediction: torch.Tensor, target: torch.Tensor
+        ) -> torch.Tensor:
+            target = target.to(dtype=prediction.dtype)
+            per_element = self.loss(prediction, target)
+            per_sample = per_element.reshape(per_element.shape[0], -1).mean(dim=1)
+            return per_sample.mean()
+
+    original_set_criterion = model._set_criterion
+
+    def _set_criterion_with_logits(self: Any) -> None:
+        original_set_criterion()
+        self.BCELoss = _BatchMeanBCEWithLogits()
+
+    model._set_criterion = types.MethodType(_set_criterion_with_logits, model)
+
     # Omnipose 1.1.4 requires train_links to be iterable even when no
     # linked labels are present. Each entry corresponds to one image.
     train_links: list[None] = [None] * len(train_y)
