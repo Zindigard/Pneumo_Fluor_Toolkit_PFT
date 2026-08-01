@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-"""Rotate every valid cell and its image channels using PCA.
+"""PCA-align cells for one dataset or all supported datasets.
 
-The script consumes the validation manifest produced by
-``check_masks_for_statistics.py``. Every original positive label value is
-retained in filenames and metadata. The PCA eigenvector sign is not interpreted
-as a biological pole identity; the aligned major axis is horizontal, but a
-180-degree left-right ambiguity remains.
+Normal mode processes every eligible annotation from the mask-check manifest.
+Passing ``--example`` changes only the input selection: one low-cell full image
+is chosen per experimental condition. The PCA calculations are identical in
+both modes.
+
+The script preserves original instance-label values. PCA aligns the major axis
+horizontally, but it does not assign biological left and right poles.
 """
 
 import argparse
@@ -27,12 +29,38 @@ from scipy import ndimage as ndi
 SCRIPT_FILE = Path(__file__).resolve()
 
 
-def find_project_root(start: Path | None = None) -> Path:
-    current = (start or SCRIPT_FILE).resolve()
-    for candidate in (current.parent, *current.parents):
-        if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
-            return candidate
-    raise RuntimeError("Cannot locate the PFT project root; provide --project-root.")
+def _import_common():
+    local_dir = SCRIPT_FILE.parent
+    if str(local_dir) not in sys.path:
+        sys.path.insert(0, str(local_dir))
+    from statistics_pipeline_common import (
+        DATASETS,
+        filter_manifest_rows,
+        find_project_root,
+        manifest_path,
+        pca_output_path,
+        read_csv,
+        select_one_per_condition,
+        selected_datasets,
+        source_mode_for,
+        write_csv,
+    )
+
+    return {
+        "DATASETS": DATASETS,
+        "filter_manifest_rows": filter_manifest_rows,
+        "find_project_root": find_project_root,
+        "manifest_path": manifest_path,
+        "pca_output_path": pca_output_path,
+        "read_csv": read_csv,
+        "select_one_per_condition": select_one_per_condition,
+        "selected_datasets": selected_datasets,
+        "source_mode_for": source_mode_for,
+        "write_csv": write_csv,
+    }
+
+
+COMMON = _import_common()
 
 
 def import_check_helpers(project_root: Path):
@@ -42,7 +70,6 @@ def import_check_helpers(project_root: Path):
     try:
         from check_masks_for_statistics import image_to_rgb, load_image_cyx, load_label_mask
     except ImportError:
-        # This fallback supports testing the downloaded scripts before they are copied.
         local_dir = SCRIPT_FILE.parent
         if str(local_dir) not in sys.path:
             sys.path.insert(0, str(local_dir))
@@ -52,6 +79,9 @@ def import_check_helpers(project_root: Path):
 
 @dataclass(frozen=True)
 class PCAResult:
+    dataset: str
+    source_mode: str
+    run_mode: str
     annotation_id: str
     sample_name: str
     split: str
@@ -107,6 +137,7 @@ def _pca(binary: np.ndarray) -> dict[str, float | bool]:
             "centroid_y": float(yy.mean()) if area else math.nan,
             "centroid_x": float(xx.mean()) if area else math.nan,
         }
+
     points = np.column_stack((xx.astype(np.float64), yy.astype(np.float64)))
     centroid = points.mean(axis=0)
     centered = points - centroid
@@ -233,7 +264,11 @@ def save_overview(
     if not selected:
         return
     figure, axes = plt.subplots(
-        len(selected), 2, figsize=(8, max(2.2, 2.2 * len(selected))), squeeze=False, constrained_layout=True
+        len(selected),
+        2,
+        figsize=(8, max(2.2, 2.2 * len(selected))),
+        squeeze=False,
+        constrained_layout=True,
     )
     for row, (label_value, before, after) in enumerate(selected):
         axes[row, 0].imshow(image_to_rgb(before))
@@ -248,83 +283,51 @@ def save_overview(
     plt.close(figure)
 
 
-def _read_manifest(path: Path) -> list[dict[str, str]]:
-    with path.open("r", newline="", encoding="utf-8") as handle:
-        return [dict(row) for row in csv.DictReader(handle)]
-
-
-def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fieldnames: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fieldnames:
-                fieldnames.append(key)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="PCA-align every cell in validated instance masks.")
-    parser.add_argument("--project-root", type=Path)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--output-root", type=Path)
-    parser.add_argument("--min-object-pixels", type=int, default=5)
-    parser.add_argument("--min-anisotropy", type=float, default=1.05)
-    parser.add_argument("--input-padding", type=int, default=4)
-    parser.add_argument("--output-padding", type=int, default=3)
-    parser.add_argument("--exclude-border", action="store_true")
-    parser.add_argument("--include-failed-pairs", action="store_true")
-    parser.add_argument("--max-overview-cells", type=int, default=20)
-    parser.add_argument("--overwrite", action="store_true")
-    return parser
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    project_root = (
-        args.project_root.expanduser().resolve()
-        if args.project_root
-        else find_project_root()
-    )
-    manifest = args.manifest.expanduser().resolve()
-    output_root = (
-        args.output_root.expanduser().resolve()
-        if args.output_root
-        else manifest.parent.parent.parent.parent / "pca_aligned" / manifest.parent.parent.name / manifest.parent.name
-    )
-    if args.min_object_pixels < 1:
-        raise ValueError("--min-object-pixels must be at least 1")
-    if args.min_anisotropy < 1.0:
-        raise ValueError("--min-anisotropy must be at least 1.0")
+def _prepare_output(output_root: Path, overwrite: bool) -> None:
     if output_root.exists() and any(output_root.iterdir()):
-        if not args.overwrite:
+        if not overwrite:
             raise FileExistsError(f"Output folder is not empty: {output_root}. Use --overwrite.")
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    image_to_rgb, load_image_cyx, load_label_mask = import_check_helpers(project_root)
-    manifest_rows = _read_manifest(manifest)
-    if not manifest_rows:
-        raise ValueError(f"Manifest is empty: {manifest}")
 
+def process_manifest(
+    *,
+    project_root: Path,
+    dataset: str,
+    source_mode: str,
+    run_mode: str,
+    manifest_rows: list[dict[str, object]],
+    output_root: Path,
+    min_object_pixels: int,
+    min_anisotropy: float,
+    input_padding: int,
+    output_padding: int,
+    exclude_border: bool,
+    include_failed_pairs: bool,
+    max_overview_cells: int,
+    overwrite: bool,
+) -> dict[str, object]:
+    _prepare_output(output_root, overwrite)
+    COMMON["write_csv"](output_root / "input_manifest_used.csv", manifest_rows)
+
+    image_to_rgb, load_image_cyx, load_label_mask = import_check_helpers(project_root)
     all_results: list[dict[str, object]] = []
+    processed_annotations = 0
+    saved_cells = 0
+    excluded_cells = 0
+
     for row in manifest_rows:
-        pair_status = row.get("overall_status", "")
-        if pair_status == "FAIL" and not args.include_failed_pairs:
+        pair_status = str(row.get("overall_status", ""))
+        if pair_status == "FAIL" and not include_failed_pairs:
             print(f"[SKIP] {row.get('annotation_id')}: validation status FAIL")
             continue
 
-        annotation_id = row["annotation_id"]
-        sample_name = row.get("sample_name", "")
-        split = row.get("split", "")
-        mask_path = Path(row["mask_path"])
-        image_path = Path(row["image_path"])
+        annotation_id = str(row["annotation_id"])
+        sample_name = str(row.get("sample_name", ""))
+        split = str(row.get("split", ""))
+        mask_path = Path(str(row["mask_path"]))
+        image_path = Path(str(row["image_path"]))
         labels, _ = load_label_mask(mask_path)
         image, _ = load_image_cyx(image_path, project_root)
         if tuple(labels.shape) != tuple(image.shape[-2:]):
@@ -345,58 +348,67 @@ def main(argv: Sequence[str] | None = None) -> int:
             border = _touches_border(binary)
             status_terms: list[str] = []
             should_rotate = True
-            if area < args.min_object_pixels:
+            if area < min_object_pixels:
                 status_terms.append("excluded_too_small")
                 should_rotate = False
             if components != 1:
                 status_terms.append("excluded_fragmented_label")
                 should_rotate = False
-            if args.exclude_border and border:
+            if exclude_border and border:
                 status_terms.append("excluded_border")
                 should_rotate = False
             if not bool(pca["valid"]):
                 status_terms.append("excluded_invalid_pca")
                 should_rotate = False
-            if float(pca["anisotropy_ratio"]) < args.min_anisotropy:
+            if float(pca["anisotropy_ratio"]) < min_anisotropy:
                 status_terms.append("not_rotated_low_anisotropy")
                 should_rotate = False
 
             cell_dir = annotation_output / "cells" / f"label_{label_value:06d}"
             cell_dir.mkdir(parents=True, exist_ok=True)
-            mask_before, image_before = _crop_to_mask(binary, image, padding=args.input_padding)
+            mask_before, image_before = _crop_to_mask(binary, image, padding=input_padding)
             applied_angle = float(pca["angle_deg"]) if should_rotate else 0.0
-
             excluded = any(term.startswith("excluded_") for term in status_terms)
+
             if excluded:
                 mask_after = mask_before.copy()
                 image_after = image_before.copy()
+                excluded_cells += 1
             elif should_rotate:
                 mask_after, image_after = _rotate_cell(
                     mask_before,
                     image_before,
                     angle_deg=applied_angle,
-                    output_padding=args.output_padding,
+                    output_padding=output_padding,
                 )
             else:
                 mask_after, image_after = _crop_to_mask(
-                    mask_before, image_before, padding=args.output_padding
+                    mask_before, image_before, padding=output_padding
                 )
 
             tiff.imwrite(cell_dir / "mask_before_pca.tif", mask_before.astype(np.uint8))
             tiff.imwrite(cell_dir / "mask_after_pca.tif", mask_after.astype(np.uint8))
             _save_tiff_cyx(cell_dir / "image_before_pca.tif", image_before)
             _save_tiff_cyx(cell_dir / "image_after_pca.tif", image_after)
-            np.savez_compressed(
-                cell_dir / "pca_cell_data.npz",
-                source_label=np.int64(label_value),
-                mask_before=mask_before.astype(np.uint8),
-                mask_pca=mask_after.astype(np.uint8),
-                image_before=image_before.astype(np.float32),
-                image_pca=image_after.astype(np.float32),
-            )
+
+            # Only valid cells receive pca_cell_data.npz. Normalization therefore
+            # cannot silently include cells excluded at this stage.
+            if not excluded:
+                np.savez_compressed(
+                    cell_dir / "pca_cell_data.npz",
+                    source_label=np.int64(label_value),
+                    mask_before=mask_before.astype(np.uint8),
+                    mask_pca=mask_after.astype(np.uint8),
+                    image_before=image_before.astype(np.float32),
+                    image_pca=image_after.astype(np.float32),
+                )
+                saved_cells += 1
 
             status = ";".join(status_terms) if status_terms else "aligned"
             result = PCAResult(
+                dataset=dataset,
+                source_mode=source_mode,
+                run_mode=run_mode,
                 annotation_id=annotation_id,
                 sample_name=sample_name,
                 split=split,
@@ -421,8 +433,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "source_mask": str(mask_path),
                         "source_image": str(image_path),
                         "orientation_note": (
-                            "The major axis is horizontal after PCA. The sign of the "
-                            "eigenvector remains arbitrary, so left and right are geometric "
+                            "The major axis is horizontal after PCA. The eigenvector "
+                            "sign is arbitrary, so positions 0 and 1 remain geometric "
                             "poles rather than assigned biological poles."
                         ),
                     },
@@ -447,27 +459,202 @@ def main(argv: Sequence[str] | None = None) -> int:
             annotation_output / "pca_before_after_overview.png",
             overview_entries,
             image_to_rgb=image_to_rgb,
-            max_cells=args.max_overview_cells,
+            max_cells=max_overview_cells,
             title=f"PCA alignment: {annotation_id}",
         )
-        print(f"[PCA] {annotation_id}: {len(overview_entries)} labels processed")
+        processed_annotations += 1
+        print(f"[PCA] {dataset} | {annotation_id}: {len(overview_entries)} labels processed")
 
-    _write_csv(output_root / "pca_alignment_summary.csv", all_results)
+    COMMON["write_csv"](output_root / "pca_alignment_summary.csv", all_results)
+    summary = {
+        "dataset": dataset,
+        "source_mode": source_mode,
+        "run_mode": run_mode,
+        "output_root": str(output_root),
+        "n_manifest_rows": len(manifest_rows),
+        "n_processed_annotations": processed_annotations,
+        "n_cell_records": len(all_results),
+        "n_saved_valid_cells": saved_cells,
+        "n_excluded_cells": excluded_cells,
+        "min_object_pixels": min_object_pixels,
+        "min_anisotropy": min_anisotropy,
+        "exclude_border": exclude_border,
+    }
     (output_root / "pca_run_summary.json").write_text(
-        json.dumps(
-            {
-                "manifest": str(manifest),
-                "output_root": str(output_root),
-                "n_cell_records": len(all_results),
-                "min_object_pixels": args.min_object_pixels,
-                "min_anisotropy": args.min_anisotropy,
-                "exclude_border": args.exclude_border,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+        json.dumps(summary, indent=2), encoding="utf-8"
     )
-    print(f"\nPCA output: {output_root}")
+    print(f"PCA output: {output_root}")
+    return summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "PCA-align validated cells for one dataset or all datasets. "
+            "Use --example to select one low-cell image per condition."
+        )
+    )
+    parser.add_argument("--project-root", type=Path)
+    parser.add_argument(
+        "--dataset",
+        choices=("all", *COMMON["DATASETS"]),
+        default="all",
+        help="Dataset to process; default: all.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        help=(
+            "Optional explicit manifest for backward compatibility. This requires "
+            "one concrete --dataset and bypasses automatic manifest discovery."
+        ),
+    )
+    parser.add_argument("--source-mode")
+    parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--example", action="store_true")
+    parser.add_argument("--preferred-min-cells", type=int, default=5)
+    parser.add_argument("--max-cells", type=int, default=80)
+    parser.add_argument("--exclude-time", type=int, action="append", default=[])
+    parser.add_argument("--sample", action="append", default=[])
+    parser.add_argument(
+        "--include",
+        choices=("full", "all", "train", "validation"),
+        default="full",
+        help="Annotations used in normal mode. Example mode always uses full images.",
+    )
+    parser.add_argument("--min-object-pixels", type=int, default=5)
+    parser.add_argument("--min-anisotropy", type=float, default=1.05)
+    parser.add_argument("--input-padding", type=int, default=4)
+    parser.add_argument("--output-padding", type=int, default=3)
+    parser.add_argument("--exclude-border", action="store_true")
+    parser.add_argument("--include-failed-pairs", action="store_true")
+    parser.add_argument("--max-overview-cells", type=int, default=20)
+    parser.add_argument("--skip-missing", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    project_root = COMMON["find_project_root"](SCRIPT_FILE, args.project_root)
+    if args.min_object_pixels < 1:
+        raise ValueError("--min-object-pixels must be at least 1")
+    if args.min_anisotropy < 1.0:
+        raise ValueError("--min-anisotropy must be at least 1.0")
+    if args.preferred_min_cells < 1:
+        raise ValueError("--preferred-min-cells must be at least 1")
+    if args.max_cells is not None and args.max_cells < 1:
+        raise ValueError("--max-cells must be at least 1")
+    if args.manifest and args.dataset == "all":
+        raise ValueError("An explicit --manifest requires one concrete --dataset.")
+    if args.example and args.include != "full":
+        print("[INFO] --example uses full-image annotations; --include is ignored.")
+
+    summaries: list[dict[str, object]] = []
+    datasets = COMMON["selected_datasets"](args.dataset)
+    for dataset in datasets:
+        source_mode = COMMON["source_mode_for"](dataset, args.source_mode, args.dataset)
+        source_manifest = (
+            args.manifest.expanduser().resolve()
+            if args.manifest
+            else COMMON["manifest_path"](project_root, dataset, source_mode)
+        )
+        if not source_manifest.exists():
+            message = (
+                f"Missing mask-check manifest for {dataset}: {source_manifest}. "
+                "Run check_masks_for_statistics.py first."
+            )
+            if args.skip_missing:
+                print(f"[SKIP] {message}")
+                continue
+            raise FileNotFoundError(message)
+
+        raw_rows = COMMON["read_csv"](source_manifest)
+        filtered = COMMON["filter_manifest_rows"](
+            raw_rows,
+            dataset=dataset,
+            include="full" if args.example else args.include,
+            excluded_times=set(args.exclude_time),
+            sample_filters=args.sample,
+            include_failed_pairs=args.include_failed_pairs,
+        )
+        if args.example:
+            selected_rows, report = COMMON["select_one_per_condition"](
+                filtered,
+                dataset=dataset,
+                preferred_min_cells=args.preferred_min_cells,
+                max_cells=args.max_cells,
+            )
+            manifest_rows = selected_rows
+        else:
+            report = []
+            manifest_rows = filtered
+
+        if not manifest_rows:
+            message = f"No eligible manifest rows for {dataset}."
+            if args.skip_missing:
+                print(f"[SKIP] {message}")
+                continue
+            raise ValueError(message)
+
+        default_output = COMMON["pca_output_path"](
+            project_root, dataset, source_mode, args.example
+        )
+        if args.output_root:
+            explicit_root = args.output_root.expanduser().resolve()
+            output_root = (
+                explicit_root / dataset / source_mode
+                if len(datasets) > 1
+                else explicit_root
+            )
+        else:
+            output_root = default_output
+
+        summary = process_manifest(
+            project_root=project_root,
+            dataset=dataset,
+            source_mode=source_mode,
+            run_mode="example" if args.example else "full",
+            manifest_rows=manifest_rows,
+            output_root=output_root,
+            min_object_pixels=args.min_object_pixels,
+            min_anisotropy=args.min_anisotropy,
+            input_padding=args.input_padding,
+            output_padding=args.output_padding,
+            exclude_border=args.exclude_border,
+            include_failed_pairs=args.include_failed_pairs,
+            max_overview_cells=args.max_overview_cells,
+            overwrite=args.overwrite,
+        )
+        if report:
+            COMMON["write_csv"](output_root / "example_selection_report.csv", report)
+            print("Selected one image per available condition:")
+            for item in report:
+                print(
+                    f"  {item['condition']}: {item['sample_name']} "
+                    f"({item['n_pca_eligible_cells']} cells)"
+                )
+        summaries.append(summary)
+
+    if not summaries:
+        raise RuntimeError("No datasets were processed.")
+
+    batch_summary = {
+        "requested_dataset": args.dataset,
+        "run_mode": "example" if args.example else "full",
+        "processed_datasets": [item["dataset"] for item in summaries],
+        "summaries": summaries,
+    }
+    batch_path = (
+        project_root
+        / "results"
+        / "statistics_preparation"
+        / ("pca_aligned_example" if args.example else "pca_aligned")
+        / "pca_batch_summary.json"
+    )
+    batch_path.parent.mkdir(parents=True, exist_ok=True)
+    batch_path.write_text(json.dumps(batch_summary, indent=2), encoding="utf-8")
+    print(f"\nPCA batch summary: {batch_path}")
     return 0
 
 
