@@ -28,7 +28,11 @@ import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 
-from PFT.core_prog_parts.common_paths import find_project_root
+from PFT.core_prog_parts.common_paths import (
+    find_project_root,
+    project_relative_path,
+    resolve_project_path,
+)
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import (
     coordinate_scale_for_level,
@@ -92,6 +96,8 @@ class MIP3DOutput:
     raw_zarr: Path
     projection_source_zarr: Path
     mask_zarr: Path | None
+    portable_unmasked_mip_zarr: Path | None
+    portable_mask_zarr: Path | None
     output_zarr: Path
     qc_png: Path
     report_json: Path
@@ -223,6 +229,64 @@ def _open_level_array(zarr_path: Path, level: int) -> tuple[Any, str, dict[str, 
             f"OME axes {axes!r} do not match shape {tuple(array.shape)} for {zarr_path}"
         )
     return array, axes, metadata
+
+
+class _RemovedSingletonAxisView:
+    """Read-only array view that removes one singleton axis without loading it."""
+
+    def __init__(self, base: Any, removed_axis: int) -> None:
+        self._base = base
+        self._removed_axis = int(removed_axis)
+        self.shape = tuple(
+            int(value)
+            for index, value in enumerate(base.shape)
+            if index != self._removed_axis
+        )
+        self.ndim = len(self.shape)
+        self.dtype = np.dtype(base.dtype)
+
+    def __getitem__(self, key: Any) -> Any:
+        if not isinstance(key, tuple):
+            key = (key,)
+        key_items = list(key)
+        if Ellipsis in key_items:
+            ellipsis_index = key_items.index(Ellipsis)
+            missing = self.ndim - (len(key_items) - 1)
+            key_items = (
+                key_items[:ellipsis_index]
+                + [slice(None)] * missing
+                + key_items[ellipsis_index + 1 :]
+            )
+        if len(key_items) < self.ndim:
+            key_items.extend([slice(None)] * (self.ndim - len(key_items)))
+        if len(key_items) != self.ndim:
+            raise IndexError(
+                f"Expected {self.ndim} indices for singleton-axis view, got {len(key_items)}"
+            )
+        key_items.insert(self._removed_axis, 0)
+        return self._base[tuple(key_items)]
+
+
+def _canonicalize_czyx_view(array: Any, axes: str, source: Path) -> tuple[Any, str]:
+    """Return a lazy CZYX view and remove a singleton time axis when present."""
+    current_axes = str(axes).lower()
+    if "t" in current_axes:
+        time_axis = current_axes.index("t")
+        time_count = int(array.shape[time_axis])
+        if time_count != 1:
+            raise ValueError(
+                "A single 3D volume is required, but the OME-Zarr contains "
+                f"T={time_count} time points with axes={current_axes!r}: {source}"
+            )
+        array = _RemovedSingletonAxisView(array, time_axis)
+        current_axes = current_axes[:time_axis] + current_axes[time_axis + 1 :]
+
+    if current_axes != "czyx":
+        raise ValueError(
+            f"Expected CZYX or singleton-time CZYX OME-Zarr, "
+            f"received axes={axes!r}: {source}"
+        )
+    return array, current_axes
 
 
 def _require_czyx(array: Any, axes: str, source: Path, expected_z_count: int) -> None:
@@ -897,7 +961,11 @@ def mode_output_directory_name(cfg: MIP3DConfig) -> str:
 
 
 def _output_sample_dir(cfg: MIP3DConfig, raw_zarr: Path) -> Path:
-    output_root = Path(cfg.output_root or cfg.project_root / "results" / "mip_2d")
+    project_root = Path(cfg.project_root or find_project_root(Path(__file__).resolve())).resolve()
+    output_root = resolve_project_path(
+        cfg.output_root or Path("results") / "mip_2d",
+        project_root,
+    )
     return output_root / mode_output_directory_name(cfg) / relative_volume_path(raw_zarr)
 
 
@@ -918,16 +986,29 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
             f"got {cfg.outside_suppression_percent}"
         )
 
-    raw_zarr = Path(cfg.raw_zarr).expanduser().resolve()
-    raw_root = Path(cfg.raw_root or cfg.project_root / "results" / "img" / "3d_data")
-    deconv_root = Path(cfg.deconv_root or cfg.project_root / "results" / "deconv")
-    mask_root = Path(cfg.mask_root or cfg.project_root / "results" / "U-net" / "3d_25d")
+    project_root = Path(
+        cfg.project_root or find_project_root(Path(__file__).resolve())
+    ).expanduser().resolve()
+    raw_zarr = resolve_project_path(cfg.raw_zarr, project_root)
+    raw_root = resolve_project_path(
+        cfg.raw_root or Path("results") / "img" / "3d_data",
+        project_root,
+    )
+    deconv_root = resolve_project_path(
+        cfg.deconv_root or Path("results") / "deconv",
+        project_root,
+    )
+    mask_root = resolve_project_path(
+        cfg.mask_root or Path("results") / "U-net" / "3d_25d",
+        project_root,
+    )
 
     # Validate that the raw source belongs to the configured mapping and read the
     # raw target before selecting a possibly deconvolved projection source.
     target_slice = target_slice_for_volume(raw_zarr, image_root=raw_root)
     sample = volume_key(raw_zarr, image_root=raw_root)
     raw_array, raw_axes, _raw_metadata = _open_level_array(raw_zarr, cfg.level)
+    raw_array, raw_axes = _canonicalize_czyx_view(raw_array, raw_axes, raw_zarr)
     _require_czyx(raw_array, raw_axes, raw_zarr, cfg.expected_z_count)
     raw_target_cyx = _read_cyx_slice(raw_array, target_slice)
 
@@ -944,6 +1025,9 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
     )
     source_array, source_axes, _source_metadata = _open_level_array(
         projection_source_zarr, cfg.level
+    )
+    source_array, source_axes = _canonicalize_czyx_view(
+        source_array, source_axes, projection_source_zarr
     )
     _require_czyx(
         source_array,
@@ -1004,18 +1088,79 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         raise FileExistsError(sample_dir)
     sample_dir.mkdir(parents=True, exist_ok=True)
 
+    cyx_scale = _cyx_coordinate_scale(projection_source_zarr, level=cfg.level)
+    portable_unmasked_mip_zarr: Path | None = None
+    portable_mask_zarr: Path | None = None
+    if mask_yx is not None:
+        portable_unmasked_mip_zarr = save_ome_zarr(
+            sample_dir / "unmasked_mip.ome.zarr",
+            mip_before,
+            "cyx",
+            overwrite=True,
+            pyramid_3d=False,
+            pyramid_max_layer=0,
+            coordinate_scale=cyx_scale,
+            extra_attrs={
+                "pft_processing": {
+                    "operation": "portable_unmasked_mip_for_segmentation_preparation",
+                    "source_omezarr": str(projection_source_zarr),
+                    "source_project_relative": project_relative_path(
+                        projection_source_zarr, project_root
+                    ),
+                    "created_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            },
+        )
+        mask_scale = cyx_scale[-2:] if cyx_scale and len(cyx_scale) >= 2 else None
+        portable_mask_zarr = save_ome_zarr(
+            sample_dir / "foreground_mask.ome.zarr",
+            mask_yx.astype(np.uint8, copy=False),
+            "yx",
+            overwrite=True,
+            pyramid_3d=False,
+            pyramid_max_layer=0,
+            coordinate_scale=mask_scale,
+            extra_attrs={
+                "pft_processing": {
+                    "operation": "portable_2d_foreground_mask_for_mip",
+                    "source_mask_omezarr": str(mask_zarr),
+                    "source_mask_project_relative": project_relative_path(
+                        mask_zarr, project_root
+                    ) if mask_zarr is not None else None,
+                    "created_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            },
+        )
+
     retained = copyable_root_metadata(projection_source_zarr)
     processing = {
         "operation": "maximum_intensity_projection_3d_to_2d",
         "mode": mode,
         "raw_source_omezarr": str(raw_zarr),
+        "raw_source_project_relative": project_relative_path(raw_zarr, project_root),
         "projection_source_omezarr": str(projection_source_zarr),
+        "projection_source_project_relative": project_relative_path(
+            projection_source_zarr, project_root
+        ),
+        "portable_unmasked_mip_relative": (
+            portable_unmasked_mip_zarr.name
+            if portable_unmasked_mip_zarr is not None
+            else None
+        ),
         "source_level": int(cfg.level),
         "projected_axis": "z",
         "projected_z_count": int(source_array.shape[1]),
         "projected_z_range_1based": [1, int(source_array.shape[1])],
         "target_slice_1based_for_qc_and_mask": int(target_slice),
         "mask_omezarr": str(mask_zarr) if mask_zarr is not None else None,
+        "mask_project_relative": (
+            project_relative_path(mask_zarr, project_root)
+            if mask_zarr is not None
+            else None
+        ),
+        "portable_mask_relative": (
+            portable_mask_zarr.name if portable_mask_zarr is not None else None
+        ),
         "mask_source": "existing_2.5d_unet_target_prediction" if mask_zarr else None,
         "mask_applied_after_projection": bool(mask_zarr),
         "outside_mask_suppression_percent": (
@@ -1060,7 +1205,7 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         overwrite=True,
         pyramid_3d=False,
         pyramid_max_layer=0,
-        coordinate_scale=_cyx_coordinate_scale(projection_source_zarr, level=cfg.level),
+        coordinate_scale=cyx_scale,
         extra_attrs=output_attrs,
     )
 
@@ -1098,6 +1243,10 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         "raw_zarr": str(raw_zarr),
         "projection_source_zarr": str(projection_source_zarr),
         "mask_zarr": str(mask_zarr) if mask_zarr else None,
+        "portable_unmasked_mip_zarr": (
+            str(portable_unmasked_mip_zarr) if portable_unmasked_mip_zarr else None
+        ),
+        "portable_mask_zarr": str(portable_mask_zarr) if portable_mask_zarr else None,
         "output_zarr": str(output_zarr),
         "qc_png": str(qc_png),
         "scale_bar_um": float(cfg.scale_bar_um),
@@ -1127,6 +1276,8 @@ def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
         raw_zarr=raw_zarr,
         projection_source_zarr=projection_source_zarr,
         mask_zarr=mask_zarr,
+        portable_unmasked_mip_zarr=portable_unmasked_mip_zarr,
+        portable_mask_zarr=portable_mask_zarr,
         output_zarr=output_zarr,
         qc_png=qc_png,
         report_json=report_json,

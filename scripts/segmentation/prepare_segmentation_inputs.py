@@ -75,6 +75,7 @@ PROJECT_ROOT = _project_root()
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from PFT.core_prog_parts.common_paths import resolve_project_path  # noqa: E402
 from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: E402
     SOURCE_MODES_BY_DATASET,
     SUPPORTED_DATASETS,
@@ -138,13 +139,29 @@ def main() -> int:
     if source_mode not in valid_modes:
         parser.error(f"{source_mode!r} is not valid for {dataset!r}: {valid_modes}")
 
+    filter_root = (
+        resolve_project_path(args.filter_root, PROJECT_ROOT)
+        if args.filter_root is not None
+        else None
+    )
+    unet_root = (
+        resolve_project_path(args.unet_root, PROJECT_ROOT)
+        if args.unet_root is not None
+        else None
+    )
+    mip_root = (
+        resolve_project_path(args.mip_root, PROJECT_ROOT)
+        if args.mip_root is not None
+        else None
+    )
+
     records = discover_segmentation_sources(
         PROJECT_ROOT,
         dataset,
         source_mode,
-        filter_root=args.filter_root,
-        unet_root=args.unet_root,
-        mip_root=args.mip_root,
+        filter_root=filter_root,
+        unet_root=unet_root,
+        mip_root=mip_root,
     )
     run_mode = args.mode or _choose("Process one sample or all samples", ("one", "all"))
     selected: set[str] | None = None
@@ -174,9 +191,9 @@ def main() -> int:
         PROJECT_ROOT,
         dataset,
         source_mode,
-        filter_root=args.filter_root,
-        unet_root=args.unet_root,
-        mip_root=args.mip_root,
+        filter_root=filter_root,
+        unet_root=unet_root,
+        mip_root=mip_root,
         overwrite=not args.no_overwrite,
         p_low=args.p_low,
         p_high=args.p_high,

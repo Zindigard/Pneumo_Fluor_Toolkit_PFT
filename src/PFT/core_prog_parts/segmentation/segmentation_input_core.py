@@ -40,8 +40,17 @@ import json
 import numpy as np
 from PIL import Image
 
-from PFT.core_prog_parts.common_paths import find_project_root, normalize_dataset_name
-from PFT.core_prog_parts.decoder_omezar import ensure_czyx, load_ome_zarr
+from PFT.core_prog_parts.common_paths import (
+    find_project_root,
+    normalize_dataset_name,
+    project_relative_path,
+    resolve_project_path,
+)
+from PFT.core_prog_parts.decoder_omezar import (
+    ensure_czyx,
+    load_ome_zarr,
+    select_index_along_axis,
+)
 from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
 DatasetName = Literal["2d_time", "2d_wga_dapi", "3d_mip"]
@@ -277,7 +286,7 @@ def resolve_filter_root(
     """Resolve the intensity-preserving local-threshold output root."""
     dataset = normalize_dataset_name(dataset)
     if explicit_root is not None:
-        root = Path(explicit_root).expanduser().resolve()
+        root = resolve_project_path(explicit_root, project_root)
         if not root.is_dir():
             raise FileNotFoundError(root)
         return root
@@ -300,7 +309,7 @@ def resolve_unet_root(
     """Resolve a U-Net inference root containing ``pred_mask.ome.zarr`` files."""
     dataset = normalize_dataset_name(dataset)
     if explicit_root is not None:
-        root = Path(explicit_root).expanduser().resolve()
+        root = resolve_project_path(explicit_root, project_root)
         if not root.is_dir():
             raise FileNotFoundError(root)
         return root
@@ -325,17 +334,108 @@ def _raw_2d_reference(project_root: Path, dataset: str, sample_key: str) -> Path
     return None
 
 
+def _resolve_processing_path(
+    *,
+    processing: dict[str, Any],
+    source_zarr: Path,
+    project_root: Path,
+    absolute_key: str,
+    project_relative_key: str,
+    local_relative_key: str | None = None,
+) -> Path | None:
+    """Resolve one dependency recorded in MIP provenance metadata."""
+    if local_relative_key:
+        local_value = processing.get(local_relative_key)
+        if local_value:
+            local_path = (source_zarr.parent / str(local_value)).resolve()
+            if local_path.is_dir():
+                return local_path
+
+    relative_value = processing.get(project_relative_key)
+    if relative_value:
+        relative_path = resolve_project_path(str(relative_value), project_root)
+        if relative_path.is_dir():
+            return relative_path
+
+    absolute_value = processing.get(absolute_key)
+    if absolute_value:
+        absolute_path = _rebase_recorded_path(absolute_value, project_root)
+        if absolute_path.is_dir():
+            return absolute_path.resolve()
+    return None
+
+
+def _canonical_mip_dependencies(
+    project_root: Path,
+    sample_key: str,
+    source_mode: str,
+    processing: dict[str, Any],
+) -> tuple[Path | None, Path | None]:
+    """Reconstruct canonical local dependencies for legacy MIP metadata."""
+    relative_sample = Path(*Path(sample_key).parts)
+    raw_zarr = (
+        project_root
+        / "results"
+        / "img"
+        / "3d_data"
+        / relative_sample
+        / "image.ome.zarr"
+    )
+
+    intensity: Path | None
+    if source_mode == "raw_masked":
+        intensity = raw_zarr if raw_zarr.is_dir() else None
+    elif source_mode == "deconv_masked":
+        iterations = processing.get("deconvolution_iterations")
+        if not isinstance(iterations, dict):
+            iterations = {}
+        blue = int(iterations.get("blue", 3))
+        green = int(iterations.get("green", 3))
+        red = int(iterations.get("red", 2))
+        model = str(processing.get("deconvolution_model") or "BW")
+        source_level = int(processing.get("source_level", 0))
+        sample_name = relative_sample.name
+        deconv_name = (
+            f"{sample_name}__SK_RL__PSF{model}"
+            f"__iterB{blue}_G{green}_R{red}__sourceL{source_level}"
+        )
+        candidate = (
+            project_root
+            / "results"
+            / "deconv"
+            / relative_sample.parent
+            / deconv_name
+            / "image.ome.zarr"
+        )
+        intensity = candidate if candidate.is_dir() else None
+    else:
+        intensity = None
+
+    mask_candidate = (
+        project_root
+        / "results"
+        / "U-net"
+        / "3d_25d"
+        / relative_sample
+        / "pred_mask.ome.zarr"
+    )
+    mask = mask_candidate if mask_candidate.is_dir() else None
+    return intensity, mask
+
+
 def _raw_3d_reference_from_processing(
     source_zarr: Path,
     project_root: Path,
 ) -> Path | None:
     processing = _processing_attrs(source_zarr)
-    raw = processing.get("raw_source_omezarr")
-    if raw:
-        path = _rebase_recorded_path(raw, project_root)
-        if path.is_dir():
-            return path.resolve()
-    return None
+    path = _resolve_processing_path(
+        processing=processing,
+        source_zarr=source_zarr,
+        project_root=project_root,
+        absolute_key="raw_source_omezarr",
+        project_relative_key="raw_source_project_relative",
+    )
+    return path.resolve() if path is not None else None
 
 
 def discover_segmentation_sources(
@@ -384,8 +484,10 @@ def discover_segmentation_sources(
             )
         return records
 
-    selected_mip_root = Path(mip_root).expanduser().resolve() if mip_root else (
-        root / "results" / "mip_2d" / MIP_DIRECTORY_BY_MODE[source_mode]
+    selected_mip_root = (
+        resolve_project_path(mip_root, root)
+        if mip_root is not None
+        else root / "results" / "mip_2d" / MIP_DIRECTORY_BY_MODE[source_mode]
     )
     if not selected_mip_root.is_dir():
         raise FileNotFoundError(selected_mip_root)
@@ -400,12 +502,39 @@ def discover_segmentation_sources(
         intensity_source = image
         mask: Path | None = None
         if source_mode in {"raw_masked", "deconv_masked"}:
-            recorded_intensity = processing.get("projection_source_omezarr")
-            recorded_mask = processing.get("mask_omezarr")
-            if recorded_intensity:
-                intensity_source = _rebase_recorded_path(recorded_intensity, root)
-            if recorded_mask:
-                mask = _rebase_recorded_path(recorded_mask, root)
+            intensity_source = _resolve_processing_path(
+                processing=processing,
+                source_zarr=image,
+                project_root=root,
+                absolute_key="projection_source_omezarr",
+                project_relative_key="projection_source_project_relative",
+                local_relative_key="portable_unmasked_mip_relative",
+            ) or image
+            mask = _resolve_processing_path(
+                processing=processing,
+                source_zarr=image,
+                project_root=root,
+                absolute_key="mask_omezarr",
+                project_relative_key="mask_project_relative",
+                local_relative_key="portable_mask_relative",
+            )
+
+            canonical_intensity, canonical_mask = _canonical_mip_dependencies(
+                root, sample_key, source_mode, processing
+            )
+            if intensity_source == image and canonical_intensity is not None:
+                intensity_source = canonical_intensity
+            if mask is None and canonical_mask is not None:
+                mask = canonical_mask
+
+            # Preserve the legacy recorded path in the error message when no
+            # portable or canonical dependency can be found.
+            if intensity_source == image and processing.get("projection_source_omezarr"):
+                intensity_source = _rebase_recorded_path(
+                    processing["projection_source_omezarr"], root
+                )
+            if mask is None and processing.get("mask_omezarr"):
+                mask = _rebase_recorded_path(processing["mask_omezarr"], root)
         records.append(
             SegmentationSource(
                 dataset=dataset,
@@ -682,17 +811,59 @@ def _load_array(path: Path, level: int = 0) -> tuple[np.ndarray, str]:
 
 
 def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
-    """Create an unmasked CYX MIP from a recorded CZYX projection source."""
+    """Load a portable CYX MIP or create one from a 3D projection source.
+
+    Legacy stores containing a singleton time axis, such as CZTYX or TCZYX,
+    are accepted by selecting T=0. Multiple time points are rejected because
+    silently selecting one would change the biological sample.
+    """
     from PFT.core_prog_parts.segmentation.mip_3d_core import (
         maximum_intensity_projection_cyx,
     )
 
-    if not Path(path).is_dir():
+    path = Path(path)
+    if not path.is_dir():
         raise FileNotFoundError(path)
-    array, axes = load_ome_zarr(Path(path), level=0, as_numpy=False)
-    array, axes = ensure_czyx(array, str(axes).lower())
-    mip = maximum_intensity_projection_cyx(array)
-    return np.asarray(mip), "cyx", str(np.dtype(array.dtype))
+
+    array, axes = load_ome_zarr(path, level=0, as_numpy=False)
+    axes = str(axes).lower()
+    if len(axes) != int(array.ndim):
+        raise ValueError(
+            "OME-Zarr axes/shape mismatch for projection source: "
+            f"axes={axes!r}, shape={tuple(array.shape)}, path={path}"
+        )
+
+    if "t" in axes:
+        time_axis = axes.index("t")
+        time_count = int(array.shape[time_axis])
+        if time_count != 1:
+            raise ValueError(
+                "MIP preparation requires one 3D volume, but the projection "
+                f"source contains T={time_count} time points: {path}"
+            )
+        array, axes = select_index_along_axis(array, axes, "t", 0)
+
+    source_dtype = str(np.dtype(array.dtype))
+    if "z" in axes:
+        array, axes = ensure_czyx(array, axes)
+        mip = maximum_intensity_projection_cyx(array)
+        return np.asarray(mip), "cyx", source_dtype
+
+    if axes == "cyx":
+        mip = np.asarray(array)
+    elif axes == "yx":
+        mip = np.asarray(array)[None, ...]
+    else:
+        raise ValueError(
+            "Expected a CYX portable MIP or a CZYX 3D source after singleton "
+            f"time-axis handling, received axes={axes!r}: {path}"
+        )
+
+    if mip.ndim != 3 or mip.shape[-2] < 1 or mip.shape[-1] < 1:
+        raise ValueError(f"Invalid portable MIP shape {mip.shape}: {path}")
+    if not np.isfinite(mip).all():
+        raise ValueError(f"Portable MIP contains non-finite values: {path}")
+    return mip, "cyx", source_dtype
 
 
 def _load_mip_mask(
@@ -891,8 +1062,21 @@ def prepare_one_segmentation_input(
         "source_mode": record.source_mode,
         "sample_key": record.sample_key,
         "source_omezarr": str(record.source_zarr),
+        "source_project_relative": project_relative_path(
+            record.source_zarr, find_project_root(Path(__file__).resolve())
+        ),
         "intensity_source_omezarr": str(record.intensity_source_zarr),
+        "intensity_source_project_relative": project_relative_path(
+            record.intensity_source_zarr, find_project_root(Path(__file__).resolve())
+        ),
         "predicted_mask_omezarr": str(record.mask_zarr) if record.mask_zarr else None,
+        "predicted_mask_project_relative": (
+            project_relative_path(
+                record.mask_zarr, find_project_root(Path(__file__).resolve())
+            )
+            if record.mask_zarr
+            else None
+        ),
         "normalization_order": "normalize_complete_source_then_apply_mask",
         "channel_selection": channel_selection,
         "normalization": {

@@ -36,6 +36,7 @@ for path in (PROJECT_ROOT, PROJECT_ROOT / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from PFT.core_prog_parts.common_paths import resolve_project_path  # noqa: E402
 from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
     TARGET_SLICE_BY_VOLUME_KEY,
     configured_test_zarrs,
@@ -134,6 +135,8 @@ def _write_summary(rows: list[dict[str, str]], output_root: Path, mode: str) -> 
         "raw_zarr",
         "projection_source_zarr",
         "mask_zarr",
+        "portable_unmasked_mip_zarr",
+        "portable_mask_zarr",
         "output_zarr",
         "qc_png",
         "snr_csv",
@@ -181,22 +184,22 @@ def main() -> int:
     parser.add_argument(
         "--raw-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "img" / "3d_data",
+        default=Path("results") / "img" / "3d_data",
     )
     parser.add_argument(
         "--deconv-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "deconv",
+        default=Path("results") / "deconv",
     )
     parser.add_argument(
         "--mask-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "U-net" / "3d_25d",
+        default=Path("results") / "U-net" / "3d_25d",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=PROJECT_ROOT / "results" / "mip_2d",
+        default=Path("results") / "mip_2d",
     )
     parser.add_argument("--level", type=int, choices=(0,), default=0)
     parser.add_argument(
@@ -242,15 +245,15 @@ def main() -> int:
     if selected_scope_count > 1:
         parser.error("Use only one of --zarr, --test-four, or --all")
 
-    raw_root = args.raw_root.expanduser().resolve()
-    deconv_root = args.deconv_root.expanduser().resolve()
-    mask_root = args.mask_root.expanduser().resolve()
-    output_root = args.output_root.expanduser().resolve()
+    raw_root = resolve_project_path(args.raw_root, PROJECT_ROOT)
+    deconv_root = resolve_project_path(args.deconv_root, PROJECT_ROOT)
+    mask_root = resolve_project_path(args.mask_root, PROJECT_ROOT)
+    output_root = resolve_project_path(args.output_root, PROJECT_ROOT)
     mode: MIPMode = args.mode or _select_mode_interactively()
 
     configured = _configured_raw_zarrs(raw_root)
     if args.zarr is not None:
-        selected = [args.zarr.expanduser().resolve()]
+        selected = [resolve_project_path(args.zarr, PROJECT_ROOT)]
         # Resolve the target immediately to reject non-configured paths.
         target_slice_for_volume(selected[0], image_root=raw_root)
     elif args.test_four:
@@ -346,6 +349,8 @@ def main() -> int:
                 "raw_zarr": str(raw_zarr),
                 "projection_source_zarr": "",
                 "mask_zarr": "",
+                "portable_unmasked_mip_zarr": "",
+                "portable_mask_zarr": "",
                 "output_zarr": "",
                 "qc_png": "",
                 "snr_csv": "",
@@ -384,6 +389,14 @@ def main() -> int:
                 "raw_zarr": str(result.raw_zarr),
                 "projection_source_zarr": str(result.projection_source_zarr),
                 "mask_zarr": str(result.mask_zarr) if result.mask_zarr else "",
+                "portable_unmasked_mip_zarr": (
+                    str(result.portable_unmasked_mip_zarr)
+                    if result.portable_unmasked_mip_zarr
+                    else ""
+                ),
+                "portable_mask_zarr": (
+                    str(result.portable_mask_zarr) if result.portable_mask_zarr else ""
+                ),
                 "output_zarr": str(result.output_zarr),
                 "qc_png": str(result.qc_png),
                 "snr_csv": str(result.snr_csv) if result.snr_csv else "",
@@ -394,6 +407,10 @@ def main() -> int:
             print(f"PASS OME-Zarr: {result.output_zarr}")
             print(f"QC merged RGB: {result.qc_png}")
             print(f"Stored dtype: {result.output_dtype}")
+            if result.portable_unmasked_mip_zarr is not None:
+                print(f"Portable unmasked MIP: {result.portable_unmasked_mip_zarr}")
+            if result.portable_mask_zarr is not None:
+                print(f"Portable foreground mask: {result.portable_mask_zarr}")
             if result.snr_csv is not None:
                 print(f"SNR comparison: {result.snr_csv}")
         except Exception as error:
@@ -407,6 +424,8 @@ def main() -> int:
                 "raw_zarr": str(raw_zarr),
                 "projection_source_zarr": "",
                 "mask_zarr": "",
+                "portable_unmasked_mip_zarr": "",
+                "portable_mask_zarr": "",
                 "output_zarr": "",
                 "qc_png": "",
                 "snr_csv": "",

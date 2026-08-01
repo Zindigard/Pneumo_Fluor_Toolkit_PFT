@@ -24,7 +24,7 @@ import tifffile as tiff
 import zarr
 from skimage.restoration import richardson_lucy
 
-from PFT.core_prog_parts.common_paths import find_project_root
+from PFT.core_prog_parts.common_paths import find_project_root, project_relative_path
 from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
 from PFT.core_prog_parts.denoising.metadata_3d import (
     coordinate_scale_for_level,
@@ -721,6 +721,7 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
         "operation": "3d_richardson_lucy_deconvolution",
         "software": "skimage.restoration.richardson_lucy",
         "source_omezarr": str(in_omezarr),
+        "source_project_relative": project_relative_path(in_omezarr, project_root),
         "source_level": int(level),
         "source_array_path": str(meta["array_path"]),
         "psf_model": model,

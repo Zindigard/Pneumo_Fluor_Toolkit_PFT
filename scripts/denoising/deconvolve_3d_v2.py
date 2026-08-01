@@ -28,6 +28,7 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from PFT.core_prog_parts.common_paths import resolve_project_path  # noqa: E402
 from PFT.core_prog_parts.denoising.deconvolution_no_fuji import (  # noqa: E402
     deconvolve_omezarr_3ch_to_omezarr_skimage,
 )
@@ -73,8 +74,18 @@ def main() -> int:
         default=None,
         help="Process one exact source image.ome.zarr instead of the fixed four-stack cohort",
     )
-    parser.add_argument("--root-3d", type=Path, default=PROJECT_ROOT / "results" / "img" / "3d_data")
-    parser.add_argument("--out-root", type=Path, default=PROJECT_ROOT / "results" / "deconv")
+    parser.add_argument(
+        "--root-3d",
+        type=Path,
+        default=Path("results") / "img" / "3d_data",
+        help="Raw 3D root; relative paths are resolved from the PFT project root",
+    )
+    parser.add_argument(
+        "--out-root",
+        type=Path,
+        default=Path("results") / "deconv",
+        help="Deconvolution output root; relative paths are resolved from the PFT project root",
+    )
     parser.add_argument(
         "--level",
         type=int,
@@ -98,9 +109,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    root_3d = args.root_3d.expanduser().resolve()
+    root_3d = resolve_project_path(args.root_3d, PROJECT_ROOT)
+    out_root = resolve_project_path(args.out_root, PROJECT_ROOT)
     if args.zarr is not None:
-        inputs = [args.zarr.expanduser().resolve()]
+        inputs = [resolve_project_path(args.zarr, PROJECT_ROOT)]
         if not inputs[0].is_dir() or inputs[0].name != "image.ome.zarr":
             raise FileNotFoundError(f"--zarr must point to image.ome.zarr: {inputs[0]}")
     else:
@@ -142,7 +154,7 @@ def main() -> int:
         try:
             result = deconvolve_omezarr_3ch_to_omezarr_skimage(
                 in_omezarr=input_zarr,
-                out_root=args.out_root,
+                out_root=out_root,
                 model=args.model,
                 iters=args.iters,
                 channel_iterations=channel_iterations,
@@ -182,11 +194,11 @@ def main() -> int:
             })
             print(f"FAIL: {type(error).__name__}: {error}")
             if args.stop_on_error:
-                summary = _write_batch_summary(rows, args.out_root)
+                summary = _write_batch_summary(rows, out_root)
                 print(f"Batch summary: {summary}")
                 raise
 
-    summary = _write_batch_summary(rows, args.out_root)
+    summary = _write_batch_summary(rows, out_root)
     print("\nDeconvolution batch completed")
     print(f"Passed: {len(inputs) - failures}/{len(inputs)}")
     print(f"Batch summary: {summary}")
