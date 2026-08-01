@@ -425,9 +425,14 @@ def _supported_kwargs(callable_object: Any, values: dict[str, Any]) -> dict[str,
 
 
 def _load_prediction_model(cfg: PredictionConfig):
+    """Load a Cellpose, Omnipose, or StarDist prediction model."""
+
     family, _dataset, _mode = _validate_family_dataset(
-        cfg.family, cfg.dataset, cfg.source_mode
+        cfg.family,
+        cfg.dataset,
+        cfg.source_mode,
     )
+
     if family == "cellpose":
         from cellpose import models
 
@@ -436,47 +441,70 @@ def _load_prediction_model(cfg: PredictionConfig):
             if cfg.model is not None
             else _select_cellpose_builtin(models)
         )
-        return models.CellposeModel(gpu=cfg.gpu, pretrained_model=pretrained)
+
+        return models.CellposeModel(
+            gpu=cfg.gpu,
+            pretrained_model=pretrained,
+        )
 
     if family == "omnipose":
         from cellpose_omni import models
 
-        if cfg.model is not None:
-            try:
-                return models.CellposeModel(
-                    gpu=cfg.gpu,
-                    pretrained_model=str(cfg.model),
-                    nchan=2,
-                    nclasses=3,
-                    dim=2,
-                )
-            except TypeError:
-                return models.CellposeModel(gpu=cfg.gpu, pretrained_model=str(cfg.model))
-        model_type = cfg.model_name or "bact_fluor_omni"
-        try:
-            return models.Cellpose(
-                gpu=cfg.gpu,
-                model_type=model_type,
-                nchan=2,
-                nclasses=3,
-                dim=2,
-            )
-        except TypeError:
-            return models.Cellpose(gpu=cfg.gpu, model_type=model_type)
+        constructor_values: dict[str, Any] = {
+            "gpu": cfg.gpu,
+            "nchan": 2,
+            "nclasses": 3,
+            "dim": 2,
+            "omni": True,
+        }
 
-    model_value = str(cfg.model) if cfg.model is not None else None
+        if cfg.model is not None:
+            model_value = str(cfg.model)
+            model_path = Path(model_value).expanduser()
+
+            if model_path.exists():
+                constructor_values["pretrained_model"] = str(
+                    model_path.resolve()
+                )
+            else:
+                constructor_values["model_type"] = model_value
+        else:
+            constructor_values["model_type"] = (
+                cfg.model_name or "bact_fluor_omni"
+            )
+
+        return models.CellposeModel(
+            **_supported_kwargs(
+                models.CellposeModel,
+                constructor_values,
+            )
+        )
+
+    model_value = (
+        str(cfg.model)
+        if cfg.model is not None
+        else None
+    )
+
     if model_value and Path(model_value).exists():
         model_dir = Path(model_value).resolve()
+
         if model_dir.is_file():
             model_dir = model_dir.parent
+
         from stardist.models import StarDist2D
 
-        return StarDist2D(None, name=model_dir.name, basedir=str(model_dir.parent))
+        return StarDist2D(
+            None,
+            name=model_dir.name,
+            basedir=str(model_dir.parent),
+        )
+
     from stardist.models import StarDist2D
 
-    return StarDist2D.from_pretrained(model_value or "2D_versatile_fluo")
-
-
+    return StarDist2D.from_pretrained(
+        model_value or "2D_versatile_fluo"
+    )
 
 def load_prediction_model(cfg: PredictionConfig):
     """Load one pretrained or user-supplied prediction model for reuse."""
@@ -550,17 +578,45 @@ def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
     return np.asarray(masks, dtype=np.int32)
 
 
-def _omnipose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
-    """Predict one image with Omnipose using an explicit two-channel YXC array."""
-    prepared, _channel_record = _prepare_omnipose_image(image, cfg.dataset)
-    prepared = np.asarray(prepared, dtype=np.float32)
+def _omnipose_predict(
+    model,
+    image: np.ndarray,
+    cfg: PredictionConfig,
+) -> np.ndarray:
+    """Run Omnipose inference on one image.
+
+    The prediction input follows the same two-channel convention used during
+    fine-tuning. For ``2d_time``, channel 0 contains HADA and channel 1 is
+    explicitly zero-filled. The image is passed as a one-image NumPy batch
+    because Omnipose 1.1.4 handles a four-dimensional array more reliably than
+    a one-element Python list.
+    """
+
+    prepared, _channel_record = _prepare_omnipose_image(
+        image,
+        cfg.dataset,
+    )
+
+    prepared = np.ascontiguousarray(
+        prepared,
+        dtype=np.float32,
+    )
+
     if prepared.ndim != 3 or prepared.shape[-1] != 2:
         raise ValueError(
-            "Omnipose input must have shape (Y, X, 2); "
-            f"received {prepared.shape}."
+            "The prepared Omnipose image must have shape "
+            f"(Y, X, 2); received {prepared.shape}."
         )
 
-    kwargs = {
+    if not np.all(np.isfinite(prepared)):
+        raise ValueError(
+            "The prepared Omnipose image contains NaN or "
+            "infinite values."
+        )
+
+    image_batch = prepared[np.newaxis, ...]
+
+    kwargs: dict[str, Any] = {
         "diameter": cfg.diameter,
         "channels": None,
         "channel_axis": -1,
@@ -569,29 +625,64 @@ def _omnipose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
         "flow_threshold": cfg.flow_threshold,
         "min_size": cfg.min_size,
         "normalize": False,
+        "resample": True,
+        "augment": False,
+        "tile": True,
+        "cluster": False,
     }
-    # Omnipose 1.1.4 expects one ndarray here. Wrapping it in a Python list
-    # causes transforms.convert_image() to fail because lists have no ndim.
+
     result = model.eval(
-        prepared,
-        **_supported_kwargs(model.eval, kwargs),
+        image_batch,
+        **_supported_kwargs(
+            model.eval,
+            kwargs,
+        ),
     )
-    masks = result[0] if isinstance(result, tuple) else result
+
+    masks = (
+        result[0]
+        if isinstance(result, tuple)
+        else result
+    )
+
     if isinstance(masks, (list, tuple)):
         if len(masks) != 1:
             raise ValueError(
-                "Expected one Omnipose prediction, "
-                f"but received {len(masks)}."
+                "Expected exactly one Omnipose prediction, "
+                f"but received {len(masks)} predictions."
             )
         masks = masks[0]
-    masks = np.squeeze(np.asarray(masks))
+
+    masks = np.asarray(masks)
+
+    if masks.ndim == 3 and masks.shape[0] == 1:
+        masks = masks[0]
+
+    masks = np.squeeze(masks)
+
     if masks.ndim != 2:
         raise ValueError(
-            "Omnipose prediction must be two-dimensional; "
+            "The Omnipose prediction must be two-dimensional; "
             f"received {masks.shape}."
         )
-    return masks.astype(np.int32, copy=False)
 
+    expected_shape = prepared.shape[:2]
+
+    if tuple(masks.shape) != tuple(expected_shape):
+        raise ValueError(
+            "The Omnipose prediction shape does not match the input. "
+            f"Prediction: {masks.shape}; input: {expected_shape}."
+        )
+
+    if np.any(masks < 0):
+        raise ValueError(
+            "The Omnipose prediction contains negative labels."
+        )
+
+    return masks.astype(
+        np.int32,
+        copy=False,
+    )
 
 def _stardist_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
     kwargs: dict[str, Any] = {}
