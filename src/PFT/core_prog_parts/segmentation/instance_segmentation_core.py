@@ -41,6 +41,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 import csv
+import gc
 import json
 import inspect
 import random
@@ -64,6 +65,7 @@ ModelFamily = Literal["cellpose", "omnipose", "stardist"]
 MODEL_FAMILIES: tuple[str, ...] = ("cellpose", "omnipose", "stardist")
 ANNOTATION_SOURCES: tuple[str, ...] = ("crops-only", "full-images-only", "all")
 ANNOTATION_SPLITS: tuple[str, ...] = ("train", "validation", "any")
+VALIDATION_POLICIES: tuple[str, ...] = ("combined", "legacy-explicit-first")
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,7 @@ class TrainingConfig:
     learning_rate: float = 1e-5
     weight_decay: float = 0.1
     validation_fraction: float = 0.2
+    validation_policy: str = "combined"
     seed: int = 1337
     save_every: int = 50
     min_train_masks: int = 1
@@ -129,6 +132,8 @@ class TrainingConfig:
     validation_mask_threshold: float = 0.0
     validation_min_size: int = 15
     save_validation_labels: bool = True
+    evaluate_pretrained_baseline: bool = True
+    save_improvement_graphs: bool = True
     extra_cli: list[str] = field(default_factory=list)
 
 
@@ -653,46 +658,103 @@ def _split_train_validation(
     names: list[str],
     fraction: float,
     seed: int,
+    validation_policy: str = "combined",
 ) -> tuple[
     tuple[list[np.ndarray], list[np.ndarray], list[str]],
     tuple[list[np.ndarray], list[np.ndarray], list[str]],
     dict[str, Any],
 ]:
-    """Split pairs while respecting explicit crop assignments.
+    """Create a source-aware train/validation split.
 
-    Explicit ``crops/train`` and ``crops/validation`` folders are authoritative.
-    When no explicit validation crop exists, a seeded random validation split is
-    created. A warning is recorded when training and validation originate from
-    the same full-resolution sample.
+    ``combined`` is the default thesis workflow. It preserves explicit
+    ``crops/train`` and ``crops/validation`` assignments and additionally
+    applies ``validation_fraction`` to source images without an explicit
+    assignment. All pairs from one original source image are kept in the same
+    split, preventing source-image leakage.
+
+    ``legacy-explicit-first`` reproduces the previous behavior: when at least
+    one explicit validation crop exists, all unspecified annotations are put
+    into training.
     """
     if not 0.0 <= fraction < 1.0:
         raise ValueError("validation_fraction must be in [0,1)")
+    if validation_policy not in VALIDATION_POLICIES:
+        raise ValueError(
+            f"validation_policy must be one of {VALIDATION_POLICIES}, "
+            f"received {validation_policy!r}"
+        )
+    if not (len(images) == len(masks) == len(names)):
+        raise ValueError("Images, masks, and names must have equal length")
 
-    explicit_train = {
-        index for index, name in enumerate(names) if _annotation_split(name) == "train"
-    }
-    explicit_validation = {
-        index for index, name in enumerate(names) if _annotation_split(name) == "validation"
-    }
-    all_indices = set(range(len(images)))
-    unspecified = sorted(all_indices - explicit_train - explicit_validation)
-    validation_indices = set(explicit_validation)
-    train_indices = set(explicit_train)
+    source_to_indices: dict[str, list[int]] = {}
+    for index, name in enumerate(names):
+        source_to_indices.setdefault(_source_sample_key(name), []).append(index)
 
-    if explicit_validation:
-        train_indices.update(unspecified)
-        split_policy = "explicit_validation_crops"
+    explicit_train_sources: set[str] = set()
+    explicit_validation_sources: set[str] = set()
+    for name in names:
+        split = _annotation_split(name)
+        source = _source_sample_key(name)
+        if split == "train":
+            explicit_train_sources.add(source)
+        elif split == "validation":
+            explicit_validation_sources.add(source)
+
+    conflicting_sources = sorted(
+        explicit_train_sources & explicit_validation_sources
+    )
+    if conflicting_sources:
+        raise RuntimeError(
+            "The following source images contain both explicit training and "
+            "validation crops, which would create leakage: "
+            + ", ".join(conflicting_sources)
+        )
+
+    train_sources = set(explicit_train_sources)
+    validation_sources = set(explicit_validation_sources)
+    unspecified_sources = sorted(
+        set(source_to_indices) - train_sources - validation_sources
+    )
+
+    fractional_validation_sources: set[str] = set()
+    fractional_train_sources: set[str] = set()
+    if validation_policy == "legacy-explicit-first" and validation_sources:
+        fractional_train_sources.update(unspecified_sources)
+        split_policy = "legacy_explicit_validation_only"
     else:
-        candidates = sorted(train_indices | set(unspecified))
-        random.Random(seed).shuffle(candidates)
-        n_validation = (
-            max(1, int(round(len(candidates) * fraction)))
-            if len(candidates) > 1 and fraction > 0
+        shuffled_sources = list(unspecified_sources)
+        random.Random(seed).shuffle(shuffled_sources)
+        n_validation_sources = (
+            max(1, int(round(len(shuffled_sources) * fraction)))
+            if len(shuffled_sources) > 1 and fraction > 0
             else 0
         )
-        validation_indices.update(candidates[:n_validation])
-        train_indices.update(candidates[n_validation:])
-        split_policy = "seeded_random_split"
+        fractional_validation_sources.update(
+            shuffled_sources[:n_validation_sources]
+        )
+        fractional_train_sources.update(
+            shuffled_sources[n_validation_sources:]
+        )
+        split_policy = "combined_explicit_plus_fractional_source_split"
+
+    train_sources.update(fractional_train_sources)
+    validation_sources.update(fractional_validation_sources)
+
+    train_indices = {
+        index
+        for source in train_sources
+        for index in source_to_indices[source]
+    }
+    validation_indices = {
+        index
+        for source in validation_sources
+        for index in source_to_indices[source]
+    }
+    overlap_indices = train_indices & validation_indices
+    if overlap_indices:
+        raise RuntimeError(
+            "Internal split error: one or more pairs were assigned to both splits"
+        )
 
     train_x: list[np.ndarray] = []
     train_y: list[np.ndarray] = []
@@ -700,32 +762,85 @@ def _split_train_validation(
     val_x: list[np.ndarray] = []
     val_y: list[np.ndarray] = []
     val_names: list[str] = []
+    split_rows: list[dict[str, Any]] = []
+
     for index, (image, mask, name) in enumerate(zip(images, masks, names)):
+        source = _source_sample_key(name)
+        explicit = _annotation_split(name)
         if index in validation_indices:
+            final_split = "validation"
             val_x.append(image)
             val_y.append(mask)
             val_names.append(name)
         elif index in train_indices:
+            final_split = "train"
             train_x.append(image)
             train_y.append(mask)
             train_names.append(name)
+        else:
+            raise RuntimeError(f"Pair was not assigned to a split: {name}")
+
+        if source in explicit_validation_sources:
+            reason = "explicit_validation_source"
+        elif source in explicit_train_sources:
+            reason = "explicit_train_source"
+        elif source in fractional_validation_sources:
+            reason = "fractional_validation_source"
+        else:
+            reason = "fractional_train_source"
+        split_rows.append(
+            {
+                "sample_key": name,
+                "source_sample_key": source,
+                "annotation_kind": _annotation_kind(name),
+                "explicit_pair_assignment": explicit or "unspecified",
+                "final_split": final_split,
+                "assignment_reason": reason,
+            }
+        )
 
     if not train_x:
         raise RuntimeError("Training split is empty")
-    train_sources = {_source_sample_key(name) for name in train_names}
-    validation_sources = {_source_sample_key(name) for name in val_names}
-    leakage_sources = sorted(train_sources & validation_sources)
+    train_source_set = {_source_sample_key(name) for name in train_names}
+    validation_source_set = {_source_sample_key(name) for name in val_names}
+    leakage_sources = sorted(train_source_set & validation_source_set)
+    if leakage_sources:
+        raise RuntimeError(
+            "Source-image leakage detected after splitting: "
+            + ", ".join(leakage_sources)
+        )
+
     diagnostics = {
         "split_policy": split_policy,
+        "requested_validation_fraction": fraction,
+        "seed": seed,
         "train_pair_count": len(train_names),
         "validation_pair_count": len(val_names),
-        "train_source_samples": sorted(train_sources),
-        "validation_source_samples": sorted(validation_sources),
-        "source_sample_overlap": leakage_sources,
-        "source_sample_overlap_warning": bool(leakage_sources),
+        "train_source_count": len(train_source_set),
+        "validation_source_count": len(validation_source_set),
+        "explicit_train_sources": sorted(explicit_train_sources),
+        "explicit_validation_sources": sorted(explicit_validation_sources),
+        "fractional_train_sources": sorted(fractional_train_sources),
+        "fractional_validation_sources": sorted(fractional_validation_sources),
+        "train_source_samples": sorted(train_source_set),
+        "validation_source_samples": sorted(validation_source_set),
+        "source_sample_overlap": [],
+        "source_sample_overlap_warning": False,
+        "split_rows": split_rows,
     }
     return (train_x, train_y, train_names), (val_x, val_y, val_names), diagnostics
 
+
+def _save_split_manifest(run_dir: Path, diagnostics: dict[str, Any]) -> Path | None:
+    rows = diagnostics.get("split_rows", [])
+    if not rows:
+        return None
+    path = run_dir / "split_manifest.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
 
 def _numeric_sequence(value: Any) -> list[float]:
     if value is None:
@@ -897,28 +1012,52 @@ def _validation_prediction_config(cfg: TrainingConfig, model_path: Path) -> Pred
     )
 
 
-def _evaluate_validation_after_training(
+def _release_prediction_model(model: Any) -> None:
+    """Release a prediction model before training or loading another model."""
+    try:
+        del model
+    finally:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+def _evaluate_model_on_validation(
     cfg: TrainingConfig,
-    run_dir: Path,
-    model_path: Path | None,
+    output_dir: Path,
+    prediction_cfg: PredictionConfig,
     validation_images: list[np.ndarray],
     validation_masks: list[np.ndarray],
     validation_names: list[str],
+    *,
+    evaluation_label: str,
 ) -> dict[str, Any]:
-    output_dir = run_dir / "validation"
+    """Evaluate one model on a fixed validation set and save binary metrics."""
     output_dir.mkdir(parents=True, exist_ok=True)
     if not validation_images:
         payload = {
             "status": "skipped_no_validation_pairs",
+            "evaluation_label": evaluation_label,
             "validation_pair_count": 0,
         }
         (output_dir / "validation_summary.json").write_text(
             json.dumps(payload, indent=2), encoding="utf-8"
         )
         return payload
-    if model_path is None or not model_path.exists():
+
+    try:
+        model = _load_prediction_model(prediction_cfg)
+    except Exception as exc:
         payload = {
-            "status": "skipped_model_path_unresolved",
+            "status": "failed_model_loading",
+            "evaluation_label": evaluation_label,
+            "model": str(prediction_cfg.model),
+            "error": repr(exc),
             "validation_pair_count": len(validation_images),
         }
         (output_dir / "validation_summary.json").write_text(
@@ -926,44 +1065,52 @@ def _evaluate_validation_after_training(
         )
         return payload
 
-    prediction_cfg = _validation_prediction_config(cfg, model_path)
-    model = _load_prediction_model(prediction_cfg)
     rows: list[dict[str, Any]] = []
-    for image, reference, name in zip(
-        validation_images, validation_masks, validation_names
-    ):
-        prediction = predict_one(model, image, prediction_cfg)
-        dice = semantic_dice(reference, prediction)
-        iou = semantic_iou(reference, prediction)
-        sample_dir = output_dir / _safe_name(name)
-        sample_dir.mkdir(parents=True, exist_ok=True)
-        comparison_png = sample_dir / "comparison.png"
-        _save_validation_comparison(
-            image, reference, prediction, comparison_png, cfg.dataset, dice, iou
-        )
-        label_path: Path | None = None
-        if cfg.save_validation_labels:
-            max_label = int(np.max(prediction)) if prediction.size else 0
-            dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
-            label_path = sample_dir / "predicted_labels.tif"
-            tiff.imwrite(label_path, prediction.astype(dtype, copy=False))
-        ref_pixels = int(np.count_nonzero(reference))
-        pred_pixels = int(np.count_nonzero(prediction))
-        rows.append(
-            {
-                "sample_key": name,
-                "semantic_dice": dice,
-                "semantic_iou": iou,
-                "reference_foreground_pixels": ref_pixels,
-                "prediction_foreground_pixels": pred_pixels,
-                "foreground_area_ratio": (
-                    float(pred_pixels / ref_pixels) if ref_pixels else float("nan")
-                ),
-                "predicted_instances": int(np.unique(prediction[prediction > 0]).size),
-                "comparison_png": str(comparison_png),
-                "predicted_labels_tif": str(label_path) if label_path else "",
-            }
-        )
+    try:
+        for image, reference, name in zip(
+            validation_images, validation_masks, validation_names
+        ):
+            prediction = predict_one(model, image, prediction_cfg)
+            dice = semantic_dice(reference, prediction)
+            iou = semantic_iou(reference, prediction)
+            sample_dir = output_dir / _safe_name(name)
+            sample_dir.mkdir(parents=True, exist_ok=True)
+            comparison_png = sample_dir / "comparison.png"
+            _save_validation_comparison(
+                image, reference, prediction, comparison_png, cfg.dataset, dice, iou
+            )
+            label_path: Path | None = None
+            if cfg.save_validation_labels:
+                max_label = int(np.max(prediction)) if prediction.size else 0
+                dtype = (
+                    np.uint16
+                    if max_label <= np.iinfo(np.uint16).max
+                    else np.uint32
+                )
+                label_path = sample_dir / "predicted_labels.tif"
+                tiff.imwrite(label_path, prediction.astype(dtype, copy=False))
+            ref_pixels = int(np.count_nonzero(reference))
+            pred_pixels = int(np.count_nonzero(prediction))
+            rows.append(
+                {
+                    "sample_key": name,
+                    "semantic_dice": dice,
+                    "semantic_iou": iou,
+                    "reference_foreground_pixels": ref_pixels,
+                    "prediction_foreground_pixels": pred_pixels,
+                    "foreground_area_ratio": (
+                        float(pred_pixels / ref_pixels) if ref_pixels else float("nan")
+                    ),
+                    "predicted_instances": int(
+                        np.unique(prediction[prediction > 0]).size
+                    ),
+                    "comparison_png": str(comparison_png),
+                    "predicted_labels_tif": str(label_path) if label_path else "",
+                }
+            )
+    finally:
+        _release_prediction_model(model)
+
     aggregate = {
         "sample_key": "__MEAN__",
         "semantic_dice": float(np.mean([row["semantic_dice"] for row in rows])),
@@ -991,7 +1138,8 @@ def _evaluate_validation_after_training(
         writer.writerows(all_rows)
     payload = {
         "status": "completed",
-        "model_path": str(model_path),
+        "evaluation_label": evaluation_label,
+        "model": str(prediction_cfg.model or prediction_cfg.model_name or "default"),
         "normalization_inside_model": False,
         "validation_parameters": {
             "diameter": cfg.validation_diameter,
@@ -1011,6 +1159,286 @@ def _evaluate_validation_after_training(
     return payload
 
 
+def _baseline_prediction_config(
+    cfg: TrainingConfig, pretrained_model: str | Path | None
+) -> PredictionConfig:
+    model_value: str | Path | None = pretrained_model
+    model_name: str | None = None
+    if cfg.family == "omnipose" and pretrained_model is not None:
+        candidate = Path(str(pretrained_model)).expanduser()
+        if not candidate.exists():
+            model_value = None
+            model_name = str(pretrained_model)
+    return PredictionConfig(
+        project_root=cfg.project_root,
+        family=cfg.family,
+        dataset=cfg.dataset,
+        source_mode=cfg.source_mode,
+        model=model_value,
+        model_name=model_name,
+        gpu=cfg.gpu,
+        diameter=cfg.validation_diameter,
+        flow_threshold=cfg.validation_flow_threshold,
+        cellprob_threshold=cfg.validation_cellprob_threshold,
+        mask_threshold=cfg.validation_mask_threshold,
+        min_size=cfg.validation_min_size,
+        batch_size=cfg.batch_size,
+    )
+
+
+def _evaluate_pretrained_baseline(
+    cfg: TrainingConfig,
+    run_dir: Path,
+    pretrained_model: str | Path | None,
+    validation_images: list[np.ndarray],
+    validation_masks: list[np.ndarray],
+    validation_names: list[str],
+) -> dict[str, Any]:
+    output_dir = run_dir / "validation" / "baseline"
+    if not cfg.evaluate_pretrained_baseline:
+        payload = {
+            "status": "skipped_by_configuration",
+            "evaluation_label": "pretrained_baseline",
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "validation_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+    prediction_cfg = _baseline_prediction_config(cfg, pretrained_model)
+    try:
+        return _evaluate_model_on_validation(
+            cfg,
+            output_dir,
+            prediction_cfg,
+            validation_images,
+            validation_masks,
+            validation_names,
+            evaluation_label="pretrained_baseline",
+        )
+    except Exception as exc:
+        payload = {
+            "status": "failed_baseline_evaluation",
+            "evaluation_label": "pretrained_baseline",
+            "model": str(pretrained_model),
+            "error": repr(exc),
+            "validation_pair_count": len(validation_images),
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "validation_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+
+
+def _evaluate_validation_after_training(
+    cfg: TrainingConfig,
+    run_dir: Path,
+    model_path: Path | None,
+    validation_images: list[np.ndarray],
+    validation_masks: list[np.ndarray],
+    validation_names: list[str],
+) -> dict[str, Any]:
+    output_dir = run_dir / "validation"
+    if model_path is None or not model_path.exists():
+        payload = {
+            "status": "skipped_model_path_unresolved",
+            "evaluation_label": "fine_tuned",
+            "validation_pair_count": len(validation_images),
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "validation_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+    prediction_cfg = _validation_prediction_config(cfg, model_path)
+    return _evaluate_model_on_validation(
+        cfg,
+        output_dir,
+        prediction_cfg,
+        validation_images,
+        validation_masks,
+        validation_names,
+        evaluation_label="fine_tuned",
+    )
+
+
+def _short_metric_label(name: str, maximum: int = 44) -> str:
+    normalized = name.replace("/crops/validation/", " / val crop ")
+    normalized = normalized.replace("/crops/train/", " / train crop ")
+    if len(normalized) <= maximum:
+        return normalized
+    return "..." + normalized[-(maximum - 3):]
+
+
+def _save_improvement_outputs(
+    run_dir: Path,
+    baseline: dict[str, Any],
+    fine_tuned: dict[str, Any],
+) -> dict[str, Any]:
+    """Save paired before/after Dice and IoU tables and graphs."""
+    output_dir = run_dir / "validation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if baseline.get("status") != "completed" or fine_tuned.get("status") != "completed":
+        payload = {
+            "status": "skipped_incomplete_evaluations",
+            "baseline_status": baseline.get("status"),
+            "fine_tuned_status": fine_tuned.get("status"),
+        }
+        (output_dir / "improvement_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+
+    baseline_rows = {row["sample_key"]: row for row in baseline.get("rows", [])}
+    fine_rows = {row["sample_key"]: row for row in fine_tuned.get("rows", [])}
+    common_names = sorted(set(baseline_rows) & set(fine_rows))
+    if not common_names:
+        payload = {"status": "skipped_no_common_validation_samples"}
+        (output_dir / "improvement_summary.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        return payload
+
+    rows: list[dict[str, Any]] = []
+    for name in common_names:
+        before = baseline_rows[name]
+        after = fine_rows[name]
+        rows.append(
+            {
+                "sample_key": name,
+                "baseline_semantic_iou": float(before["semantic_iou"]),
+                "fine_tuned_semantic_iou": float(after["semantic_iou"]),
+                "delta_semantic_iou": float(
+                    after["semantic_iou"] - before["semantic_iou"]
+                ),
+                "baseline_semantic_dice": float(before["semantic_dice"]),
+                "fine_tuned_semantic_dice": float(after["semantic_dice"]),
+                "delta_semantic_dice": float(
+                    after["semantic_dice"] - before["semantic_dice"]
+                ),
+            }
+        )
+
+    mean_row = {
+        "sample_key": "__MEAN__",
+        "baseline_semantic_iou": float(
+            np.mean([row["baseline_semantic_iou"] for row in rows])
+        ),
+        "fine_tuned_semantic_iou": float(
+            np.mean([row["fine_tuned_semantic_iou"] for row in rows])
+        ),
+        "delta_semantic_iou": float(
+            np.mean([row["delta_semantic_iou"] for row in rows])
+        ),
+        "baseline_semantic_dice": float(
+            np.mean([row["baseline_semantic_dice"] for row in rows])
+        ),
+        "fine_tuned_semantic_dice": float(
+            np.mean([row["fine_tuned_semantic_dice"] for row in rows])
+        ),
+        "delta_semantic_dice": float(
+            np.mean([row["delta_semantic_dice"] for row in rows])
+        ),
+    }
+    csv_path = output_dir / "validation_improvement_metrics.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(mean_row.keys()))
+        writer.writeheader()
+        writer.writerows(rows + [mean_row])
+
+    graph_paths: dict[str, str] = {}
+    import matplotlib.pyplot as plt
+
+    labels = [_short_metric_label(row["sample_key"]) for row in rows]
+    positions = np.arange(len(rows), dtype=np.float64)
+    width = 0.38
+    figure_height = max(5.0, 0.42 * len(rows) + 2.0)
+
+    figure, axis = plt.subplots(figsize=(10, figure_height))
+    axis.barh(
+        positions - width / 2,
+        [row["baseline_semantic_iou"] for row in rows],
+        height=width,
+        label="Pretrained",
+    )
+    axis.barh(
+        positions + width / 2,
+        [row["fine_tuned_semantic_iou"] for row in rows],
+        height=width,
+        label="Fine-tuned",
+    )
+    axis.set_yticks(positions, labels)
+    axis.set_xlim(0.0, 1.0)
+    axis.set_xlabel("Binary semantic IoU")
+    axis.set_title("IoU improvement on the held-out validation set")
+    axis.legend()
+    axis.grid(True, axis="x", alpha=0.3)
+    figure.tight_layout()
+    iou_path = output_dir / "iou_improvement_by_sample.png"
+    figure.savefig(iou_path, dpi=180)
+    plt.close(figure)
+    graph_paths["iou_improvement_png"] = str(iou_path)
+
+    figure, axis = plt.subplots(figsize=(10, figure_height))
+    axis.barh(
+        positions,
+        [row["delta_semantic_iou"] for row in rows],
+    )
+    axis.axvline(0.0, linewidth=1.0)
+    axis.set_yticks(positions, labels)
+    axis.set_xlabel("Fine-tuned IoU minus pretrained IoU")
+    axis.set_title("Per-sample IoU change after fine-tuning")
+    axis.grid(True, axis="x", alpha=0.3)
+    figure.tight_layout()
+    delta_path = output_dir / "iou_delta_by_sample.png"
+    figure.savefig(delta_path, dpi=180)
+    plt.close(figure)
+    graph_paths["iou_delta_png"] = str(delta_path)
+
+    figure, axis = plt.subplots(figsize=(7, 5))
+    metric_positions = np.arange(2, dtype=np.float64)
+    axis.bar(
+        metric_positions - width / 2,
+        [mean_row["baseline_semantic_dice"], mean_row["baseline_semantic_iou"]],
+        width=width,
+        label="Pretrained",
+    )
+    axis.bar(
+        metric_positions + width / 2,
+        [mean_row["fine_tuned_semantic_dice"], mean_row["fine_tuned_semantic_iou"]],
+        width=width,
+        label="Fine-tuned",
+    )
+    axis.set_xticks(metric_positions, ["Dice", "IoU"])
+    axis.set_ylim(0.0, 1.0)
+    axis.set_ylabel("Mean binary semantic metric")
+    axis.set_title("Mean validation performance before and after fine-tuning")
+    axis.legend()
+    axis.grid(True, axis="y", alpha=0.3)
+    figure.tight_layout()
+    mean_path = output_dir / "mean_dice_iou_improvement.png"
+    figure.savefig(mean_path, dpi=180)
+    plt.close(figure)
+    graph_paths["mean_dice_iou_improvement_png"] = str(mean_path)
+
+    payload = {
+        "status": "completed",
+        "validation_pair_count": len(rows),
+        "baseline_mean_semantic_iou": mean_row["baseline_semantic_iou"],
+        "fine_tuned_mean_semantic_iou": mean_row["fine_tuned_semantic_iou"],
+        "mean_iou_improvement": mean_row["delta_semantic_iou"],
+        "baseline_mean_semantic_dice": mean_row["baseline_semantic_dice"],
+        "fine_tuned_mean_semantic_dice": mean_row["fine_tuned_semantic_dice"],
+        "mean_dice_improvement": mean_row["delta_semantic_dice"],
+        "metrics_csv": str(csv_path),
+        **graph_paths,
+    }
+    (output_dir / "improvement_summary.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    return payload
+
 def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     from cellpose import models, train
 
@@ -1021,14 +1449,20 @@ def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         annotation_source=cfg.annotation_source,
     )
     (train_x, train_y, train_names), (val_x, val_y, val_names), split_info = (
-        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
+        _split_train_validation(
+            images, masks, names, cfg.validation_fraction, cfg.seed, cfg.validation_policy
+        )
     )
     if cfg.require_validation and not val_x:
         raise RuntimeError(
             "No validation pairs were selected. Create crops/validation annotations "
             "or use --allow-no-validation explicitly."
         )
+    split_manifest = _save_split_manifest(run_dir, split_info)
     pretrained = str(cfg.pretrained_model or _select_cellpose_builtin(models))
+    baseline = _evaluate_pretrained_baseline(
+        cfg, run_dir, pretrained, val_x, val_y, val_names
+    )
     model = models.CellposeModel(gpu=cfg.gpu, pretrained_model=pretrained)
     channel_axis = -1 if train_x[0].ndim == 3 else None
     result = train.train_seg(
@@ -1052,12 +1486,20 @@ def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     model_path, train_losses, validation_losses, result_repr = _extract_training_result(
         result, run_dir, cfg.run_name
     )
+    _release_prediction_model(model)
     loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
     validation = _evaluate_validation_after_training(
         cfg, run_dir, model_path, val_x, val_y, val_names
     )
+    improvement = (
+        _save_improvement_outputs(run_dir, baseline, validation)
+        if cfg.save_improvement_graphs
+        else {"status": "skipped_by_configuration"}
+    )
     return {
         "pretrained_model": pretrained,
+        "split_manifest_csv": str(split_manifest) if split_manifest else None,
+        "pretrained_baseline_validation": baseline,
         "model_path": str(model_path) if model_path else None,
         "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
@@ -1068,6 +1510,7 @@ def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "validation_losses": validation_losses,
         **loss_outputs,
         "automatic_validation": validation,
+        "validation_improvement": improvement,
         "normalization_inside_training": False,
     }
 
@@ -1100,7 +1543,9 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         annotation_source=cfg.annotation_source,
     )
     (train_raw, train_y, train_names), (val_raw, val_y, val_names), split_info = (
-        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
+        _split_train_validation(
+            images, masks, names, cfg.validation_fraction, cfg.seed, cfg.validation_policy
+        )
     )
     if cfg.require_validation and not val_raw:
         raise RuntimeError(
@@ -1117,7 +1562,11 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     all_masks = train_y + val_y
     all_names = train_names + val_names
     data_dir = _prepare_omnipose_folder(run_dir, all_images, all_masks, all_names)
+    split_manifest = _save_split_manifest(run_dir, split_info)
     pretrained = str(cfg.pretrained_model or "bact_fluor_omni")
+    baseline = _evaluate_pretrained_baseline(
+        cfg, run_dir, pretrained, val_raw, val_y, val_names
+    )
     pretrained_path = Path(pretrained).expanduser()
 
     constructor_values: dict[str, Any] = {
@@ -1165,12 +1614,20 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     model_path, train_losses, validation_losses, result_repr = _extract_training_result(
         result, run_dir, cfg.run_name
     )
+    _release_prediction_model(model)
     loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
     validation = _evaluate_validation_after_training(
         cfg, run_dir, model_path, val_raw, val_y, val_names
     )
+    improvement = (
+        _save_improvement_outputs(run_dir, baseline, validation)
+        if cfg.save_improvement_graphs
+        else {"status": "skipped_by_configuration"}
+    )
     return {
         "pretrained_model": pretrained,
+        "split_manifest_csv": str(split_manifest) if split_manifest else None,
+        "pretrained_baseline_validation": baseline,
         "model_path": str(model_path) if model_path else None,
         "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
@@ -1186,6 +1643,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "validation_losses": validation_losses,
         **loss_outputs,
         "automatic_validation": validation,
+        "validation_improvement": improvement,
         "normalization_inside_training": False,
         "omnipose_api_kwargs": {
             key: value
@@ -1205,10 +1663,17 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         annotation_source=cfg.annotation_source,
     )
     (train_x, train_y, train_names), (val_x, val_y, val_names), split_info = (
-        _split_train_validation(images, masks, names, cfg.validation_fraction, cfg.seed)
+        _split_train_validation(
+            images, masks, names, cfg.validation_fraction, cfg.seed, cfg.validation_policy
+        )
     )
     if cfg.require_validation and not val_x:
         raise RuntimeError("No validation pairs were selected")
+    split_manifest = _save_split_manifest(run_dir, split_info)
+    baseline_model = cfg.pretrained_model or "2D_versatile_fluo"
+    baseline = _evaluate_pretrained_baseline(
+        cfg, run_dir, baseline_model, val_x, val_y, val_names
+    )
     n_channel_in = 1 if train_x[0].ndim == 2 else int(train_x[0].shape[-1])
     config = Config2D(
         n_rays=cfg.n_rays,
@@ -1234,12 +1699,20 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     if isinstance(history_dict, dict):
         train_losses = _numeric_sequence(history_dict.get("loss"))
         validation_losses = _numeric_sequence(history_dict.get("val_loss"))
+    _release_prediction_model(model)
     loss_outputs = _save_loss_outputs(run_dir, train_losses, validation_losses)
     validation = _evaluate_validation_after_training(
         cfg, run_dir, model_path, val_x, val_y, val_names
     )
+    improvement = (
+        _save_improvement_outputs(run_dir, baseline, validation)
+        if cfg.save_improvement_graphs
+        else {"status": "skipped_by_configuration"}
+    )
     return {
         "model_path": str(model_path),
+        "split_manifest_csv": str(split_manifest) if split_manifest else None,
+        "pretrained_baseline_validation": baseline,
         "annotation_source": cfg.annotation_source,
         "train_samples": train_names,
         "validation_samples": val_names,
@@ -1249,6 +1722,7 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "validation_losses": validation_losses,
         **loss_outputs,
         "automatic_validation": validation,
+        "validation_improvement": improvement,
         "normalization_inside_training": False,
     }
 
@@ -1260,6 +1734,8 @@ def train_initial_model(cfg: TrainingConfig) -> Path:
     )
     if cfg.annotation_source not in ANNOTATION_SOURCES:
         raise ValueError(f"Invalid annotation_source: {cfg.annotation_source}")
+    if cfg.validation_policy not in VALIDATION_POLICIES:
+        raise ValueError(f"Invalid validation_policy: {cfg.validation_policy}")
     cfg.family, cfg.dataset, cfg.source_mode = family, dataset, source_mode
     family_root = segmentation_model_root(
         cfg.project_root, family, dataset, source_mode

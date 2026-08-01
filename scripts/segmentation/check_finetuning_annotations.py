@@ -2,8 +2,10 @@
 
 The checker verifies that every selected image/mask pair exists, has matching
 YX dimensions, uses finite float32 image data in [0, 1], and contains positive
-integer instance labels. It also summarizes explicit train/validation crop
-assignments and warns when both splits originate from the same source image.
+integer instance labels. It also previews the source-aware training and
+validation split used by the fine-tuning scripts. Explicit crop assignments are
+preserved, while the requested validation fraction is applied to unspecified
+source images.
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from PFT.core_prog_parts.segmentation.instance_segmentation_core import (  # noqa: E402
     ANNOTATION_SOURCES,
+    VALIDATION_POLICIES,
+    _split_train_validation,
     list_training_inputs,
     load_instance_mask,
     load_prepared_image,
@@ -73,6 +77,13 @@ def main() -> int:
         choices=ANNOTATION_SOURCES,
         default="crops-only",
     )
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--validation-policy",
+        choices=VALIDATION_POLICIES,
+        default="combined",
+    )
+    parser.add_argument("--seed", type=int, default=1337)
     args = parser.parse_args()
 
     valid_modes = SOURCE_MODES_BY_DATASET[args.dataset]
@@ -85,7 +96,16 @@ def main() -> int:
         args.source_mode,
         annotation_source=args.annotation_source,
     )
+    crop_sources_with_masks = {
+        _source_sample(item.sample_key)
+        for item in items
+        if "/crops/" in item.sample_key.replace("\\", "/")
+        and item.training_mask.is_file()
+    }
     rows: list[dict[str, object]] = []
+    valid_images: list[np.ndarray] = []
+    valid_masks: list[np.ndarray] = []
+    valid_names: list[str] = []
     failures = 0
     warnings = 0
     for index, item in enumerate(items, start=1):
@@ -101,6 +121,23 @@ def main() -> int:
         }
         try:
             if not item.training_mask.is_file():
+                if (
+                    args.annotation_source == "all"
+                    and split == "unspecified_full_image"
+                    and _source_sample(item.sample_key) in crop_sources_with_masks
+                ):
+                    row["status"] = "SKIP"
+                    row["message"] = (
+                        "Complete-image mask is absent; valid crop annotations from "
+                        "this source image will be used instead."
+                    )
+                    rows.append(row)
+                    print(
+                        f"[{index:03d}/{len(items):03d}] "
+                        f"{row['status']} {item.sample_key}"
+                    )
+                    print(f"  {row['message']}")
+                    continue
                 raise FileNotFoundError(f"Mask is missing: {item.training_mask}")
             image = load_prepared_image(item.input_zarr)
             mask = load_instance_mask(item.training_mask, image.shape[:2])
@@ -117,12 +154,11 @@ def main() -> int:
                     "maximum_label": int(labels.max()) if labels.size else 0,
                 }
             )
-            if split == "unspecified_full_image":
-                row["status"] = "WARN"
-                row["message"] = (
-                    "Full-image annotation has no explicit train/validation assignment."
-                )
-                warnings += 1
+            valid_images.append(image)
+            valid_masks.append(mask)
+            valid_names.append(item.sample_key)
+            # Unspecified complete images are valid. The combined policy assigns
+            # them reproducibly after all pairs have been checked.
         except Exception as exc:
             row["status"] = "FAIL"
             row["message"] = str(exc)
@@ -132,25 +168,46 @@ def main() -> int:
         if row["message"]:
             print(f"  {row['message']}")
 
-    train_sources = {
-        str(row["source_sample"])
-        for row in rows
-        if row["status"] != "FAIL" and row["annotation_split"] == "train"
-    }
-    validation_sources = {
-        str(row["source_sample"])
-        for row in rows
-        if row["status"] != "FAIL" and row["annotation_split"] == "validation"
-    }
-    overlap = sorted(train_sources & validation_sources)
-    train_count = sum(row["annotation_split"] == "train" and row["status"] != "FAIL" for row in rows)
-    validation_count = sum(
-        row["annotation_split"] == "validation" and row["status"] != "FAIL"
-        for row in rows
-    )
-    if validation_count == 0:
-        warnings += 1
-    if overlap:
+    split_diagnostics: dict[str, object] = {}
+    split_error = ""
+    planned_train_count = 0
+    planned_validation_count = 0
+    train_sources: set[str] = set()
+    validation_sources: set[str] = set()
+    overlap: list[str] = []
+    if valid_names:
+        try:
+            _train, _validation, split_diagnostics = _split_train_validation(
+                valid_images,
+                valid_masks,
+                valid_names,
+                args.validation_fraction,
+                args.seed,
+                args.validation_policy,
+            )
+            planned_train_count = int(split_diagnostics["train_pair_count"])
+            planned_validation_count = int(
+                split_diagnostics["validation_pair_count"]
+            )
+            train_sources = set(split_diagnostics["train_source_samples"])
+            validation_sources = set(
+                split_diagnostics["validation_source_samples"]
+            )
+            overlap = list(split_diagnostics["source_sample_overlap"])
+            split_by_name = {
+                str(record["sample_key"]): record
+                for record in split_diagnostics.get("split_rows", [])
+            }
+            for row in rows:
+                record = split_by_name.get(str(row["sample_key"]))
+                if record is not None:
+                    row["planned_split"] = record["final_split"]
+                    row["assignment_reason"] = record["assignment_reason"]
+        except Exception as exc:
+            split_error = str(exc)
+            failures += 1
+
+    if planned_validation_count == 0 and not split_error:
         warnings += 1
 
     output_dir = (
@@ -171,24 +228,30 @@ def main() -> int:
         "dataset": args.dataset,
         "source_mode": args.source_mode,
         "annotation_source": args.annotation_source,
+        "validation_fraction": args.validation_fraction,
+        "validation_policy": args.validation_policy,
+        "seed": args.seed,
         "pair_count": len(rows),
-        "train_pair_count": train_count,
-        "validation_pair_count": validation_count,
+        "valid_pair_count": len(valid_names),
+        "planned_train_pair_count": planned_train_count,
+        "planned_validation_pair_count": planned_validation_count,
         "failure_count": failures,
         "warning_count": warnings,
         "train_source_samples": sorted(train_sources),
         "validation_source_samples": sorted(validation_sources),
         "source_sample_overlap": overlap,
+        "split_error": split_error,
+        "split_diagnostics": split_diagnostics,
         "messages": [
-            "No explicit validation crops exist."
-            if validation_count == 0
-            else "Explicit validation crops found.",
             (
-                "Training and validation use crops from the same source images: "
-                + ", ".join(overlap)
+                f"Planned source-aware split: {planned_train_count} training and "
+                f"{planned_validation_count} validation pairs."
             )
-            if overlap
-            else "No source-image overlap between explicit training and validation crops.",
+            if not split_error
+            else f"Split construction failed: {split_error}",
+            "No source-image overlap between training and validation."
+            if not overlap
+            else "Source-image overlap detected: " + ", ".join(overlap),
         ],
         "rows": rows,
     }
@@ -204,8 +267,9 @@ def main() -> int:
                 f"Source mode: {args.source_mode}",
                 f"Annotation source: {args.annotation_source}",
                 f"Pairs: {len(rows)}",
-                f"Training: {train_count}",
-                f"Validation: {validation_count}",
+                f"Valid pairs: {len(valid_names)}",
+                f"Planned training: {planned_train_count}",
+                f"Planned validation: {planned_validation_count}",
                 f"Failures: {failures}",
                 f"Warnings: {warnings}",
                 *summary["messages"],
@@ -217,13 +281,16 @@ def main() -> int:
 
     print("\nSummary")
     print("=" * 72)
-    print(f"Pairs:       {len(rows)}")
-    print(f"Training:    {train_count}")
-    print(f"Validation:  {validation_count}")
-    print(f"Failures:    {failures}")
-    print(f"Warnings:    {warnings}")
+    print(f"Pairs:               {len(rows)}")
+    print(f"Valid pairs:         {len(valid_names)}")
+    print(f"Planned training:    {planned_train_count}")
+    print(f"Planned validation:  {planned_validation_count}")
+    print(f"Failures:            {failures}")
+    print(f"Warnings:            {warnings}")
+    if split_error:
+        print(f"SPLIT ERROR: {split_error}")
     if overlap:
-        print("WARNING: train/validation crops share source images:")
+        print("WARNING: training and validation share source images:")
         for sample in overlap:
             print(f"  {sample}")
     print(f"Reports:     {output_dir}")

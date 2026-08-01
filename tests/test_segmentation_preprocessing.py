@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
     instance_f1,
@@ -119,7 +120,34 @@ def test_omnipose_wga_dapi_reorders_wga_first() -> None:
     assert metadata["policy"] == "wga_then_dapi"
 
 
-def test_explicit_split_reports_source_overlap() -> None:
+def test_combined_split_preserves_explicit_and_splits_unspecified_sources() -> None:
+    from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
+        _split_train_validation,
+    )
+
+    image = np.ones((8, 8), dtype=np.float32)
+    mask = np.ones((8, 8), dtype=np.int32)
+    names = [
+        "crop_train_source/crops/train/crop_001",
+        "crop_validation_source/crops/validation/crop_001",
+        *[f"full_{index:02d}" for index in range(10)],
+    ]
+    images = [image for _ in names]
+    masks = [mask for _ in names]
+    train, validation, diagnostics = _split_train_validation(
+        images, masks, names, 0.2, 1337, "combined"
+    )
+
+    assert len(train[2]) == 9
+    assert len(validation[2]) == 3
+    assert "crop_train_source/crops/train/crop_001" in train[2]
+    assert "crop_validation_source/crops/validation/crop_001" in validation[2]
+    assert len(diagnostics["fractional_validation_sources"]) == 2
+    assert diagnostics["source_sample_overlap"] == []
+    assert diagnostics["source_sample_overlap_warning"] is False
+
+
+def test_conflicting_explicit_source_assignments_are_rejected() -> None:
     from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
         _split_train_validation,
     )
@@ -130,9 +158,32 @@ def test_explicit_split_reports_source_overlap() -> None:
         "sample_a/crops/train/crop_001",
         "sample_a/crops/validation/crop_002",
     ]
-    _train, _validation, diagnostics = _split_train_validation(
-        [image, image], [mask, mask], names, 0.2, 1
+    with pytest.raises(RuntimeError, match="both explicit training and validation"):
+        _split_train_validation(
+            [image, image], [mask, mask], names, 0.2, 1, "combined"
+        )
+
+
+def test_explicit_validation_source_keeps_all_pairs_in_validation() -> None:
+    from PFT.core_prog_parts.segmentation.instance_segmentation_core import (
+        _split_train_validation,
     )
 
-    assert diagnostics["source_sample_overlap"] == ["sample_a"]
-    assert diagnostics["source_sample_overlap_warning"] is True
+    image = np.ones((8, 8), dtype=np.float32)
+    mask = np.ones((8, 8), dtype=np.int32)
+    names = [
+        "sample_a",
+        "sample_a/crops/validation/crop_001",
+        "sample_b",
+        "sample_c",
+    ]
+    images = [image for _ in names]
+    masks = [mask for _ in names]
+    train, validation, diagnostics = _split_train_validation(
+        images, masks, names, 0.2, 2, "combined"
+    )
+
+    assert "sample_a" in validation[2]
+    assert "sample_a/crops/validation/crop_001" in validation[2]
+    assert "sample_a" not in train[2]
+    assert diagnostics["source_sample_overlap"] == []

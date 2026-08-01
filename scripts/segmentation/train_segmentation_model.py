@@ -17,8 +17,14 @@ Models and reports are stored below::
         training_summary.json
         training_losses.csv                 # when returned by the library
         training_loss_curve.png             # when losses are available
+        split_manifest.csv
         validation/
+            baseline/validation_metrics.csv
             validation_metrics.csv
+            validation_improvement_metrics.csv
+            iou_improvement_by_sample.png
+            iou_delta_by_sample.png
+            mean_dice_iou_improvement.png
             validation_summary.json
             <sample>/comparison.png
             <sample>/predicted_labels.tif
@@ -52,7 +58,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from PFT.core_prog_parts.segmentation.instance_segmentation_core import (  # noqa: E402
     ANNOTATION_SOURCES,
     MODEL_FAMILIES,
+    VALIDATION_POLICIES,
     TrainingConfig,
+    _split_train_validation,
     collect_training_data,
     train_initial_model,
 )
@@ -109,6 +117,15 @@ def main(default_family: str | None = None) -> int:
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=None)
     parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--validation-policy",
+        choices=VALIDATION_POLICIES,
+        default="combined",
+        help=(
+            "combined preserves explicit crop assignments and additionally holds "
+            "out the requested fraction of unspecified source images"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--save-every", type=int, default=50)
     parser.add_argument("--min-train-masks", type=int, default=1)
@@ -123,6 +140,16 @@ def main(default_family: str | None = None) -> int:
     parser.add_argument("--validation-mask-threshold", type=float, default=0.0)
     parser.add_argument("--validation-min-size", type=int, default=15)
     parser.add_argument("--no-validation-labels", action="store_true")
+    parser.add_argument(
+        "--no-pretrained-baseline",
+        action="store_true",
+        help="Skip evaluation of the initial pretrained model on the validation set.",
+    )
+    parser.add_argument(
+        "--no-improvement-graphs",
+        action="store_true",
+        help="Skip paired pretrained-versus-fine-tuned Dice/IoU graphs.",
+    )
     parser.add_argument("--n-rays", type=int, default=32)
     parser.add_argument("--grid", type=int, default=2)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
@@ -146,7 +173,7 @@ def main(default_family: str | None = None) -> int:
     learning_rate = args.learning_rate if args.learning_rate is not None else family_defaults["learning_rate"]
     weight_decay = args.weight_decay if args.weight_decay is not None else family_defaults["weight_decay"]
 
-    images, _masks, names = collect_training_data(
+    images, masks, names = collect_training_data(
         PROJECT_ROOT,
         dataset,
         source_mode,
@@ -164,7 +191,26 @@ def main(default_family: str | None = None) -> int:
         print("Omnipose channels:      2d_time=HADA+zero; 2d_wga_dapi=WGA+DAPI")
         print("Omnipose architecture:  nchan=2, nclasses=3 for bact_fluor_omni")
     print("Input normalization:    already prepared; model normalization disabled")
+    split_preview = _split_train_validation(
+        images,
+        masks,
+        names,
+        args.validation_fraction,
+        args.seed,
+        args.validation_policy,
+    )[2]
     print("Validation metrics:     binary Dice and IoU")
+    print(f"Validation policy:      {args.validation_policy}")
+    print(
+        "Planned split:          "
+        f"{split_preview['train_pair_count']} train / "
+        f"{split_preview['validation_pair_count']} validation pairs"
+    )
+    print(
+        "Validation composition: "
+        f"{len(split_preview['explicit_validation_sources'])} explicit source(s) + "
+        f"{len(split_preview['fractional_validation_sources'])} fractional source(s)"
+    )
     print(f"Epochs / batch size:    {epochs} / {batch_size}")
     print(f"Learning rate / WD:     {learning_rate:g} / {weight_decay:g}")
     print(f"Run name:               {run_name}")
@@ -182,6 +228,7 @@ def main(default_family: str | None = None) -> int:
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         validation_fraction=args.validation_fraction,
+        validation_policy=args.validation_policy,
         seed=args.seed,
         save_every=args.save_every,
         min_train_masks=args.min_train_masks,
@@ -197,6 +244,8 @@ def main(default_family: str | None = None) -> int:
         validation_mask_threshold=args.validation_mask_threshold,
         validation_min_size=args.validation_min_size,
         save_validation_labels=not args.no_validation_labels,
+        evaluate_pretrained_baseline=not args.no_pretrained_baseline,
+        save_improvement_graphs=not args.no_improvement_graphs,
         extra_cli=extra_cli,
     )
     output = train_initial_model(cfg)
@@ -217,6 +266,21 @@ def main(default_family: str | None = None) -> int:
             print(f"  mean Dice: {validation.get('mean_semantic_dice', float('nan')):.4f}")
             print(f"  mean IoU:  {validation.get('mean_semantic_iou', float('nan')):.4f}")
             print(f"  report:    {validation.get('metrics_csv')}")
+        improvement = details.get("validation_improvement", {})
+        if improvement.get("status") == "completed":
+            print("\nPretrained-to-fine-tuned improvement:")
+            print(
+                f"  mean IoU:  {improvement.get('baseline_mean_semantic_iou', float('nan')):.4f} "
+                f"-> {improvement.get('fine_tuned_mean_semantic_iou', float('nan')):.4f} "
+                f"(delta {improvement.get('mean_iou_improvement', float('nan')):+.4f})"
+            )
+            print(
+                f"  mean Dice: {improvement.get('baseline_mean_semantic_dice', float('nan')):.4f} "
+                f"-> {improvement.get('fine_tuned_mean_semantic_dice', float('nan')):.4f} "
+                f"(delta {improvement.get('mean_dice_improvement', float('nan')):+.4f})"
+            )
+            print(f"  IoU graph: {improvement.get('iou_improvement_png')}")
+            print(f"  delta graph: {improvement.get('iou_delta_png')}")
     return 0
 
 
