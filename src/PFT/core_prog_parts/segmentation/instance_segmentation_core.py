@@ -124,6 +124,8 @@ class TrainingConfig:
     grid: int = 2
     steps_per_epoch: int = 100
     patch_size: tuple[int, int] = (256, 256)
+    foreground_patches_per_image: int = 8
+    stardist_foreground_fraction: float = 1.0
     omnipose_nclasses: int = 3
     annotation_source: str = "crops-only"
     require_validation: bool = True
@@ -131,6 +133,8 @@ class TrainingConfig:
     validation_flow_threshold: float = 0.6
     validation_cellprob_threshold: float = -0.5
     validation_mask_threshold: float = 0.0
+    validation_prob_thresh: float | None = None
+    validation_nms_thresh: float | None = None
     validation_min_size: int = 15
     save_validation_labels: bool = True
     evaluate_pretrained_baseline: bool = True
@@ -547,7 +551,15 @@ def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
 
 
 def _omnipose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
+    """Predict one image with Omnipose using an explicit two-channel YXC array."""
     prepared, _channel_record = _prepare_omnipose_image(image, cfg.dataset)
+    prepared = np.asarray(prepared, dtype=np.float32)
+    if prepared.ndim != 3 or prepared.shape[-1] != 2:
+        raise ValueError(
+            "Omnipose input must have shape (Y, X, 2); "
+            f"received {prepared.shape}."
+        )
+
     kwargs = {
         "diameter": cfg.diameter,
         "channels": None,
@@ -558,11 +570,27 @@ def _omnipose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
         "min_size": cfg.min_size,
         "normalize": False,
     }
-    result = model.eval([prepared], **_supported_kwargs(model.eval, kwargs))
-    masks = result[0]
+    # Omnipose 1.1.4 expects one ndarray here. Wrapping it in a Python list
+    # causes transforms.convert_image() to fail because lists have no ndim.
+    result = model.eval(
+        prepared,
+        **_supported_kwargs(model.eval, kwargs),
+    )
+    masks = result[0] if isinstance(result, tuple) else result
     if isinstance(masks, (list, tuple)):
+        if len(masks) != 1:
+            raise ValueError(
+                "Expected one Omnipose prediction, "
+                f"but received {len(masks)}."
+            )
         masks = masks[0]
-    return np.asarray(masks, dtype=np.int32)
+    masks = np.squeeze(np.asarray(masks))
+    if masks.ndim != 2:
+        raise ValueError(
+            "Omnipose prediction must be two-dimensional; "
+            f"received {masks.shape}."
+        )
+    return masks.astype(np.int32, copy=False)
 
 
 def _stardist_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
@@ -1023,6 +1051,8 @@ def _validation_prediction_config(cfg: TrainingConfig, model_path: Path) -> Pred
         mask_threshold=cfg.validation_mask_threshold,
         min_size=cfg.validation_min_size,
         batch_size=cfg.batch_size,
+        prob_thresh=cfg.validation_prob_thresh,
+        nms_thresh=cfg.validation_nms_thresh,
     )
 
 
@@ -1160,6 +1190,8 @@ def _evaluate_model_on_validation(
             "flow_threshold": cfg.validation_flow_threshold,
             "cellprob_threshold": cfg.validation_cellprob_threshold,
             "mask_threshold": cfg.validation_mask_threshold,
+            "prob_thresh": cfg.validation_prob_thresh,
+            "nms_thresh": cfg.validation_nms_thresh,
             "min_size": cfg.validation_min_size,
         },
         "mean_semantic_dice": aggregate["semantic_dice"],
@@ -1197,6 +1229,8 @@ def _baseline_prediction_config(
         mask_threshold=cfg.validation_mask_threshold,
         min_size=cfg.validation_min_size,
         batch_size=cfg.batch_size,
+        prob_thresh=cfg.validation_prob_thresh,
+        nms_thresh=cfg.validation_nms_thresh,
     )
 
 
@@ -1275,6 +1309,72 @@ def _evaluate_validation_after_training(
         validation_names,
         evaluation_label="fine_tuned",
     )
+
+
+
+def _infer_run_dir_from_model(family: str, model_path: Path) -> Path:
+    """Infer the model run directory for validation output placement."""
+    resolved = model_path.resolve()
+    if family == "omnipose" and resolved.is_file() and resolved.parent.name == "models":
+        return resolved.parent.parent
+    if family == "stardist" and resolved.is_dir():
+        return resolved
+    return resolved.parent if resolved.is_file() else resolved
+
+
+def validate_saved_model(
+    cfg: TrainingConfig,
+    model_path: str | Path,
+    output_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Validate an already trained model without repeating training."""
+    family, dataset, source_mode = _validate_family_dataset(
+        cfg.family, cfg.dataset, cfg.source_mode
+    )
+    cfg.family, cfg.dataset, cfg.source_mode = family, dataset, source_mode
+    model_path = Path(model_path).expanduser().resolve()
+    if not model_path.exists():
+        raise FileNotFoundError(f"Saved model does not exist: {model_path}")
+
+    images, masks, names = collect_training_data(
+        cfg.project_root,
+        dataset,
+        source_mode,
+        annotation_source=cfg.annotation_source,
+    )
+    _train, (val_x, val_y, val_names), split_info = _split_train_validation(
+        images,
+        masks,
+        names,
+        cfg.validation_fraction,
+        cfg.seed,
+        cfg.validation_policy,
+    )
+    if not val_x:
+        raise RuntimeError("No validation pairs were selected")
+
+    if output_dir is None:
+        run_dir = _infer_run_dir_from_model(family, model_path)
+        validation_dir = run_dir / "validation"
+    else:
+        validation_dir = Path(output_dir).expanduser().resolve()
+    prediction_cfg = _validation_prediction_config(cfg, model_path)
+    result = _evaluate_model_on_validation(
+        cfg,
+        validation_dir,
+        prediction_cfg,
+        val_x,
+        val_y,
+        val_names,
+        evaluation_label="saved_model",
+    )
+    result["split_diagnostics"] = split_info
+    result["model_path"] = str(model_path)
+    result["output_dir"] = str(validation_dir)
+    (validation_dir / "standalone_validation_summary.json").write_text(
+        json.dumps(result, indent=2, default=str), encoding="utf-8"
+    )
+    return result
 
 
 def _short_metric_label(name: str, maximum: int = 44) -> str:
@@ -1546,8 +1646,184 @@ def _prepare_omnipose_folder(
     return data_dir
 
 
+
+def _relabel_positive_instances(mask: np.ndarray) -> np.ndarray:
+    """Relabel positive instance identifiers consecutively while keeping 0 background."""
+    array = np.asarray(mask)
+    unique, inverse = np.unique(array, return_inverse=True)
+    mapped = np.zeros(unique.shape, dtype=np.int32)
+    positive_positions = np.flatnonzero(unique > 0)
+    mapped[positive_positions] = np.arange(1, len(positive_positions) + 1, dtype=np.int32)
+    return mapped[inverse].reshape(array.shape)
+
+
+def _instance_centroids(mask: np.ndarray) -> np.ndarray:
+    """Return deterministic YX centroids for all positive instance identifiers."""
+    array = np.asarray(mask)
+    centroids: list[tuple[float, float]] = []
+    for label_id in np.unique(array):
+        if label_id <= 0:
+            continue
+        coordinates = np.argwhere(array == label_id)
+        if coordinates.size:
+            centroid = coordinates.mean(axis=0)
+            centroids.append((float(centroid[0]), float(centroid[1])))
+    return np.asarray(centroids, dtype=np.float64)
+
+
+def _select_spatially_distributed_centres(
+    centroids: np.ndarray,
+    count: int,
+) -> np.ndarray:
+    """Select spatially distributed instance centres by deterministic farthest sampling."""
+    if len(centroids) <= count:
+        return centroids
+    overall_centre = centroids.mean(axis=0)
+    first = int(np.argmin(np.sum((centroids - overall_centre) ** 2, axis=1)))
+    selected = [first]
+    remaining = set(range(len(centroids))) - {first}
+    while remaining and len(selected) < count:
+        candidates = np.asarray(sorted(remaining), dtype=np.int64)
+        candidate_points = centroids[candidates]
+        selected_points = centroids[np.asarray(selected, dtype=np.int64)]
+        squared = np.sum(
+            (candidate_points[:, None, :] - selected_points[None, :, :]) ** 2,
+            axis=2,
+        )
+        minimum_distance = squared.min(axis=1)
+        next_index = int(candidates[int(np.argmax(minimum_distance))])
+        selected.append(next_index)
+        remaining.remove(next_index)
+    return centroids[np.asarray(selected, dtype=np.int64)]
+
+
+def _extract_centered_patch(
+    image: np.ndarray,
+    mask: np.ndarray,
+    centre_yx: Sequence[float],
+    patch_size: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    """Extract one fixed-size patch with the selected foreground point at its centre."""
+    image_array = np.asarray(image)
+    mask_array = np.asarray(mask)
+    if mask_array.ndim != 2:
+        raise ValueError(f"Training mask must be YX, received {mask_array.shape}")
+    if image_array.shape[:2] != mask_array.shape:
+        raise ValueError(
+            f"Image YX {image_array.shape[:2]} and mask {mask_array.shape} differ"
+        )
+    patch_y, patch_x = (int(patch_size[0]), int(patch_size[1]))
+    if patch_y <= 0 or patch_x <= 0:
+        raise ValueError(f"patch_size must be positive, received {patch_size}")
+
+    pad_top = patch_y // 2
+    pad_bottom = patch_y - pad_top
+    pad_left = patch_x // 2
+    pad_right = patch_x - pad_left
+    image_pad = ((pad_top, pad_bottom), (pad_left, pad_right))
+    if image_array.ndim == 3:
+        image_pad = image_pad + ((0, 0),)
+    padded_image = np.pad(image_array, image_pad, mode="constant", constant_values=0)
+    padded_mask = np.pad(
+        mask_array,
+        ((pad_top, pad_bottom), (pad_left, pad_right)),
+        mode="constant",
+        constant_values=0,
+    )
+
+    centre_y = int(np.clip(round(float(centre_yx[0])), 0, mask_array.shape[0] - 1))
+    centre_x = int(np.clip(round(float(centre_yx[1])), 0, mask_array.shape[1] - 1))
+    patch_image = padded_image[centre_y : centre_y + patch_y, centre_x : centre_x + patch_x]
+    patch_mask = padded_mask[centre_y : centre_y + patch_y, centre_x : centre_x + patch_x]
+    patch_mask = _relabel_positive_instances(patch_mask)
+    if not np.any(patch_mask > 0):
+        raise RuntimeError("Foreground-centred extraction unexpectedly produced an empty mask")
+    return patch_image, patch_mask, {
+        "centre_y": centre_y,
+        "centre_x": centre_x,
+        "foreground_pixels": int(np.count_nonzero(patch_mask)),
+        "instances": int(np.unique(patch_mask[patch_mask > 0]).size),
+    }
+
+
+def _build_foreground_training_patches(
+    images: Sequence[np.ndarray],
+    masks: Sequence[np.ndarray],
+    names: Sequence[str],
+    patch_size: tuple[int, int],
+    max_patches_per_image: int,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[str], list[dict[str, Any]]]:
+    """Create training patches that always contain labelled foreground.
+
+    Validation data are intentionally not passed through this function. They
+    remain complete images or manually selected validation crops.
+    """
+    if max_patches_per_image < 1:
+        raise ValueError("max_patches_per_image must be at least 1")
+    patch_y, patch_x = (int(patch_size[0]), int(patch_size[1]))
+    patch_images: list[np.ndarray] = []
+    patch_masks: list[np.ndarray] = []
+    patch_names: list[str] = []
+    records: list[dict[str, Any]] = []
+
+    for image, mask, name in zip(images, masks, names):
+        mask_array = np.asarray(mask)
+        foreground = np.argwhere(mask_array > 0)
+        if foreground.size == 0:
+            raise ValueError(f"Training annotation has no foreground: {name}")
+        centroids = _instance_centroids(mask_array)
+        if not len(centroids):
+            centroids = foreground.mean(axis=0, keepdims=True)
+
+        y_min, x_min = foreground.min(axis=0)
+        y_max, x_max = foreground.max(axis=0)
+        bbox_y = int(y_max - y_min + 1)
+        bbox_x = int(x_max - x_min + 1)
+        spatial_need = max(
+            1,
+            int(np.ceil(bbox_y / patch_y)) * int(np.ceil(bbox_x / patch_x)),
+        )
+        patch_count = min(max_patches_per_image, len(centroids), spatial_need)
+        selected = _select_spatially_distributed_centres(centroids, patch_count)
+
+        for patch_index, centre in enumerate(selected, start=1):
+            patch_image, patch_mask, patch_record = _extract_centered_patch(
+                image, mask_array, centre, (patch_y, patch_x)
+            )
+            patch_name = f"{name}/foreground_patch_{patch_index:03d}"
+            patch_images.append(np.asarray(patch_image, dtype=np.float32))
+            patch_masks.append(np.asarray(patch_mask, dtype=np.int32))
+            patch_names.append(patch_name)
+            records.append(
+                {
+                    "source_sample": name,
+                    "patch_name": patch_name,
+                    "patch_height": patch_y,
+                    "patch_width": patch_x,
+                    **patch_record,
+                }
+            )
+    if not patch_images:
+        raise RuntimeError("No foreground-containing training patches were generated")
+    return patch_images, patch_masks, patch_names, records
+
+
+def _save_foreground_patch_manifest(
+    run_dir: Path,
+    records: Sequence[dict[str, Any]],
+) -> Path | None:
+    if not records:
+        return None
+    path = run_dir / "foreground_training_patches.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
+        writer.writeheader()
+        writer.writerows(records)
+    return path
+
+
 def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
-    """Fine-tune Omnipose with explicit two-channel bact_fluor_omni inputs."""
+    """Fine-tune Omnipose on foreground-centred, non-empty training patches."""
     from cellpose_omni import models
 
     images, masks, names = collect_training_data(
@@ -1556,7 +1832,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         cfg.source_mode,
         annotation_source=cfg.annotation_source,
     )
-    (train_raw, train_y, train_names), (val_raw, val_y, val_names), split_info = (
+    (train_raw, train_y_raw, train_names_raw), (val_raw, val_y, val_names), split_info = (
         _split_train_validation(
             images, masks, names, cfg.validation_fraction, cfg.seed, cfg.validation_policy
         )
@@ -1566,16 +1842,24 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
             "No validation pairs were selected. Create crops/validation annotations "
             "or use --allow-no-validation explicitly."
         )
+
+    foreground_raw, train_y, train_names, patch_records = (
+        _build_foreground_training_patches(
+            train_raw,
+            train_y_raw,
+            train_names_raw,
+            cfg.patch_size,
+            cfg.foreground_patches_per_image,
+        )
+    )
+    patch_manifest = _save_foreground_patch_manifest(run_dir, patch_records)
     train_x, train_channel_records = _prepare_family_images(
-        train_raw, "omnipose", cfg.dataset
+        foreground_raw, "omnipose", cfg.dataset
     )
     val_x, val_channel_records = _prepare_family_images(
         val_raw, "omnipose", cfg.dataset
     )
-    all_images = train_x + val_x
-    all_masks = train_y + val_y
-    all_names = train_names + val_names
-    data_dir = _prepare_omnipose_folder(run_dir, all_images, all_masks, all_names)
+    data_dir = _prepare_omnipose_folder(run_dir, train_x, train_y, train_names)
     split_manifest = _save_split_manifest(run_dir, split_info)
     pretrained = str(cfg.pretrained_model or "bact_fluor_omni")
     baseline = _evaluate_pretrained_baseline(
@@ -1601,11 +1885,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         **_supported_kwargs(models.CellposeModel, constructor_values)
     )
 
-    # Omnipose 1.1.4 compatibility: _set_criterion() assigns a probability-
-    # based BCELoss to self.BCELoss, although the boundary branch supplies raw
-    # network logits. Modern PyTorch correctly rejects logits outside [0, 1].
-    # Replace only that model-level criterion with BCEWithLogitsLoss. The
-    # separate affinity-boundary loss keeps its original probability BCE.
+    # Omnipose 1.1.4 compatibility for modern PyTorch logits.
     import types
     import torch
 
@@ -1630,21 +1910,14 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
 
     model._set_criterion = types.MethodType(_set_criterion_with_logits, model)
 
-    # Omnipose 1.1.4 requires train_links to be iterable even when no
-    # linked labels are present. Each entry corresponds to one image.
     train_links: list[None] = [None] * len(train_y)
-
-    # Do not pass the held-out validation arrays into CellposeModel.train().
-    # In Omnipose 1.1.4, internal test-label flow generation may create CUDA
-    # tensors and then concatenate them with NumPy, which raises:
-    # "can't convert cuda:0 device type tensor to numpy".
-    # The same held-out validation set is evaluated immediately after training
-    # by _evaluate_validation_after_training(), so validation remains complete
-    # and independent while training itself continues on the GPU.
     train_values: dict[str, Any] = {
         "train_data": train_x,
         "train_labels": train_y,
         "train_links": train_links,
+        # Omnipose 1.1.4 internal validation-flow conversion is incompatible
+        # with this CUDA/PyTorch combination. Independent validation is run
+        # immediately after training with the untouched held-out images.
         "test_data": None,
         "test_labels": None,
         "test_links": None,
@@ -1657,11 +1930,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "n_epochs": cfg.epochs,
         "weight_decay": cfg.weight_decay,
         "batch_size": cfg.batch_size,
-        # Omnipose 1.1.4 defaults to 224 x 224 crops. Some 2048 x 2048
-        # fluorescence fields contain cells only in a limited region, so repeated
-        # random 224-pixel crops can contain background only and trigger the
-        # package's "Sparse or over-dense image detected" recursion guard.
-        # Use the user-configurable PFT patch size instead.
+        # Every input is already exactly this size and contains labelled cells.
         "tyx": tuple(int(value) for value in cfg.patch_size),
         "rescale": False,
         "min_train_masks": cfg.min_train_masks,
@@ -1690,10 +1959,13 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     return {
         "pretrained_model": pretrained,
         "split_manifest_csv": str(split_manifest) if split_manifest else None,
+        "foreground_patch_manifest_csv": str(patch_manifest) if patch_manifest else None,
         "pretrained_baseline_validation": baseline,
         "model_path": str(model_path) if model_path else None,
         "annotation_source": cfg.annotation_source,
+        "original_train_samples": train_names_raw,
         "train_samples": train_names,
+        "training_patch_count": len(train_names),
         "validation_samples": val_names,
         "split_diagnostics": split_info,
         "prepared_training_data": str(data_dir),
@@ -1702,6 +1974,7 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "nchan": 2,
         "nclasses": 3,
         "training_patch_size": [int(value) for value in cfg.patch_size],
+        "foreground_only_training_patches": True,
         "train_result_repr": result_repr,
         "training_losses": train_losses,
         "validation_losses": validation_losses,
@@ -1712,21 +1985,24 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         "omnipose_internal_validation": {
             "enabled": False,
             "reason": (
-                "Omnipose 1.1.4 internal test-label flow generation is disabled "
-                "because its CUDA path mixes torch tensors with NumPy. The held-out "
-                "validation set is evaluated by PFT after model training."
+                "Omnipose 1.1.4 internal CUDA validation is disabled; "
+                "PFT evaluates the untouched held-out set after training."
             ),
             "held_out_samples": val_names,
         },
         "omnipose_api_kwargs": {
             key: value
             for key, value in supported_train_values.items()
-            if key not in {"train_data", "train_labels", "test_data", "test_labels"}
+            if key not in {
+                "train_data", "train_labels", "train_links",
+                "test_data", "test_labels", "test_links",
+            }
         },
     }
 
 
 def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
+    """Train StarDist with foreground-only patch sampling and independent validation."""
     from stardist.models import Config2D, StarDist2D
 
     images, masks, names = collect_training_data(
@@ -1735,19 +2011,30 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         cfg.source_mode,
         annotation_source=cfg.annotation_source,
     )
-    (train_x, train_y, train_names), (val_x, val_y, val_names), split_info = (
+    (train_raw, train_y_raw, train_names_raw), (val_x, val_y, val_names), split_info = (
         _split_train_validation(
             images, masks, names, cfg.validation_fraction, cfg.seed, cfg.validation_policy
         )
     )
     if cfg.require_validation and not val_x:
         raise RuntimeError("No validation pairs were selected")
+
+    train_x, train_y, train_names, patch_records = _build_foreground_training_patches(
+        train_raw,
+        train_y_raw,
+        train_names_raw,
+        cfg.patch_size,
+        cfg.foreground_patches_per_image,
+    )
+    patch_manifest = _save_foreground_patch_manifest(run_dir, patch_records)
     split_manifest = _save_split_manifest(run_dir, split_info)
-    baseline_model = cfg.pretrained_model or "2D_versatile_fluo"
+    baseline_model = str(cfg.pretrained_model or "2D_versatile_fluo")
     baseline = _evaluate_pretrained_baseline(
         cfg, run_dir, baseline_model, val_x, val_y, val_names
     )
     n_channel_in = 1 if train_x[0].ndim == 2 else int(train_x[0].shape[-1])
+    if not 0.0 <= cfg.stardist_foreground_fraction <= 1.0:
+        raise ValueError("stardist_foreground_fraction must be in [0, 1]")
     config = Config2D(
         n_rays=cfg.n_rays,
         grid=(cfg.grid, cfg.grid),
@@ -1756,10 +2043,22 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
         train_batch_size=cfg.batch_size,
         train_patch_size=cfg.patch_size,
         train_learning_rate=cfg.learning_rate,
+        train_foreground_only=cfg.stardist_foreground_fraction,
         n_channel_in=n_channel_in,
         use_gpu=cfg.gpu,
     )
     model = StarDist2D(config, name=run_dir.name, basedir=str(run_dir.parent))
+
+    initialization = "random"
+    if baseline_model.lower() not in {"none", "false", "scratch"}:
+        try:
+            pretrained_model = StarDist2D.from_pretrained(baseline_model)
+            model.keras_model.set_weights(pretrained_model.keras_model.get_weights())
+            initialization = f"pretrained:{baseline_model}"
+            _release_prediction_model(pretrained_model)
+        except Exception as exc:
+            initialization = f"random_fallback:{type(exc).__name__}: {exc}"
+
     history = model.train(
         train_x, train_y, validation_data=(val_x, val_y) if val_x else None
     )
@@ -1784,13 +2083,20 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     )
     return {
         "model_path": str(model_path),
+        "initialization": initialization,
         "split_manifest_csv": str(split_manifest) if split_manifest else None,
+        "foreground_patch_manifest_csv": str(patch_manifest) if patch_manifest else None,
         "pretrained_baseline_validation": baseline,
         "annotation_source": cfg.annotation_source,
+        "original_train_samples": train_names_raw,
         "train_samples": train_names,
+        "training_patch_count": len(train_names),
         "validation_samples": val_names,
         "split_diagnostics": split_info,
         "n_channel_in": n_channel_in,
+        "training_patch_size": [int(value) for value in cfg.patch_size],
+        "foreground_only_training_patches": True,
+        "stardist_train_foreground_only": cfg.stardist_foreground_fraction,
         "training_losses": train_losses,
         "validation_losses": validation_losses,
         **loss_outputs,

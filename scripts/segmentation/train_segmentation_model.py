@@ -138,6 +138,8 @@ def main(default_family: str | None = None) -> int:
     parser.add_argument("--validation-flow-threshold", type=float, default=0.6)
     parser.add_argument("--validation-cellprob-threshold", type=float, default=-0.5)
     parser.add_argument("--validation-mask-threshold", type=float, default=0.0)
+    parser.add_argument("--validation-prob-thresh", type=float, default=None)
+    parser.add_argument("--validation-nms-thresh", type=float, default=None)
     parser.add_argument("--validation-min-size", type=int, default=15)
     parser.add_argument("--no-validation-labels", action="store_true")
     parser.add_argument(
@@ -154,6 +156,18 @@ def main(default_family: str | None = None) -> int:
     parser.add_argument("--grid", type=int, default=2)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--patch-size", type=int, nargs=2, default=(256, 256))
+    parser.add_argument(
+        "--foreground-patches-per-image",
+        type=int,
+        default=8,
+        help="Maximum number of spatially distributed, mask-containing patches generated from each training annotation.",
+    )
+    parser.add_argument(
+        "--stardist-foreground-fraction",
+        type=float,
+        default=1.0,
+        help="Fraction of StarDist batches sampled from foreground-containing locations.",
+    )
     args, extra_cli = parser.parse_known_args()
 
     family = args.family or _choose("Choose model family", MODEL_FAMILIES)
@@ -213,6 +227,10 @@ def main(default_family: str | None = None) -> int:
     )
     print(f"Epochs / batch size:    {epochs} / {batch_size}")
     print(f"Learning rate / WD:     {learning_rate:g} / {weight_decay:g}")
+    if family in {"omnipose", "stardist"}:
+        print(f"Mask-containing patches: enabled, max {args.foreground_patches_per_image} per training image")
+    if family == "stardist":
+        print(f"StarDist foreground sampling fraction: {args.stardist_foreground_fraction:g}")
     print(f"Run name:               {run_name}")
 
     cfg = TrainingConfig(
@@ -236,12 +254,16 @@ def main(default_family: str | None = None) -> int:
         grid=args.grid,
         steps_per_epoch=args.steps_per_epoch,
         patch_size=tuple(args.patch_size),
+        foreground_patches_per_image=args.foreground_patches_per_image,
+        stardist_foreground_fraction=args.stardist_foreground_fraction,
         annotation_source=args.annotation_source,
         require_validation=not args.allow_no_validation,
         validation_diameter=args.validation_diameter,
         validation_flow_threshold=args.validation_flow_threshold,
         validation_cellprob_threshold=args.validation_cellprob_threshold,
         validation_mask_threshold=args.validation_mask_threshold,
+        validation_prob_thresh=args.validation_prob_thresh,
+        validation_nms_thresh=args.validation_nms_thresh,
         validation_min_size=args.validation_min_size,
         save_validation_labels=not args.no_validation_labels,
         evaluate_pretrained_baseline=not args.no_pretrained_baseline,
