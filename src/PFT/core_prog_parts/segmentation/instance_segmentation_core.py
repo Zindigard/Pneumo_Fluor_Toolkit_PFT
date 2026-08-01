@@ -44,6 +44,7 @@ import csv
 import gc
 import json
 import inspect
+import hashlib
 import random
 import shutil
 import sys
@@ -368,6 +369,19 @@ def collect_training_data(
 
 def _safe_name(value: str) -> str:
     return value.replace("/", "__").replace("\\", "__")
+
+
+def _compact_artifact_name(value: str, index: int, prefix_length: int = 20) -> str:
+    """Create a stable short folder name for Windows-safe artifact paths.
+
+    The original sample key is retained in CSV/JSON reports. The short folder
+    name prevents failures near the legacy Windows MAX_PATH limit when tuning
+    outputs are nested below long project and model directories.
+    """
+    safe = _safe_name(value).strip(" ._") or "sample"
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+    prefix = safe[:prefix_length].rstrip(" ._") or "sample"
+    return f"s{index:03d}_{prefix}_{digest}"
 
 
 def _model_display_name(cfg: PredictionConfig) -> str:
@@ -1910,7 +1924,9 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
     rows: list[dict[str, Any]] = []
     for parameter_index, parameters in enumerate(_parameter_grid(cfg), start=1):
         sample_rows: list[dict[str, Any]] = []
-        for image, reference, sample_name in zip(images, masks, names):
+        for sample_index, (image, reference, sample_name) in enumerate(
+            zip(images, masks, names), start=1
+        ):
             prediction_cfg = PredictionConfig(**asdict(base_prediction))
             for key, value in parameters.items():
                 setattr(prediction_cfg, key, value)
@@ -1919,12 +1935,14 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
             iou = semantic_iou(reference, prediction)
             ref_pixels = int(np.count_nonzero(reference))
             pred_pixels = int(np.count_nonzero(prediction))
-            sample_dir = output_root / f"parameter_{parameter_index:03d}" / _safe_name(sample_name)
+            parameter_dir = output_root / f"parameter_{parameter_index:03d}"
+            artifact_name = _compact_artifact_name(sample_name, sample_index)
+            sample_dir = parameter_dir / artifact_name
+            sample_dir.mkdir(parents=True, exist_ok=True)
             comparison_png = sample_dir / "comparison.png"
             _save_validation_comparison(
                 image, reference, prediction, comparison_png, dataset, dice, iou
             )
-            sample_dir.mkdir(parents=True, exist_ok=True)
             label_path = sample_dir / "predicted_labels.tif"
             max_label = int(np.max(prediction)) if prediction.size else 0
             dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
@@ -1932,6 +1950,8 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
             sample_row = {
                 "parameter_index": parameter_index,
                 "sample_key": sample_name,
+                "artifact_name": artifact_name,
+                "artifact_directory": str(sample_dir),
                 **parameters,
                 "semantic_dice": dice,
                 "semantic_iou": iou,
@@ -1948,6 +1968,8 @@ def tune_model_parameters(cfg: TuneConfig) -> Path:
         aggregate = {
             "parameter_index": parameter_index,
             "sample_key": "__MEAN__",
+            "artifact_name": "",
+            "artifact_directory": "",
             **parameters,
             "semantic_dice": float(np.mean([row["semantic_dice"] for row in sample_rows])),
             "semantic_iou": float(np.mean([row["semantic_iou"] for row in sample_rows])),
