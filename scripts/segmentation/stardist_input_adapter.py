@@ -1,21 +1,5 @@
-r"""Dataset-specific single-channel input adapter for StarDist.
-
-The prepared PFT segmentation inputs remain unchanged on disk:
-
-* ``2d_time`` stores one numerical HADA channel.
-* ``2d_wga_dapi`` stores two independently normalized DAPI/WGA channels.
-* ``3d_mip`` stores three independently normalized HADA/NADA/TADA MIP channels.
-
-The pretrained and fine-tuned ``StarDist2D`` models used by PFT expect one
-numerical input channel. Therefore, only inside StarDist processes, multichannel
-prepared inputs are converted to one float32 image by a pixelwise maximum:
-
-* DAPI/WGA -> ``max(DAPI, WGA)``
-* HADA/NADA/TADA MIP -> ``max(HADA, NADA, TADA)``
-
-The same adapter is installed for training-data collection and all supported
-StarDist prediction methods. This keeps screening, fine-tuning, validation, and
-production inference consistent.
+"""
+Dataset-specific single-channel input adapter for StarDist.
 
 Examples
 --------
@@ -541,6 +525,24 @@ def _patch_stardist_prediction_methods() -> None:
     StarDist2D._pft_stardist_merge_prediction_installed = True
 
 
+def policy_description() -> str:
+    """Return a concise description of the active StarDist input policy.
+
+    Returns
+    -------
+    str
+        Human-readable policy description printed by the StarDist terminal
+        entry points.
+
+    Examples
+    --------
+    >>> policy_description()
+    'automatic StarDist single-channel policy'
+    """
+    return "automatic StarDist single-channel policy"
+
+
+
 def install_stardist_input_adapter() -> None:
     """Install all StarDist-specific PFT input adapters.
 
@@ -560,4 +562,5 @@ def install_stardist_input_adapter() -> None:
 __all__ = [
     "install_stardist_input_adapter",
     "merge_stardist_input",
+    "policy_description",
 ]

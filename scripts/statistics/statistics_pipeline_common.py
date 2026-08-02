@@ -59,7 +59,16 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
         name="3d_mip",
         default_source_mode="deconv_masked",
         channel_names=("HADA", "NADA", "TADA"),
-        condition_order=("THY", "NHS"),
+        condition_order=(
+            "WT_THY_0min",
+            "WT_NHS_0min",
+            "DpspA_THY_0min",
+            "DpspA_NHS_0min",
+            "WT_THY_40min",
+            "WT_NHS_40min",
+            "DpspA_THY_40min",
+            "DpspA_NHS_40min",
+        ),
     ),
 }
 
@@ -149,42 +158,85 @@ def source_mode_for(dataset: str, source_mode: str | None, dataset_argument: str
 
 
 def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, object]]:
-    """Infer condition from the supplied model inputs.
+    """Infer a canonical condition and metadata from a sample identifier.
+
+    The parser supports both historical WGA-DAPI naming conventions and the
+    nested acquisition-date folders used by ``3d_mip``. For WGA-DAPI data,
+    ``noNHS`` is treated as the THY/control medium and is never classified as
+    NHS merely because the substring contains the letters ``NHS``. For 3D MIP
+    data, genotype, medium, labeling time, acquisition date, and the filename
+    labeling sequence are retained separately.
 
     Args:
-        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
-        sample_name (str): Text value specifying sample name.
+        dataset (str): Supported dataset identifier.
+        sample_name (str): Sample name or a combined annotation/sample path.
 
     Returns:
-        tuple[str, dict[str, object]]: Mapping containing the generated or resolved values.
+        tuple[str, dict[str, object]]: Canonical condition and parsed metadata.
 
     Raises:
-        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If ``dataset`` is unsupported.
 
     Example:
-        >>> result = infer_condition(dataset="2d_time", sample_name="sample_name")
+        >>> infer_condition("2d_wga_dapi", "WT_CSP_noNHS_ROI1_SIM")[0]
+        'THY_CSP'
+        >>> infer_condition(
+        ...     "3d_mip",
+        ...     "20220330_HADA_NADA_TADA_0min/WT_THY_HADA_NADA_TADA_0min_ROI1_SIM",
+        ... )[0]
+        'WT_THY_0min'
     """
-    upper = sample_name.upper()
-    medium = "THY" if "THY" in upper else "NHS" if "NHS" in upper else "UNKNOWN"
-    metadata: dict[str, object] = {"medium": medium}
+    upper = str(sample_name).upper()
+    compact_tokens = set(re.split(r"[^A-Z0-9]+", upper))
 
     if dataset == "2d_time":
+        medium = "THY" if "THY" in compact_tokens else "NHS" if "NHS" in compact_tokens else "UNKNOWN"
         match = re.search(r"(?<!\d)(5|20|40|120)\s*MIN", upper)
         time_min = int(match.group(1)) if match else -1
-        metadata["time_min"] = time_min
+        metadata: dict[str, object] = {"medium": medium, "time_min": time_min}
         return f"{medium}_{time_min}min", metadata
 
     if dataset == "2d_wga_dapi":
-        no_csp = any(
-            token in upper
-            for token in ("NOCSP", "NO_CSP", "WITHOUTCSP", "WITHOUT_CSP")
-        )
-        csp = ("CSP" in upper) and not no_csp
-        metadata["csp"] = csp
+        has_no_nhs = "NONHS" in compact_tokens or bool(re.search(r"(?:^|_)NO_?NHS(?:_|$)", upper))
+        if "THY" in compact_tokens or has_no_nhs:
+            medium = "THY"
+        elif "NHS" in compact_tokens:
+            medium = "NHS"
+        else:
+            medium = "UNKNOWN"
+
+        no_csp = "NOCSP" in compact_tokens or bool(re.search(r"(?:^|_)NO_?CSP(?:_|$)", upper))
+        csp = ("CSP" in compact_tokens) and not no_csp
+        metadata = {
+            "medium": medium,
+            "csp": csp,
+            "naming_no_nhs_control": has_no_nhs,
+        }
         return f"{medium}_{'CSP' if csp else 'noCSP'}", metadata
 
     if dataset == "3d_mip":
-        return medium, metadata
+        genotype = "DpspA" if "DPSPA" in compact_tokens else "WT" if "WT" in compact_tokens else "UNKNOWN"
+        medium = "THY" if "THY" in compact_tokens else "NHS" if "NHS" in compact_tokens else "UNKNOWN"
+        time_match = re.search(r"(?<!\d)(0|40)\s*MIN", upper)
+        time_min = int(time_match.group(1)) if time_match else -1
+        date_match = re.search(r"(?<!\d)(20\d{6})(?!\d)", upper)
+        acquisition_date = date_match.group(1) if date_match else "UNKNOWN"
+        if "NADA_HADA_TADA" in upper:
+            label_sequence = "NADA_HADA_TADA"
+        elif "HADA_NADA_TADA" in upper:
+            label_sequence = "HADA_NADA_TADA"
+        else:
+            label_sequence = "UNKNOWN"
+
+        metadata = {
+            "genotype": genotype,
+            "medium": medium,
+            "time_min": time_min,
+            "acquisition_date": acquisition_date,
+            "batch_id": acquisition_date,
+            "label_sequence": label_sequence,
+        }
+        return f"{genotype}_{medium}_{time_min}min", metadata
 
     raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -318,8 +370,9 @@ def filter_manifest_rows(
         ):
             continue
 
-        condition, metadata = infer_condition(dataset, sample_name)
-        time_value = int(metadata.get("time_min", -1)) if dataset == "2d_time" else -1
+        parse_identifier = f"{source_row.get('annotation_id', '')}/{sample_name}"
+        condition, metadata = infer_condition(dataset, parse_identifier)
+        time_value = int(metadata.get("time_min", -1))
         if time_value in excluded_times:
             continue
 

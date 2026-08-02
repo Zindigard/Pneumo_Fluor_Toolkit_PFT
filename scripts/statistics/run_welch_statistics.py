@@ -80,7 +80,16 @@ CONDITION_ORDER = {
         "NHS_120min",
     ),
     "2d_wga_dapi": ("THY_noCSP", "THY_CSP", "NHS_noCSP", "NHS_CSP"),
-    "3d_mip": ("THY", "NHS"),
+    "3d_mip": (
+        "WT_THY_0min",
+        "WT_NHS_0min",
+        "DpspA_THY_0min",
+        "DpspA_NHS_0min",
+        "WT_THY_40min",
+        "WT_NHS_40min",
+        "DpspA_THY_40min",
+        "DpspA_NHS_40min",
+    ),
 }
 NON_METRIC_COLUMNS = {
     "dataset",
@@ -90,6 +99,11 @@ NON_METRIC_COLUMNS = {
     "medium",
     "time_min",
     "csp",
+    "naming_no_nhs_control",
+    "genotype",
+    "acquisition_date",
+    "batch_id",
+    "label_sequence",
     "source_label",
     "pixel_size_um",
 }
@@ -597,17 +611,49 @@ def planned_comparisons(dataset: str) -> list[Comparison]:
             ),
         ]
     if dataset == "3d_mip":
-        return [
-            Comparison(
-                "THY vs NHS",
-                "THY_vs_NHS_across_channels",
-                "THY",
-                ("THY",),
-                "NHS",
-                ("NHS",),
-                "primary",
+        comparisons: list[Comparison] = []
+        for time in (0, 40):
+            comparisons.extend(
+                [
+                    Comparison(
+                        f"WT THY vs NHS at {time} min",
+                        f"3d_medium_effect_WT_{time}min",
+                        f"WT, THY, {time} min",
+                        (f"WT_THY_{time}min",),
+                        f"WT, NHS, {time} min",
+                        (f"WT_NHS_{time}min",),
+                        "primary" if time == 0 else "exploratory",
+                    ),
+                    Comparison(
+                        f"ΔpspA THY vs NHS at {time} min",
+                        f"3d_medium_effect_DpspA_{time}min",
+                        f"ΔpspA, THY, {time} min",
+                        (f"DpspA_THY_{time}min",),
+                        f"ΔpspA, NHS, {time} min",
+                        (f"DpspA_NHS_{time}min",),
+                        "primary" if time == 0 else "exploratory",
+                    ),
+                    Comparison(
+                        f"WT vs ΔpspA in THY at {time} min",
+                        f"3d_genotype_effect_THY_{time}min",
+                        f"WT, THY, {time} min",
+                        (f"WT_THY_{time}min",),
+                        f"ΔpspA, THY, {time} min",
+                        (f"DpspA_THY_{time}min",),
+                        "primary" if time == 0 else "exploratory",
+                    ),
+                    Comparison(
+                        f"WT vs ΔpspA in NHS at {time} min",
+                        f"3d_genotype_effect_NHS_{time}min",
+                        f"WT, NHS, {time} min",
+                        (f"WT_NHS_{time}min",),
+                        f"ΔpspA, NHS, {time} min",
+                        (f"DpspA_NHS_{time}min",),
+                        "primary" if time == 0 else "exploratory",
+                    ),
+                ]
             )
-        ]
+        return comparisons
     raise ValueError(f"Unsupported dataset: {dataset}")
 
 
@@ -1353,7 +1399,13 @@ def process_dataset(
     roi_rows = read_csv(roi_summary_path)
     if not roi_rows:
         raise ValueError(f"ROI summary is empty: {roi_summary_path}")
-    conditions_present = sorted({str(row.get("condition", "")) for row in roi_rows})
+    condition_set = {str(row.get("condition", "")) for row in roi_rows}
+    conditions_present = [
+        condition
+        for condition in CONDITION_ORDER[dataset]
+        if condition in condition_set
+    ]
+    conditions_present.extend(sorted(condition_set - set(conditions_present)))
     planned = planned_comparisons(dataset)
     pairwise = all_pairwise_comparisons(dataset, conditions_present)
 
@@ -1403,6 +1455,31 @@ def process_dataset(
     write_csv(output_root / "welch_radial_pointwise.csv", radial_rows)
     write_csv(output_root / "welch_significant_profile_intervals.csv", intervals)
 
+    batch_distribution: list[dict[str, object]] = []
+    if dataset == "3d_mip":
+        grouped_batches: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for row in roi_rows:
+            key = (
+                str(row.get("condition", "")),
+                str(row.get("acquisition_date", row.get("batch_id", "UNKNOWN"))),
+            )
+            grouped_batches.setdefault(key, []).append(row)
+        for (condition, acquisition_date), group_rows in sorted(grouped_batches.items()):
+            batch_distribution.append(
+                {
+                    "condition": condition,
+                    "acquisition_date": acquisition_date,
+                    "n_rois": len(group_rows),
+                    "total_cells": int(
+                        sum(safe_float(row.get("n_cells"), 0.0) for row in group_rows)
+                    ),
+                }
+            )
+        write_csv(
+            output_root / "welch_3d_condition_batch_distribution.csv",
+            batch_distribution,
+        )
+
     notes = [
         {"item": "independent_observation", "value": "one image/ROI summary"},
         {"item": "test", "value": "two-sided Welch independent-samples t-test"},
@@ -1423,7 +1500,11 @@ def process_dataset(
         },
         {
             "item": "3d_channel_comparisons",
-            "value": "THY versus NHS is tested separately per channel; channel-versus-channel comparisons require paired analysis and are not tested here",
+            "value": "Genotype and medium comparisons are tested separately at 0 and 40 min for each fluorescence channel; channel-versus-channel comparisons require paired analysis and are not tested here",
+        },
+        {
+            "item": "3d_batch_caution",
+            "value": "The 0 min data originate from one acquisition date. Several 40 min conditions are acquisition-batch imbalanced; treat those comparisons as exploratory unless a batch-adjusted model is used.",
         },
     ]
     write_workbook(
@@ -1466,6 +1547,9 @@ def process_dataset(
         "n_pointwise_profile_bins_significant": len(significant_profile),
         "n_significant_profile_intervals": len(intervals),
         "statistical_unit": "independent image/ROI",
+        "three_d_batch_distribution": (
+            batch_distribution if dataset == "3d_mip" else None
+        ),
         "warning": (
             "A statistically significant result does not establish biological importance. "
             "Interpret adjusted p-values together with confidence intervals, Hedges' g, "

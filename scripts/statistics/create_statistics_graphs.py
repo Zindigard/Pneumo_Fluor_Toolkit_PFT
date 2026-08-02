@@ -41,7 +41,7 @@ from scipy import ndimage as ndi
 SCRIPT_FILE = Path(__file__).resolve()
 EPS = np.finfo(np.float64).eps
 EXAMPLE_MODE = False
-THESIS_HEATMAP_ROWS = 40
+THESIS_HEATMAP_ROWS = 50
 TIME_POINTS_2D = (5, 20, 40, 120)
 MEDIA_2D = ("THY", "NHS")
 
@@ -75,7 +75,16 @@ SPECS = {
         dataset="3d_mip",
         # The Methods chapter defines the stored channels as HADA, NADA and TADA.
         channel_names=("HADA", "NADA", "TADA"),
-        condition_order=("THY", "NHS"),
+        condition_order=(
+            "WT_THY_0min",
+            "WT_NHS_0min",
+            "DpspA_THY_0min",
+            "DpspA_NHS_0min",
+            "WT_THY_40min",
+            "WT_NHS_40min",
+            "DpspA_THY_40min",
+            "DpspA_NHS_40min",
+        ),
     ),
 }
 
@@ -159,42 +168,82 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, object]]:
-    """Infer condition from the supplied model inputs.
+    """Infer a canonical condition and metadata from a sample identifier.
+
+    This parser matches ``statistics_pipeline_common.infer_condition``. It
+    resolves ``noNHS`` as the THY/control group in WGA-DAPI data and keeps
+    genotype, time, acquisition batch, and filename labeling sequence separate
+    for 3D MIP data.
 
     Args:
-        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
-        sample_name (str): Text value specifying sample name.
+        dataset (str): Supported dataset identifier.
+        sample_name (str): Sample name or combined annotation/sample path.
 
     Returns:
-        tuple[str, dict[str, object]]: Mapping containing the generated or resolved values.
+        tuple[str, dict[str, object]]: Canonical condition and parsed metadata.
 
     Raises:
-        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If ``dataset`` is unsupported.
 
     Example:
-        >>> result = infer_condition(dataset="2d_time", sample_name="sample_name")
+        >>> infer_condition("2d_wga_dapi", "WT_noCSP_noNHS_ROI1_SIM")[0]
+        'THY_noCSP'
+        >>> infer_condition(
+        ...     "3d_mip",
+        ...     "20220318_HADA_NADA_TADA_40min/DpspA_NHS_NADA_HADA_TADA_40min_ROI1_SIM",
+        ... )[0]
+        'DpspA_NHS_40min'
     """
-    upper = sample_name.upper()
-    medium = "THY" if "THY" in upper else "NHS" if "NHS" in upper else "UNKNOWN"
-    metadata: dict[str, object] = {"medium": medium}
+    upper = str(sample_name).upper()
+    compact_tokens = set(re.split(r"[^A-Z0-9]+", upper))
 
     if dataset == "2d_time":
+        medium = "THY" if "THY" in compact_tokens else "NHS" if "NHS" in compact_tokens else "UNKNOWN"
         match = re.search(r"(?<!\d)(5|20|40|120)\s*MIN", upper)
-        if not match:
-            match = re.search(r"_(5|20|40|120)MIN_", upper)
         time_min = int(match.group(1)) if match else -1
-        metadata["time_min"] = time_min
+        metadata: dict[str, object] = {"medium": medium, "time_min": time_min}
         return f"{medium}_{time_min}min", metadata
 
     if dataset == "2d_wga_dapi":
-        no_csp = any(token in upper for token in ("NOCSP", "NO_CSP", "WITHOUTCSP", "WITHOUT_CSP"))
-        csp = ("CSP" in upper) and not no_csp
-        csp_label = "CSP" if csp else "noCSP"
-        metadata["csp"] = csp
-        return f"{medium}_{csp_label}", metadata
+        has_no_nhs = "NONHS" in compact_tokens or bool(re.search(r"(?:^|_)NO_?NHS(?:_|$)", upper))
+        if "THY" in compact_tokens or has_no_nhs:
+            medium = "THY"
+        elif "NHS" in compact_tokens:
+            medium = "NHS"
+        else:
+            medium = "UNKNOWN"
+
+        no_csp = "NOCSP" in compact_tokens or bool(re.search(r"(?:^|_)NO_?CSP(?:_|$)", upper))
+        csp = ("CSP" in compact_tokens) and not no_csp
+        metadata = {
+            "medium": medium,
+            "csp": csp,
+            "naming_no_nhs_control": has_no_nhs,
+        }
+        return f"{medium}_{'CSP' if csp else 'noCSP'}", metadata
 
     if dataset == "3d_mip":
-        return medium, metadata
+        genotype = "DpspA" if "DPSPA" in compact_tokens else "WT" if "WT" in compact_tokens else "UNKNOWN"
+        medium = "THY" if "THY" in compact_tokens else "NHS" if "NHS" in compact_tokens else "UNKNOWN"
+        time_match = re.search(r"(?<!\d)(0|40)\s*MIN", upper)
+        time_min = int(time_match.group(1)) if time_match else -1
+        date_match = re.search(r"(?<!\d)(20\d{6})(?!\d)", upper)
+        acquisition_date = date_match.group(1) if date_match else "UNKNOWN"
+        if "NADA_HADA_TADA" in upper:
+            label_sequence = "NADA_HADA_TADA"
+        elif "HADA_NADA_TADA" in upper:
+            label_sequence = "HADA_NADA_TADA"
+        else:
+            label_sequence = "UNKNOWN"
+        metadata = {
+            "genotype": genotype,
+            "medium": medium,
+            "time_min": time_min,
+            "acquisition_date": acquisition_date,
+            "batch_id": acquisition_date,
+            "label_sequence": label_sequence,
+        }
+        return f"{genotype}_{medium}_{time_min}min", metadata
 
     raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -731,16 +780,17 @@ def condition_sort_key(spec: DatasetSpec, condition: str) -> tuple[int, str]:
 
 
 def condition_display(condition: str) -> str:
-    """Return condition display for the supplied inputs.
+    """Return a concise publication label for a canonical condition.
 
     Args:
-        condition (str): Text value specifying condition.
+        condition (str): Canonical condition identifier.
 
     Returns:
-        str: Generated or resolved text value.
+        str: Human-readable condition label.
 
     Example:
-        >>> result = condition_display(condition="condition")
+        >>> condition_display("DpspA_NHS_40min")
+        'ΔpspA, NHS, 40 min'
     """
     labels = {
         "THY_noCSP": "THY",
@@ -753,6 +803,10 @@ def condition_display(condition: str) -> str:
     match = re.fullmatch(r"(THY|NHS)_(\d+)min", condition)
     if match:
         return f"{match.group(1)}, {match.group(2)} min"
+    match = re.fullmatch(r"(WT|DpspA)_(THY|NHS)_(\d+)min", condition)
+    if match:
+        genotype = "ΔpspA" if match.group(1) == "DpspA" else "WT"
+        return f"{genotype}, {match.group(2)}, {match.group(3)} min"
     return condition.replace("_", " ")
 
 
@@ -936,7 +990,15 @@ def boxplot_metric(
     clean = [group[np.isfinite(group)] for group in groups]
     ax.boxplot(clean, positions=np.arange(1, len(conditions) + 1), widths=0.55, showfliers=False)
     jittered_scatter(ax, np.arange(1, len(conditions) + 1), clean)
-    ax.set_xticks(np.arange(1, len(conditions) + 1), [condition_display(condition).replace(" + ", " +\n") for condition in conditions])
+    tick_labels = [
+        condition_display(condition).replace(" + ", " +\n")
+        for condition in conditions
+    ]
+    ax.set_xticks(np.arange(1, len(conditions) + 1), tick_labels)
+    if len(conditions) > 4:
+        ax.tick_params(axis="x", labelrotation=28)
+        for label in ax.get_xticklabels():
+            label.set_horizontalalignment("right")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(axis="y", alpha=0.25)
@@ -1154,7 +1216,7 @@ def _binned_population_matrix(
         sorted_matrix (np.ndarray): Two-dimensional matrix containing one
             peak-position-sorted profile per row.
         display_rows (int): Fixed number of rows in each main heatmap panel.
-            Defaults to ``THESIS_HEATMAP_ROWS`` (40).
+            Defaults to ``THESIS_HEATMAP_ROWS`` (50).
 
     Returns:
         tuple[np.ndarray, int, str]: Display matrix, number of populated display
@@ -1245,6 +1307,186 @@ def _save_full_cell_heatmap(
     save_figure(fig, output_dir / "appendix_heatmaps", stem)
 
 
+def _plot_binned_heatmap_grid(
+    *,
+    profile_store: dict[tuple[str, str], list[np.ndarray]],
+    channel: str,
+    row_definitions: Sequence[tuple[str, str]],
+    column_definitions: Sequence[tuple[str, str]],
+    condition_builder,
+    output_dir: Path,
+    dataset: str,
+    stem: str,
+    title: str,
+    cmap,
+) -> None:
+    """Create one fixed-height binned heatmap grid and appendix heatmaps.
+
+    Every condition contributes at most ``THESIS_HEATMAP_ROWS`` displayed rows.
+    Larger populations are represented by equal-count median bins. Smaller
+    populations retain every individual profile and use blank padding. Full-cell
+    heatmaps are saved separately for appendix use.
+
+    Args:
+        profile_store: Cell-level axial profiles indexed by condition and channel.
+        channel: Channel represented by the figure.
+        row_definitions: ``(value, display_label)`` pairs for grid rows.
+        column_definitions: ``(value, display_label)`` pairs for grid columns.
+        condition_builder: Callable converting row and column values to a condition.
+        output_dir: Graph output directory.
+        dataset: Dataset identifier written to the summary CSV.
+        stem: Output filename stem.
+        title: Figure title.
+        cmap: Matplotlib colour map.
+
+    Example:
+        >>> _plot_binned_heatmap_grid(
+        ...     profile_store={("THY_5min", "HADA"): [np.linspace(0, 1, 90)]},
+        ...     channel="HADA",
+        ...     row_definitions=(("THY", "THY"),),
+        ...     column_definitions=(("5", "5 min"),),
+        ...     condition_builder=lambda row, column: f"{row}_{column}min",
+        ...     output_dir=Path("results/statistics/graphs"),
+        ...     dataset="2d_time",
+        ...     stem="axial_heatmap_hada",
+        ...     title="HADA axial fluorescence",
+        ...     cmap=plt.get_cmap("viridis"),
+        ... )
+    """
+    profile_length = next(
+        (
+            int(np.asarray(profile).size)
+            for row_value, _ in row_definitions
+            for column_value, _ in column_definitions
+            for profile in profile_store.get(
+                (condition_builder(row_value, column_value), channel), []
+            )
+        ),
+        90,
+    )
+    n_rows = len(row_definitions)
+    n_columns = len(column_definitions)
+    fig, axes = plt.subplots(
+        n_rows,
+        n_columns,
+        figsize=(max(8.6, 3.75 * n_columns), max(5.8, 3.4 * n_rows)),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+        squeeze=False,
+    )
+    rendered = []
+    summary_rows: list[dict[str, object]] = []
+
+    for row_index, (row_value, row_label) in enumerate(row_definitions):
+        for column_index, (column_value, column_label) in enumerate(column_definitions):
+            axis = axes[row_index, column_index]
+            condition = condition_builder(row_value, column_value)
+            profiles = profile_store.get((condition, channel), [])
+            if not profiles:
+                axis.set_facecolor("0.92")
+                axis.text(
+                    0.5, 0.5, "No cells", transform=axis.transAxes,
+                    ha="center", va="center", fontsize=9,
+                )
+                n_cells = 0
+                populated_rows = 0
+                method = "no profiles"
+            else:
+                sorted_matrix = _sorted_profile_matrix(profiles)
+                n_cells = int(sorted_matrix.shape[0])
+                display_matrix, populated_rows, method = _binned_population_matrix(
+                    sorted_matrix, THESIS_HEATMAP_ROWS
+                )
+                image = axis.imshow(
+                    display_matrix,
+                    aspect="auto",
+                    interpolation="nearest",
+                    vmin=0.0,
+                    vmax=1.0,
+                    cmap=cmap,
+                )
+                rendered.append(image)
+                _save_full_cell_heatmap(
+                    sorted_matrix,
+                    channel=channel,
+                    condition=condition,
+                    output_dir=output_dir,
+                    cmap=cmap,
+                )
+
+            method_label = (
+                f"{populated_rows} median bins"
+                if method == "equal-count median bins"
+                else f"{populated_rows} individual profiles"
+                if method == "individual profiles"
+                else "no profiles"
+            )
+            axis.text(
+                0.02,
+                0.98,
+                f"n = {n_cells:,} cells\n{method_label}",
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=7.5,
+                bbox={
+                    "boxstyle": "round,pad=0.25",
+                    "facecolor": "white",
+                    "edgecolor": "0.75",
+                    "alpha": 0.82,
+                },
+            )
+            axis.set_yticks([])
+            axis.set_xticks(
+                [0, (profile_length - 1) / 2, profile_length - 1],
+                ["Pole 1", "Midcell", "Pole 2"],
+            )
+            if row_index == 0:
+                axis.set_title(column_label)
+                if n_rows > 1:
+                    axis.tick_params(labelbottom=False)
+            if column_index == 0:
+                axis.set_ylabel(f"{row_label}\nPopulation rows")
+            if row_index == n_rows - 1:
+                axis.set_xlabel("Normalized axial coordinate")
+
+            summary_rows.append(
+                {
+                    "dataset": dataset,
+                    "channel": channel,
+                    "condition": condition,
+                    "row_group": row_value,
+                    "column_group": column_value,
+                    "n_cells": n_cells,
+                    "display_rows": THESIS_HEATMAP_ROWS,
+                    "populated_display_rows": populated_rows,
+                    "visualization_method": method,
+                    "appendix_full_cell_heatmap": (
+                        f"appendix_heatmaps/axial_heatmap_full_cells_"
+                        f"{channel.lower()}_{condition.lower()}.png"
+                        if n_cells > 0
+                        else ""
+                    ),
+                }
+            )
+
+    if rendered:
+        fig.colorbar(
+            rendered[0],
+            ax=axes.ravel().tolist(),
+            label="Within-cell normalized fluorescence",
+            shrink=0.88,
+        )
+    fig.suptitle(
+        f"{title}: binned population heatmaps\n"
+        f"All cells retained; maximum {THESIS_HEATMAP_ROWS} display rows per condition"
+    )
+    add_note(fig)
+    save_figure(fig, output_dir, stem)
+    write_csv(output_dir / f"{stem}_population_summary.csv", summary_rows)
+
+
 def plot_heatmaps(
     profile_store: dict[tuple[str, str], list[np.ndarray]],
     conditions: list[str],
@@ -1252,40 +1494,30 @@ def plot_heatmaps(
     output_dir: Path,
     dataset: str,
 ) -> None:
-    """Create thesis and appendix axial-profile heatmaps for 2D datasets.
+    """Create binned thesis heatmaps and full-cell appendix heatmaps for 2D data.
 
-    For ``2d_time``, the main thesis output is a fixed ``2 x 4`` grid: THY and
-    NHS form the rows, and 5, 20, 40, and 120 minutes form the columns. Every
-    panel has 40 display rows. Conditions with more than 40 cells use
-    equal-count median bins after sorting by peak position. Conditions with 40
-    cells or fewer retain every individual profile and leave the unused rows
-    blank. The actual number of cells is printed in every panel and written to
-    a CSV summary. One full-cell heatmap per condition is also generated in the
-    ``appendix_heatmaps`` subdirectory.
-
-    The existing ``2d_wga_dapi`` full-cell population heatmaps are retained.
-    Heatmaps are intentionally not generated for ``3d_mip``; all other 3D
-    graphs and measurements remain unchanged.
+    ``2d_time`` uses a 2 × 4 layout with THY/NHS rows and 5, 20, 40,
+    and 120 minute columns. ``2d_wga_dapi`` uses a 2 × 2 layout with THY/NHS
+    rows and no-CSP/CSP columns. A separate main figure is generated for every
+    available channel. Every panel is capped at 50 displayed profiles, while
+    every detected cell remains represented either directly or through an
+    equal-count median bin. Full-cell condition heatmaps are exported for the
+    appendix. Heatmaps remain disabled for ``3d_mip``.
 
     Args:
-        profile_store (dict[tuple[str, str], list[np.ndarray]]): Cell-level
-            normalized axial profiles indexed by ``(condition, channel)``.
-        conditions (list[str]): Conditions detected in the processed dataset.
-        channel_names (tuple[str, ...]): Fluorescence-channel names.
-        output_dir (Path): Directory where PNG, PDF, and CSV outputs are saved.
-        dataset (str): Dataset identifier, such as ``"2d_time"``,
-            ``"2d_wga_dapi"``, or ``"3d_mip"``.
+        profile_store: Cell-level normalized axial profiles.
+        conditions: Conditions detected in the processed dataset.
+        channel_names: Channel names to plot independently.
+        output_dir: Directory for graph outputs.
+        dataset: Dataset identifier.
 
     Example:
         >>> plot_heatmaps(
-        ...     profile_store={
-        ...         ("THY_5min", "HADA"): [np.linspace(0, 1, 90)],
-        ...         ("NHS_5min", "HADA"): [np.linspace(1, 0, 90)],
-        ...     },
-        ...     conditions=["THY_5min", "NHS_5min"],
-        ...     channel_names=("HADA",),
-        ...     output_dir=Path("results/statistics/graphs/2d_time/filtered_unet"),
-        ...     dataset="2d_time",
+        ...     {("THY_5min", "HADA"): [np.linspace(0, 1, 90)]},
+        ...     ["THY_5min"],
+        ...     ("HADA",),
+        ...     Path("results/statistics/graphs/2d_time/filtered_unet"),
+        ...     "2d_time",
         ... )
     """
     if dataset == "3d_mip":
@@ -1296,191 +1528,31 @@ def plot_heatmaps(
 
     for channel in channel_names:
         if dataset == "2d_time":
-            profile_length = next(
-                (
-                    int(np.asarray(profile).size)
-                    for condition in conditions
-                    for profile in profile_store.get((condition, channel), [])
-                ),
-                90,
+            _plot_binned_heatmap_grid(
+                profile_store=profile_store,
+                channel=channel,
+                row_definitions=(("THY", "THY"), ("NHS", "NHS")),
+                column_definitions=tuple((str(time), f"{time} min") for time in TIME_POINTS_2D),
+                condition_builder=lambda medium, time: f"{medium}_{time}min",
+                output_dir=output_dir,
+                dataset=dataset,
+                stem=f"axial_heatmap_{channel.lower()}",
+                title=f"{channel} axial fluorescence",
+                cmap=cmap,
             )
-            fig, axes = plt.subplots(
-                len(MEDIA_2D),
-                len(TIME_POINTS_2D),
-                figsize=(15.8, 7.2),
-                sharex=True,
-                sharey=True,
-                constrained_layout=True,
+        elif dataset == "2d_wga_dapi":
+            _plot_binned_heatmap_grid(
+                profile_store=profile_store,
+                channel=channel,
+                row_definitions=(("THY", "THY"), ("NHS", "NHS")),
+                column_definitions=(("noCSP", "No CSP"), ("CSP", "CSP")),
+                condition_builder=lambda medium, csp: f"{medium}_{csp}",
+                output_dir=output_dir,
+                dataset=dataset,
+                stem=f"axial_heatmap_{channel.lower()}",
+                title=f"{channel} axial fluorescence",
+                cmap=cmap,
             )
-            rendered = []
-            summary_rows: list[dict[str, object]] = []
-
-            for row_index, medium in enumerate(MEDIA_2D):
-                for column_index, time_min in enumerate(TIME_POINTS_2D):
-                    axis = axes[row_index, column_index]
-                    condition = f"{medium}_{time_min}min"
-                    profiles = profile_store.get((condition, channel), [])
-
-                    if not profiles:
-                        axis.set_facecolor("0.92")
-                        axis.text(
-                            0.5,
-                            0.5,
-                            "No cells",
-                            transform=axis.transAxes,
-                            ha="center",
-                            va="center",
-                            fontsize=9,
-                        )
-                        n_cells = 0
-                        populated_rows = 0
-                        method = "no profiles"
-                    else:
-                        sorted_matrix = _sorted_profile_matrix(profiles)
-                        n_cells = sorted_matrix.shape[0]
-                        display_matrix, populated_rows, method = _binned_population_matrix(
-                            sorted_matrix,
-                            THESIS_HEATMAP_ROWS,
-                        )
-                        image = axis.imshow(
-                            display_matrix,
-                            aspect="auto",
-                            interpolation="nearest",
-                            vmin=0.0,
-                            vmax=1.0,
-                            cmap=cmap,
-                        )
-                        rendered.append(image)
-                        _save_full_cell_heatmap(
-                            sorted_matrix,
-                            channel=channel,
-                            condition=condition,
-                            output_dir=output_dir,
-                            cmap=cmap,
-                        )
-
-                    summary_rows.append(
-                        {
-                            "dataset": dataset,
-                            "channel": channel,
-                            "condition": condition,
-                            "medium": medium,
-                            "time_min": time_min,
-                            "n_cells": n_cells,
-                            "display_rows": THESIS_HEATMAP_ROWS,
-                            "populated_display_rows": populated_rows,
-                            "visualization_method": method,
-                            "appendix_full_cell_heatmap": (
-                                f"appendix_heatmaps/"
-                                f"axial_heatmap_full_cells_{channel.lower()}_"
-                                f"{condition.lower()}.png"
-                                if n_cells > 0
-                                else ""
-                            ),
-                        }
-                    )
-
-                    if row_index == 0:
-                        axis.set_title(f"{time_min} min")
-                    axis.text(
-                        0.02,
-                        0.98,
-                        f"n = {n_cells:,} cells\n"
-                        + (
-                            f"{populated_rows} median bins"
-                            if method == "equal-count median bins"
-                            else f"{populated_rows} individual profiles"
-                            if method == "individual profiles"
-                            else "no profiles"
-                        ),
-                        transform=axis.transAxes,
-                        ha="left",
-                        va="top",
-                        fontsize=7.5,
-                        bbox={
-                            "boxstyle": "round,pad=0.25",
-                            "facecolor": "white",
-                            "edgecolor": "0.75",
-                            "alpha": 0.82,
-                        },
-                    )
-                    axis.set_yticks([])
-                    axis.set_xticks(
-                        [0, (profile_length - 1) / 2, profile_length - 1],
-                        ["Pole 1", "Midcell", "Pole 2"],
-                    )
-                    if row_index == 0:
-                        axis.tick_params(labelbottom=False)
-                    if column_index == 0:
-                        axis.set_ylabel(f"{medium}\nPopulation rows")
-                    if row_index == len(MEDIA_2D) - 1:
-                        axis.set_xlabel("Normalized axial coordinate")
-
-            if rendered:
-                fig.colorbar(
-                    rendered[0],
-                    ax=axes.ravel().tolist(),
-                    label="Within-cell normalized fluorescence",
-                    shrink=0.88,
-                )
-            fig.suptitle(
-                f"{channel} axial fluorescence: binned population heatmaps\n"
-                f"All cells retained; maximum {THESIS_HEATMAP_ROWS} display rows per condition"
-            )
-            add_note(fig)
-            save_figure(fig, output_dir, f"axial_heatmap_{channel.lower()}")
-            write_csv(
-                output_dir / f"axial_heatmap_{channel.lower()}_population_summary.csv",
-                summary_rows,
-            )
-            continue
-
-        # Preserve the previous 2d_wga_dapi heatmap implementation unchanged.
-        blocks: list[np.ndarray] = []
-        labels: list[tuple[str, int]] = []
-        total = 0
-        for condition in conditions:
-            profiles = profile_store.get((condition, channel), [])
-            if not profiles:
-                continue
-            block = np.vstack(profiles)
-            blocks.append(block)
-            total += block.shape[0]
-            labels.append((condition, total))
-        if not blocks:
-            continue
-        matrix = np.vstack(blocks)
-        fig, ax = plt.subplots(
-            figsize=(8.2, max(4.2, 0.055 * matrix.shape[0] + 2.2)),
-            constrained_layout=True,
-        )
-        image = ax.imshow(
-            matrix,
-            aspect="auto",
-            interpolation="nearest",
-            vmin=0.0,
-            vmax=1.0,
-        )
-        start = 0
-        tick_positions = []
-        tick_labels = []
-        for condition, end in labels:
-            tick_positions.append((start + end - 1) / 2.0)
-            tick_labels.append(condition_display(condition))
-            if end < matrix.shape[0]:
-                ax.axhline(end - 0.5, linewidth=0.8, color="0.45")
-            start = end
-        ax.set_yticks(tick_positions, tick_labels)
-        ax.set_xticks(
-            [0, (matrix.shape[1] - 1) / 2, matrix.shape[1] - 1],
-            ["0", "0.5", "1"],
-        )
-        ax.set_xlabel("Normalized axial coordinate")
-        ax.set_ylabel("Condition and individual cells")
-        ax.set_title(f"{channel} axial-profile population heatmap")
-        fig.colorbar(image, ax=ax, label="Within-cell normalized fluorescence")
-        add_note(fig)
-        save_figure(fig, output_dir, f"axial_heatmap_{channel.lower()}")
 
 def plot_radial_profiles(
     radial_store: dict[tuple[str, str], list[np.ndarray]],
@@ -1775,6 +1847,11 @@ def _numeric_metrics(records: list[dict[str, object]]) -> list[str]:
         "medium",
         "time_min",
         "csp",
+        "naming_no_nhs_control",
+        "genotype",
+        "acquisition_date",
+        "batch_id",
+        "label_sequence",
         "source_label",
         "pixel_size_um",
         "n_cells",
@@ -1819,7 +1896,41 @@ def _profile_comparison_plan(dataset: str) -> list[tuple[str, str, list[str], st
             ("Pooled medium comparison", "All THY", ["THY_noCSP", "THY_CSP"], "All NHS", ["NHS_noCSP", "NHS_CSP"]),
         ]
     if dataset == "3d_mip":
-        return [("THY vs NHS", "THY", ["THY"], "NHS", ["NHS"])]
+        comparisons: list[tuple[str, str, list[str], str, list[str]]] = []
+        for time in (0, 40):
+            comparisons.extend(
+                [
+                    (
+                        f"WT medium effect, {time} min",
+                        "WT, THY",
+                        [f"WT_THY_{time}min"],
+                        "WT, NHS",
+                        [f"WT_NHS_{time}min"],
+                    ),
+                    (
+                        f"ΔpspA medium effect, {time} min",
+                        "ΔpspA, THY",
+                        [f"DpspA_THY_{time}min"],
+                        "ΔpspA, NHS",
+                        [f"DpspA_NHS_{time}min"],
+                    ),
+                    (
+                        f"THY genotype effect, {time} min",
+                        "WT, THY",
+                        [f"WT_THY_{time}min"],
+                        "ΔpspA, THY",
+                        [f"DpspA_THY_{time}min"],
+                    ),
+                    (
+                        f"NHS genotype effect, {time} min",
+                        "WT, NHS",
+                        [f"WT_NHS_{time}min"],
+                        "ΔpspA, NHS",
+                        [f"DpspA_NHS_{time}min"],
+                    ),
+                ]
+            )
+        return comparisons
     return []
 
 
@@ -2175,7 +2286,8 @@ def plot_detected_cells(
         if row.get("overall_status", "PASS") == "FAIL":
             continue
         sample = row.get("sample_name", "")
-        condition, metadata = infer_condition(dataset, sample)
+        parse_identifier = f"{row.get('annotation_id', '')}/{sample}"
+        condition, metadata = infer_condition(dataset, parse_identifier)
         parsed.append(
             {
                 "sample": sample,
@@ -2183,6 +2295,10 @@ def plot_detected_cells(
                 "medium": metadata.get("medium", "UNKNOWN"),
                 "time_min": metadata.get("time_min", -1),
                 "csp": bool(metadata.get("csp", False)),
+                "genotype": metadata.get("genotype", ""),
+                "acquisition_date": metadata.get("acquisition_date", ""),
+                "batch_id": metadata.get("batch_id", ""),
+                "label_sequence": metadata.get("label_sequence", ""),
                 "n_cells": int(
                     float(
                         row.get("n_pca_eligible_instances")
@@ -2337,7 +2453,72 @@ def plot_detected_cells(
     ax.set_ylabel("Detected cells per image")
     ax.set_title("Detected cells by condition")
     ax.grid(axis="y", alpha=0.25)
+    if len(conditions) > 4:
+        ax.tick_params(axis="x", labelrotation=28)
+        for label in ax.get_xticklabels():
+            label.set_horizontalalignment("right")
     save_figure(fig, output_dir, "detected_cells_all_images")
+
+    if dataset == "3d_mip":
+        batches = sorted(
+            {str(row.get("acquisition_date", "")) for row in parsed}
+            - {"", "UNKNOWN"}
+        )
+        if batches:
+            batch_groups = [
+                np.asarray(
+                    [
+                        row["n_cells"]
+                        for row in parsed
+                        if str(row.get("acquisition_date", "")) == batch
+                    ],
+                    dtype=float,
+                )
+                for batch in batches
+            ]
+            batch_fig, batch_ax = plt.subplots(
+                figsize=(max(6.5, 1.5 * len(batches)), 4.5),
+                constrained_layout=True,
+            )
+            batch_ax.boxplot(
+                batch_groups,
+                positions=np.arange(1, len(batches) + 1),
+                widths=0.55,
+                showfliers=False,
+            )
+            jittered_scatter(
+                batch_ax, np.arange(1, len(batches) + 1), batch_groups
+            )
+            batch_ax.set_xticks(
+                np.arange(1, len(batches) + 1),
+                [f"{batch[:4]}-{batch[4:6]}-{batch[6:]}" for batch in batches],
+            )
+            batch_ax.set_xlabel("Acquisition date")
+            batch_ax.set_ylabel("Detected cells per image")
+            batch_ax.set_title("Detected cells by 3D acquisition batch")
+            batch_ax.grid(axis="y", alpha=0.25)
+            save_figure(
+                batch_fig, output_dir, "detected_cells_by_acquisition_batch"
+            )
+
+            batch_rows: list[dict[str, object]] = []
+            for batch, values in zip(batches, batch_groups):
+                batch_rows.append(
+                    {
+                        "acquisition_date": batch,
+                        "n_images": int(values.size),
+                        "total_cells": int(np.sum(values)),
+                        "mean_cells_per_image": float(np.mean(values)),
+                        "sd_cells_per_image": (
+                            float(np.std(values, ddof=1))
+                            if values.size > 1
+                            else 0.0
+                        ),
+                        "min_cells_per_image": int(np.min(values)),
+                        "max_cells_per_image": int(np.max(values)),
+                    }
+                )
+            write_csv(output_dir / "detected_cells_by_acquisition_batch.csv", batch_rows)
 
 
 def _import_common():
@@ -2426,6 +2607,11 @@ def aggregate_roi_records(cell_records: list[dict[str, object]]) -> list[dict[st
             "medium": first.get("medium", ""),
             "time_min": first.get("time_min", ""),
             "csp": first.get("csp", ""),
+            "naming_no_nhs_control": first.get("naming_no_nhs_control", ""),
+            "genotype": first.get("genotype", ""),
+            "acquisition_date": first.get("acquisition_date", ""),
+            "batch_id": first.get("batch_id", ""),
+            "label_sequence": first.get("label_sequence", ""),
             "n_cells": len(rows),
         }
         candidate_keys: list[str] = []
@@ -2581,7 +2767,8 @@ def process_dataset(
     for row in manifest_rows:
         annotation_id = row["annotation_id"]
         sample_name = row["sample_name"]
-        condition, sample_metadata = infer_condition(dataset, sample_name)
+        parse_identifier = f"{annotation_id}/{sample_name}"
+        condition, sample_metadata = infer_condition(dataset, parse_identifier)
         mask_path = Path(row["mask_path"])
         image_path = Path(row["image_path"])
         full_mask, _mask_dtype = load_label_mask(mask_path)
@@ -2871,31 +3058,16 @@ def process_dataset(
             "wga_dapi_spatial_relationship",
         )
     else:
-        long_rows: list[dict[str, object]] = []
-        for row in plot_records:
-            for channel in spec.channel_names:
-                long_rows.append(
-                    {
-                        "condition": f"{channel}_{row['condition']}",
-                        "homogeneity": row.get(
-                            f"{channel.lower()}_homogeneity", math.nan
-                        ),
-                    }
-                )
-        channel_conditions = [
-            f"{channel}_{condition}"
-            for channel in spec.channel_names
-            for condition in conditions
-        ]
-        boxplot_metric(
-            long_rows,
-            channel_conditions,
-            "homogeneity",
-            f"{prefix}boundary homogeneity index",
-            "Three-channel homogeneity",
-            output_root,
-            "3d_channel_homogeneity",
-        )
+        for channel in spec.channel_names:
+            boxplot_metric(
+                plot_records,
+                conditions,
+                f"{channel.lower()}_homogeneity",
+                f"{prefix}{channel} boundary homogeneity index",
+                f"{channel} boundary homogeneity by condition",
+                output_root,
+                f"{channel.lower()}_boundary_homogeneity",
+            )
 
     extent_unit_suffix = "um" if pixel_size_um is not None else "fraction"
     extent_ylabel = (
@@ -2932,38 +3104,22 @@ def process_dataset(
             "wga_axial_signal_extent",
         )
     elif dataset == "3d_mip":
-        extent_rows: list[dict[str, object]] = []
-        for row in plot_records:
-            for channel in spec.channel_names:
-                extent_rows.append(
-                    {
-                        "condition": f"{channel}_{row['condition']}",
-                        "extent": row.get(
-                            f"{channel.lower()}_axial_extent_50_{extent_unit_suffix}",
-                            math.nan,
-                        ),
-                    }
-                )
-        extent_conditions = [
-            f"{channel}_{condition}"
-            for channel in spec.channel_names
-            for condition in conditions
-        ]
-        boxplot_metric(
-            extent_rows,
-            extent_conditions,
-            "extent",
-            extent_ylabel,
-            "Three-channel axial signal extent",
-            output_root,
-            "3d_channel_axial_signal_extent",
-        )
+        for channel in spec.channel_names:
+            boxplot_metric(
+                plot_records,
+                conditions,
+                f"{channel.lower()}_axial_extent_50_{extent_unit_suffix}",
+                extent_ylabel,
+                f"{channel} axial signal extent by condition",
+                output_root,
+                f"{channel.lower()}_axial_signal_extent",
+            )
 
     plot_axial_profiles(
         profile_store_for_lines, conditions, spec.channel_names, output_root, dataset
     )
-    # 2D time heatmaps use 40 thesis-display rows and retain full-cell appendix files.
-    # The quantitative profiles and all non-heatmap figures are unchanged.
+    # Both 2D datasets use at most 50 thesis-display rows per condition and
+    # retain full-cell appendix files for every available fluorescence channel.
     plot_heatmaps(cell_profile_store, conditions, spec.channel_names, output_root, dataset)
     plot_radial_profiles(
         radial_store_for_lines, conditions, spec.channel_names, output_root, dataset
@@ -2992,18 +3148,18 @@ def process_dataset(
         "heatmap_policy": (
             {
                 "generated": True,
-                "main_layout": "2 x 4: THY/NHS by 5/20/40/120 min",
+                "main_layout": (
+                    "2 x 4: THY/NHS by 5/20/40/120 min"
+                    if dataset == "2d_time"
+                    else "2 x 2: THY/NHS by no-CSP/CSP"
+                ),
+                "channels": list(spec.channel_names),
                 "display_rows_per_condition": THESIS_HEATMAP_ROWS,
                 "large_group_method": "equal-count median bins after peak-position sorting",
                 "small_group_method": "individual profiles with blank padding",
                 "full_cell_outputs": "appendix_heatmaps",
             }
-            if dataset == "2d_time"
-            else {
-                "generated": True,
-                "main_layout": "existing full-cell condition heatmap",
-            }
-            if dataset == "2d_wga_dapi"
+            if dataset in {"2d_time", "2d_wga_dapi"}
             else {
                 "generated": False,
                 "reason": "Heatmaps restricted to 2D datasets",
@@ -3022,6 +3178,19 @@ def process_dataset(
             "homogeneity figures are technical checks only. Final fluorescence "
             "quantification must use intensity-preserving processed images paired "
             "with final model masks."
+        ),
+        "three_d_grouping": (
+            {
+                "condition_definition": "genotype + medium + labeling time",
+                "batch_variable": "acquisition_date",
+                "batch_warning": (
+                    "Inspect acquisition-date distributions before interpreting pooled "
+                    "3D condition differences; several conditions are batch-imbalanced."
+                ),
+                "filename_label_sequence_is_metadata_only": True,
+            }
+            if dataset == "3d_mip"
+            else None
         ),
     }
     (output_root / "graph_run_summary.json").write_text(
