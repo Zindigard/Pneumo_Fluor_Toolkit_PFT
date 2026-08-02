@@ -1,54 +1,38 @@
-"""Screen pretrained Cellpose-SAM or Omnipose models without training.
+"""Screen pretrained instance-segmentation models against manual instance masks.
 
-This script is intended for the first instance-segmentation experiment. It runs
-an inference-parameter grid on prepared ``segmentation_input.ome.zarr`` files
-and compares the predicted foreground union against the existing binary U-Net
-foreground mask.
+The script runs Cellpose, Omnipose, or StarDist without fine-tuning and compares
+predicted integer instance labels directly with manually annotated integer masks.
 
-The U-Net mask is valid for semantic foreground metrics:
+Default screening behaviour
+---------------------------
+If no ``--sample`` is supplied, the script randomly selects exactly two valid
+annotated image/mask pairs. Selection is reproducible through ``--seed``.
 
-* binary Dice;
-* binary intersection over union (IoU);
-* predicted/reference foreground-area ratio.
-
-It is not an instance-labelled reference. Therefore, this screening does not
-calculate instance F1, split/merge errors, or one-to-one cell matching. Manual
-instance masks remain necessary only for final instance-level validation or
-model fine-tuning.
-
-Outputs
+Metrics
 -------
+Pixel-level foreground metrics:
 
-Results are stored below::
+* semantic IoU;
+* semantic Dice;
+* foreground precision and recall;
+* prediction/reference foreground-area ratio.
 
-    results/segmentation_screening/<family>/<dataset>/<source_mode>/
-        <model>/<run_name>/
-            screening_metrics.csv
-            best_parameters.json
-            screening_report.html
-            parameter_###/<sample>/comparison.png
+One-to-one instance metrics at IoU 0.50 and 0.75:
 
-Cellpose example::
+* true positives, false positives, and false negatives;
+* instance precision, recall, F1, and Jaccard score;
+* mean IoU of matched instances.
 
-    python scripts/segmentation/screen_pretrained_segmentation.py `
-        --family cellpose `
-        --dataset 2d_time `
-        --source-mode filtered_unet `
-        --model cpsam_v2 `
-        --mode one `
-        --flow-thresholds 0.2 0.4 0.6 `
-        --cellprob-thresholds -1 0 1
+Canonical manual masks
+----------------------
+Full-image labels::
 
-Omnipose example::
+    results/training_files/segmentation/<dataset>/<source_mode>/<sample>/mask.tif
 
-    python scripts/segmentation/screen_pretrained_segmentation.py `
-        --family omnipose `
-        --dataset 2d_time `
-        --source-mode filtered_unet `
-        --model-name bact_fluor_omni `
-        --mode one `
-        --flow-thresholds 0 0.4 0.8 `
-        --mask-thresholds -1 0 1
+Crop labels::
+
+    results/training_files/segmentation/<dataset>/<source_mode>/<sample>/
+        crops/<train|validation>/<crop_id>/mask.tif
 """
 
 from __future__ import annotations
@@ -57,11 +41,12 @@ import argparse
 import csv
 import html
 import json
+import random
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from itertools import product
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -82,10 +67,12 @@ PROJECT_ROOT = _project_root()
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from PFT.core_prog_parts.decoder_omezar import load_ome_zarr  # noqa: E402
 from PFT.core_prog_parts.segmentation.instance_segmentation_core import (  # noqa: E402
+    ANNOTATION_SOURCES,
+    ANNOTATION_SPLITS,
     PredictionConfig,
-    list_prepared_inputs,
+    list_training_inputs,
+    load_instance_mask,
     load_prediction_model,
     load_prepared_image,
     predict_one,
@@ -97,10 +84,12 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
     SUPPORTED_DATASETS,
 )
 
-SCREENING_FAMILIES = ("cellpose", "omnipose")
+SCREENING_FAMILIES = ("cellpose", "omnipose", "stardist")
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    if not values:
+        raise ValueError(f"No values are available for: {title}")
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -110,111 +99,18 @@ def _choose(title: str, values: Sequence[str]) -> str:
     return values[selected - 1]
 
 
+def _parse_optional_floats(values: Sequence[str]) -> tuple[float | None, ...]:
+    parsed: list[float | None] = []
+    for value in values:
+        parsed.append(None if value.lower() in {"none", "default", "auto"} else float(value))
+    return tuple(parsed)
+
+
 def _parse_diameters(values: Sequence[str]) -> tuple[float | None, ...]:
     parsed: list[float | None] = []
     for value in values:
         parsed.append(None if value.lower() in {"none", "auto"} else float(value))
     return tuple(parsed)
-
-
-def _safe_name(value: str) -> str:
-    return value.replace("/", "__").replace("\\", "__")
-
-
-def _rebase_recorded_path(value: str | Path) -> Path:
-    candidate = Path(str(value)).expanduser()
-    if candidate.exists():
-        return candidate.resolve()
-
-    windows_parts = list(PureWindowsPath(str(value)).parts)
-    lower = [part.lower() for part in windows_parts]
-    for anchor in ("results", "models", "scripts", "src"):
-        if anchor in lower:
-            index = lower.index(anchor)
-            rebased = PROJECT_ROOT.joinpath(*windows_parts[index:])
-            if rebased.exists():
-                return rebased.resolve()
-    return candidate
-
-
-def _root_processing(path: Path) -> dict[str, Any]:
-    try:
-        import zarr
-
-        group = zarr.open_group(str(path), mode="r")
-        processing = dict(group.attrs.asdict()).get("pft_processing", {})
-        return dict(processing) if isinstance(processing, dict) else {}
-    except Exception:
-        return {}
-
-
-def _remove_axis(array: np.ndarray, axes: str, axis: str, index: int = 0) -> tuple[np.ndarray, str]:
-    position = axes.index(axis)
-    array = np.take(array, index, axis=position)
-    axes = axes[:position] + axes[position + 1 :]
-    return array, axes
-
-
-def _load_unet_binary_reference(input_zarr: Path, expected_yx: tuple[int, int]) -> tuple[np.ndarray, Path]:
-    report_path = input_zarr.parent / "segmentation_input_report.json"
-    if not report_path.is_file():
-        raise FileNotFoundError(
-            f"Missing segmentation input report required to resolve the U-Net mask: {report_path}"
-        )
-    payload = json.loads(report_path.read_text(encoding="utf-8"))
-    processing = payload.get("processing", {})
-    record = payload.get("record", {})
-    mask_value = processing.get("predicted_mask_omezarr") or record.get("mask_zarr")
-    if not mask_value:
-        raise RuntimeError(
-            "This prepared input has no associated U-Net mask. Binary U-Net reference "
-            "screening is unavailable for unmasked source modes."
-        )
-    mask_path = _rebase_recorded_path(mask_value)
-    if not mask_path.is_dir():
-        raise FileNotFoundError(mask_path)
-
-    array, axes = load_ome_zarr(mask_path, level=0, as_numpy=True)
-    mask = np.asarray(array)
-    axes = str(axes).lower()
-
-    for axis in ("t", "c"):
-        if axis in axes:
-            size = int(mask.shape[axes.index(axis)])
-            if size != 1:
-                raise ValueError(
-                    f"Binary U-Net reference must have singleton {axis.upper()} axis, "
-                    f"received {size}: {mask_path}"
-                )
-            mask, axes = _remove_axis(mask, axes, axis)
-
-    if "z" in axes:
-        source_value = record.get("source_zarr") or processing.get("source_omezarr")
-        if not source_value:
-            raise RuntimeError("A Z mask requires source metadata with the selected MIP slice")
-        source_path = _rebase_recorded_path(source_value)
-        source_processing = _root_processing(source_path)
-        target_slice = source_processing.get("target_slice_1based_for_qc_and_mask")
-        if target_slice is None:
-            raise RuntimeError(
-                f"A Z mask was found but no target slice is recorded in {source_path}"
-            )
-        z_index = int(target_slice) - 1
-        z_size = int(mask.shape[axes.index("z")])
-        if not 0 <= z_index < z_size:
-            raise IndexError(f"Target slice {target_slice} is outside Z={z_size}")
-        mask, axes = _remove_axis(mask, axes, "z", z_index)
-
-    if axes != "yx":
-        raise ValueError(f"Expected final binary reference axes YX, received {axes!r}: {mask_path}")
-    if tuple(mask.shape) != tuple(expected_yx):
-        raise ValueError(
-            f"U-Net reference shape {mask.shape} does not match input YX {expected_yx}: {mask_path}"
-        )
-    binary = np.asarray(mask) > 0
-    if np.count_nonzero(binary) == 0:
-        raise ValueError(f"U-Net reference mask is empty: {mask_path}")
-    return binary, mask_path
 
 
 def _parameter_grid(
@@ -223,6 +119,8 @@ def _parameter_grid(
     flow_thresholds: Sequence[float],
     cellprob_thresholds: Sequence[float],
     mask_thresholds: Sequence[float],
+    prob_thresholds: tuple[float | None, ...],
+    nms_thresholds: tuple[float | None, ...],
     min_sizes: Sequence[int],
 ) -> list[dict[str, Any]]:
     if family == "cellpose":
@@ -237,36 +135,258 @@ def _parameter_grid(
                 diameters, flow_thresholds, cellprob_thresholds, min_sizes
             )
         ]
+    if family == "omnipose":
+        return [
+            {
+                "diameter": diameter,
+                "flow_threshold": flow,
+                "mask_threshold": mask_threshold,
+                "min_size": min_size,
+            }
+            for diameter, flow, mask_threshold, min_size in product(
+                diameters, flow_thresholds, mask_thresholds, min_sizes
+            )
+        ]
     return [
-        {
-            "diameter": diameter,
-            "flow_threshold": flow,
-            "mask_threshold": mask_threshold,
-            "min_size": min_size,
-        }
-        for diameter, flow, mask_threshold, min_size in product(
-            diameters, flow_thresholds, mask_thresholds, min_sizes
-        )
+        {"prob_thresh": prob_thresh, "nms_thresh": nms_thresh}
+        for prob_thresh, nms_thresh in product(prob_thresholds, nms_thresholds)
     ]
 
 
-def _input_rgb(image: np.ndarray) -> np.ndarray:
+def _source_sample_key(sample_key: str) -> str:
+    return sample_key.replace("\\", "/").split("/crops/", 1)[0]
+
+
+def _load_valid_pair(item: Any) -> tuple[Any, np.ndarray, np.ndarray]:
+    image = load_prepared_image(item.input_zarr)
+    reference = load_instance_mask(item.training_mask, tuple(int(v) for v in image.shape[:2]))
+    return item, image, reference
+
+
+def _select_pairs(
+    candidates: Sequence[Any],
+    *,
+    selected_keys: set[str],
+    sample_count: int,
+    seed: int,
+    distinct_sources: bool,
+) -> tuple[list[tuple[Any, np.ndarray, np.ndarray]], list[dict[str, str]]]:
+    if sample_count < 1:
+        raise ValueError("sample_count must be at least 1")
+
+    candidate_map = {item.sample_key: item for item in candidates}
+    invalid: list[dict[str, str]] = []
+
+    if selected_keys:
+        unknown = sorted(selected_keys - set(candidate_map))
+        if unknown:
+            raise RuntimeError(
+                "Requested annotated samples were not found: " + ", ".join(unknown)
+            )
+        ordered = [candidate_map[key] for key in sorted(selected_keys)]
+    else:
+        ordered = list(candidates)
+        random.Random(seed).shuffle(ordered)
+
+    selected: list[tuple[Any, np.ndarray, np.ndarray]] = []
+    selected_sources: set[str] = set()
+
+    for item in ordered:
+        if not item.training_mask.is_file():
+            continue
+        source_key = _source_sample_key(item.sample_key)
+        if distinct_sources and source_key in selected_sources:
+            continue
+        try:
+            loaded = _load_valid_pair(item)
+        except Exception as exc:
+            invalid.append({"sample_key": item.sample_key, "error": str(exc)})
+            continue
+        selected.append(loaded)
+        selected_sources.add(source_key)
+        if not selected_keys and len(selected) >= sample_count:
+            break
+
+    required = len(selected_keys) if selected_keys else sample_count
+    if len(selected) < required:
+        details = ""
+        if invalid:
+            details = " Invalid pairs: " + "; ".join(
+                f"{row['sample_key']}: {row['error']}" for row in invalid[:5]
+            )
+        raise RuntimeError(
+            f"Only {len(selected)} valid annotated pairs were available, but {required} "
+            f"were requested.{details}"
+        )
+    return selected, invalid
+
+
+def _contingency_iou_matrix(
+    reference: np.ndarray, prediction: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ref = np.asarray(reference, dtype=np.int64)
+    pred = np.asarray(prediction, dtype=np.int64)
+    ref_ids = np.unique(ref[ref > 0])
+    pred_ids = np.unique(pred[pred > 0])
+
+    if ref_ids.size == 0 or pred_ids.size == 0:
+        return (
+            np.zeros((ref_ids.size, pred_ids.size), dtype=np.float64),
+            ref_ids,
+            pred_ids,
+        )
+
+    ref_index = np.searchsorted(ref_ids, ref)
+    pred_index = np.searchsorted(pred_ids, pred)
+    both = (ref > 0) & (pred > 0)
+
+    combined = ref_index[both] * pred_ids.size + pred_index[both]
+    intersections = np.bincount(
+        combined,
+        minlength=int(ref_ids.size * pred_ids.size),
+    ).reshape(ref_ids.size, pred_ids.size)
+
+    ref_areas = np.array([np.count_nonzero(ref == label) for label in ref_ids], dtype=np.int64)
+    pred_areas = np.array([np.count_nonzero(pred == label) for label in pred_ids], dtype=np.int64)
+    unions = ref_areas[:, None] + pred_areas[None, :] - intersections
+    matrix = np.divide(
+        intersections,
+        unions,
+        out=np.zeros_like(intersections, dtype=np.float64),
+        where=unions > 0,
+    )
+    return matrix, ref_ids, pred_ids
+
+
+def _assignment_pairs(iou_matrix: np.ndarray) -> list[tuple[int, int, float]]:
+    if iou_matrix.size == 0:
+        return []
+    try:
+        from scipy.optimize import linear_sum_assignment
+
+        rows, cols = linear_sum_assignment(-iou_matrix)
+        return [(int(r), int(c), float(iou_matrix[r, c])) for r, c in zip(rows, cols)]
+    except Exception:
+        candidates = sorted(
+            (
+                (float(iou_matrix[r, c]), r, c)
+                for r in range(iou_matrix.shape[0])
+                for c in range(iou_matrix.shape[1])
+                if iou_matrix[r, c] > 0
+            ),
+            reverse=True,
+        )
+        used_rows: set[int] = set()
+        used_cols: set[int] = set()
+        pairs: list[tuple[int, int, float]] = []
+        for value, row, col in candidates:
+            if row in used_rows or col in used_cols:
+                continue
+            used_rows.add(row)
+            used_cols.add(col)
+            pairs.append((row, col, value))
+        return pairs
+
+
+def _instance_metrics(
+    reference: np.ndarray,
+    prediction: np.ndarray,
+    *,
+    thresholds: Sequence[float] = (0.50, 0.75),
+) -> dict[str, Any]:
+    matrix, ref_ids, pred_ids = _contingency_iou_matrix(reference, prediction)
+    pairs = _assignment_pairs(matrix)
+    metrics: dict[str, Any] = {
+        "reference_instances": int(ref_ids.size),
+        "predicted_instances": int(pred_ids.size),
+        "mean_best_reference_iou": (
+            float(np.mean(np.max(matrix, axis=1))) if ref_ids.size and pred_ids.size else 0.0
+        ),
+        "mean_best_prediction_iou": (
+            float(np.mean(np.max(matrix, axis=0))) if ref_ids.size and pred_ids.size else 0.0
+        ),
+    }
+
+    for threshold in thresholds:
+        suffix = str(int(round(threshold * 100)))
+        matched_ious = [value for _row, _col, value in pairs if value >= threshold]
+        true_positive = len(matched_ious)
+        false_positive = int(pred_ids.size) - true_positive
+        false_negative = int(ref_ids.size) - true_positive
+        precision = (
+            float(true_positive / (true_positive + false_positive))
+            if true_positive + false_positive
+            else (1.0 if ref_ids.size == 0 else 0.0)
+        )
+        recall = (
+            float(true_positive / (true_positive + false_negative))
+            if true_positive + false_negative
+            else 1.0
+        )
+        f1 = (
+            float(2.0 * precision * recall / (precision + recall))
+            if precision + recall
+            else 0.0
+        )
+        jaccard = (
+            float(true_positive / (true_positive + false_positive + false_negative))
+            if true_positive + false_positive + false_negative
+            else 1.0
+        )
+        metrics.update(
+            {
+                f"instance_tp_{suffix}": true_positive,
+                f"instance_fp_{suffix}": false_positive,
+                f"instance_fn_{suffix}": false_negative,
+                f"instance_precision_{suffix}": precision,
+                f"instance_recall_{suffix}": recall,
+                f"instance_f1_{suffix}": f1,
+                f"instance_jaccard_{suffix}": jaccard,
+                f"mean_matched_iou_{suffix}": (
+                    float(np.mean(matched_ious)) if matched_ious else 0.0
+                ),
+            }
+        )
+    return metrics
+
+
+def _semantic_metrics(reference: np.ndarray, prediction: np.ndarray) -> dict[str, float | int]:
+    ref = np.asarray(reference) > 0
+    pred = np.asarray(prediction) > 0
+    tp = int(np.count_nonzero(ref & pred))
+    fp = int(np.count_nonzero(~ref & pred))
+    fn = int(np.count_nonzero(ref & ~pred))
+    ref_pixels = int(np.count_nonzero(ref))
+    pred_pixels = int(np.count_nonzero(pred))
+    precision = float(tp / (tp + fp)) if tp + fp else (1.0 if ref_pixels == 0 else 0.0)
+    recall = float(tp / (tp + fn)) if tp + fn else 1.0
+    return {
+        "semantic_iou": semantic_iou(reference, prediction),
+        "semantic_dice": semantic_dice(reference, prediction),
+        "semantic_precision": precision,
+        "semantic_recall": recall,
+        "reference_foreground_pixels": ref_pixels,
+        "prediction_foreground_pixels": pred_pixels,
+        "foreground_area_ratio": float(pred_pixels / ref_pixels) if ref_pixels else float("nan"),
+    }
+
+
+def _input_rgb(image: np.ndarray, dataset: str) -> np.ndarray:
     array = np.asarray(image, dtype=np.float32)
     array = np.clip(array, 0.0, 1.0)
+    rgb = np.zeros((*array.shape[:2], 3), dtype=np.float32)
     if array.ndim == 2:
-        gray = np.round(array * 255.0).astype(np.uint8)
-        return np.stack([gray, gray, gray], axis=-1)
-    if array.ndim != 3:
-        raise ValueError(f"Expected YX or YXC image, received {array.shape}")
-    if array.shape[-1] == 1:
-        gray = np.round(array[..., 0] * 255.0).astype(np.uint8)
-        return np.stack([gray, gray, gray], axis=-1)
-    if array.shape[-1] == 2:
-        blue = np.round(array[..., 0] * 255.0).astype(np.uint8)
-        green = np.round(array[..., 1] * 255.0).astype(np.uint8)
-        red = np.zeros_like(blue)
-        return np.stack([red, green, blue], axis=-1)
-    return np.round(array[..., :3] * 255.0).astype(np.uint8)
+        rgb[..., 2] = array
+    elif dataset == "2d_wga_dapi" and array.shape[-1] >= 2:
+        rgb[..., 2] = array[..., 0]
+        rgb[..., 1] = array[..., 1]
+    else:
+        rgb[..., 2] = array[..., 0]
+        if array.shape[-1] > 1:
+            rgb[..., 1] = array[..., 1]
+        if array.shape[-1] > 2:
+            rgb[..., 0] = array[..., 2]
+    return np.round(np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
 def _boundary(mask: np.ndarray) -> np.ndarray:
@@ -301,9 +421,9 @@ def _fit_preview(image: Image.Image, max_size: int, *, nearest: bool = False) ->
 
 def _panel(rgb: np.ndarray, title: str, max_size: int, *, nearest: bool = False) -> Image.Image:
     image = _fit_preview(Image.fromarray(rgb, mode="RGB"), max_size, nearest=nearest)
-    canvas = Image.new("RGB", (image.width, image.height + 32), "white")
-    canvas.paste(image, (0, 32))
-    ImageDraw.Draw(canvas).text((8, 8), title, fill="black")
+    canvas = Image.new("RGB", (image.width, image.height + 34), "white")
+    canvas.paste(image, (0, 34))
+    ImageDraw.Draw(canvas).text((8, 9), title, fill="black")
     return canvas
 
 
@@ -314,27 +434,25 @@ def _save_comparison(
     prediction: np.ndarray,
     metrics: dict[str, Any],
     *,
+    dataset: str,
     max_size: int,
 ) -> None:
-    input_rgb = _input_rgb(image)
-    ref_rgb = np.zeros_like(input_rgb)
-    ref_rgb[..., 1] = np.where(reference, 255, 0).astype(np.uint8)
+    input_rgb = _input_rgb(image, dataset)
+    ref_rgb = _labels_rgb(reference)
     pred_rgb = _labels_rgb(prediction)
 
     overlay = input_rgb.astype(np.float32)
-    ref_boundary = _boundary(reference)
-    pred_boundary = _boundary(prediction > 0)
-    overlay[ref_boundary] = np.array([0, 255, 0], dtype=np.float32)
-    overlay[pred_boundary] = np.array([255, 0, 255], dtype=np.float32)
+    overlay[_boundary(reference)] = np.array([0, 255, 0], dtype=np.float32)
+    overlay[_boundary(prediction)] = np.array([255, 0, 255], dtype=np.float32)
     overlay = np.clip(overlay, 0, 255).astype(np.uint8)
 
     titles = [
         "Prepared input",
-        "U-Net binary reference",
-        f"Prediction: {metrics['predicted_instances']} instances",
+        f"Manual labels: {metrics['reference_instances']} instances",
+        f"StarDist prediction: {metrics['predicted_instances']} instances",
         (
-            f"Overlay: IoU={metrics['semantic_iou']:.4f}, "
-            f"Dice={metrics['semantic_dice']:.4f}"
+            f"IoU={metrics['semantic_iou']:.3f}, Dice={metrics['semantic_dice']:.3f}, "
+            f"F1@0.50={metrics['instance_f1_50']:.3f}"
         ),
     ]
     panels = [
@@ -354,19 +472,14 @@ def _save_comparison(
     canvas.save(path)
 
 
-def _approx_component_count(binary: np.ndarray) -> int | None:
-    try:
-        from scipy.ndimage import label
-
-        _labels, count = label(np.asarray(binary) > 0)
-        return int(count)
-    except Exception:
-        return None
+def _mean_numeric(rows: Sequence[dict[str, Any]], key: str) -> float:
+    values = [float(row[key]) for row in rows if row.get(key) is not None]
+    return float(np.nanmean(values)) if values else float("nan")
 
 
 def _write_html(path: Path, rows: list[dict[str, Any]], best: dict[str, Any]) -> None:
     sample_rows = [row for row in rows if row["sample_key"] != "__MEAN__"]
-    sections = []
+    sections: list[str] = []
     for row in sample_rows:
         preview = Path(str(row["comparison_png"]))
         try:
@@ -374,28 +487,39 @@ def _write_html(path: Path, rows: list[dict[str, Any]], best: dict[str, Any]) ->
         except ValueError:
             relative = preview.as_uri()
         parameters = {
-            key: value
-            for key, value in row.items()
-            if key in {"diameter", "flow_threshold", "cellprob_threshold", "mask_threshold", "min_size"}
-            and value not in {"", None}
+            key: row.get(key)
+            for key in (
+                "diameter",
+                "flow_threshold",
+                "cellprob_threshold",
+                "mask_threshold",
+                "prob_thresh",
+                "nms_thresh",
+                "min_size",
+            )
+            if row.get(key) not in {"", None}
         }
         sections.append(
             "<section>"
             f"<h3>Parameter {row['parameter_index']} | {html.escape(str(row['sample_key']))}</h3>"
             f"<p><code>{html.escape(json.dumps(parameters))}</code><br>"
-            f"IoU={row['semantic_iou']:.4f}, Dice={row['semantic_dice']:.4f}, "
-            f"instances={row['predicted_instances']}</p>"
+            f"Semantic IoU={row['semantic_iou']:.4f}, Dice={row['semantic_dice']:.4f}<br>"
+            f"Instance F1@0.50={row['instance_f1_50']:.4f}, "
+            f"precision={row['instance_precision_50']:.4f}, "
+            f"recall={row['instance_recall_50']:.4f}<br>"
+            f"Manual instances={row['reference_instances']}, "
+            f"predicted instances={row['predicted_instances']}</p>"
             f"<img src=\"{html.escape(relative)}\" style=\"max-width:100%;height:auto\">"
             "</section>"
         )
     body = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>PFT pretrained segmentation screening</title>
+<html><head><meta charset="utf-8"><title>PFT manual-mask screening</title>
 <style>body{{font-family:Arial,sans-serif;margin:24px}} section{{margin:28px 0;padding-top:12px;border-top:1px solid #ccc}} code{{white-space:pre-wrap}}</style>
 </head><body>
-<h1>PFT pretrained segmentation screening</h1>
-<h2>Best mean parameters</h2>
+<h1>PFT pretrained-model screening against manual instance masks</h1>
+<h2>Best mean setting</h2>
 <pre>{html.escape(json.dumps(best, indent=2, default=str))}</pre>
-<p>Green outline: U-Net binary reference. Magenta outline: model prediction.</p>
+<p>Green outline: manual annotation. Magenta outline: model prediction.</p>
 {''.join(sections)}
 </body></html>"""
     path.write_text(body, encoding="utf-8")
@@ -404,8 +528,8 @@ def _write_html(path: Path, rows: list[dict[str, Any]], best: dict[str, Any]) ->
 def main(default_family: str | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Screen pretrained Cellpose-SAM or Omnipose parameter grids against "
-            "binary U-Net foreground masks without model training."
+            "Screen pretrained Cellpose, Omnipose, or StarDist models directly "
+            "against manual integer instance masks."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -419,16 +543,56 @@ def main(default_family: str | None = None) -> int:
         "--source-mode",
         choices=sorted({mode for modes in SOURCE_MODES_BY_DATASET.values() for mode in modes}),
     )
-    parser.add_argument("--mode", choices=("one", "all"), default=None)
-    parser.add_argument("--sample", action="append", default=None)
+    parser.add_argument(
+        "--annotation-source",
+        choices=ANNOTATION_SOURCES,
+        default="full-images-only",
+        help="Which manual annotations may be selected.",
+    )
+    parser.add_argument(
+        "--annotation-split",
+        choices=ANNOTATION_SPLITS,
+        default="any",
+        help="Optional crop split filter. Full-image masks have no explicit split.",
+    )
+    parser.add_argument(
+        "--sample",
+        action="append",
+        default=None,
+        help="Exact annotated sample key. Repeat to evaluate several explicit samples.",
+    )
+    parser.add_argument(
+        "--sample-count",
+        type=int,
+        default=2,
+        help="Number of valid annotated pairs randomly selected when --sample is absent.",
+    )
+    parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument(
+        "--allow-same-source",
+        action="store_true",
+        help="Allow two crop pairs from the same original source image.",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--model-name", default=None)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--diameters", nargs="+", default=["none"])
-    parser.add_argument("--flow-thresholds", type=float, nargs="+", default=[0.2, 0.4, 0.6])
-    parser.add_argument("--cellprob-thresholds", type=float, nargs="+", default=[-1.0, 0.0, 1.0])
-    parser.add_argument("--mask-thresholds", type=float, nargs="+", default=[-1.0, 0.0, 1.0])
+    parser.add_argument("--flow-thresholds", type=float, nargs="+", default=[0.4])
+    parser.add_argument("--cellprob-thresholds", type=float, nargs="+", default=[0.0])
+    parser.add_argument("--mask-thresholds", type=float, nargs="+", default=[0.0])
+    parser.add_argument(
+        "--prob-thresholds",
+        nargs="+",
+        default=["none"],
+        help="StarDist probability thresholds. 'none' uses the model's stored threshold.",
+    )
+    parser.add_argument(
+        "--nms-thresholds",
+        nargs="+",
+        default=["none"],
+        help="StarDist NMS thresholds. 'none' uses the model's stored threshold.",
+    )
     parser.add_argument("--min-sizes", type=int, nargs="+", default=[15])
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-preview-size", type=int, default=768)
@@ -436,34 +600,46 @@ def main(default_family: str | None = None) -> int:
     args = parser.parse_args()
 
     family = args.family or _choose("Choose pretrained model family", SCREENING_FAMILIES)
-    dataset = args.dataset or _choose("Choose independent dataset", SUPPORTED_DATASETS)
+    dataset = args.dataset or _choose("Choose dataset", SUPPORTED_DATASETS)
     valid_modes = SOURCE_MODES_BY_DATASET[dataset]
     source_mode = args.source_mode or _choose("Choose segmentation source", valid_modes)
     if source_mode not in valid_modes:
         parser.error(f"{source_mode!r} is invalid for {dataset!r}: {valid_modes}")
 
-    items = list_prepared_inputs(PROJECT_ROOT, dataset, source_mode)
-    if not items:
+    candidates = list_training_inputs(
+        PROJECT_ROOT,
+        dataset,
+        source_mode,
+        annotation_source=args.annotation_source,
+        annotation_split=args.annotation_split,
+    )
+    candidates = [item for item in candidates if item.training_mask.is_file()]
+    if not candidates:
         raise FileNotFoundError(
-            "No prepared segmentation inputs were found. Run prepare_segmentation_inputs.py first."
+            "No manual image/mask pairs were found for the requested dataset, source mode, "
+            "annotation source, and annotation split."
         )
 
     selected_keys = set(args.sample or [])
-    run_mode = args.mode or _choose("Screen one sample or all prepared samples", ("one", "all"))
-    if run_mode == "one" and not selected_keys:
-        selected_keys = {_choose("Choose prepared sample", [item.sample_key for item in items])}
-    if selected_keys:
-        items = [item for item in items if item.sample_key in selected_keys]
-    if not items:
-        raise RuntimeError("No prepared samples matched the requested selection")
+    loaded, invalid_pairs = _select_pairs(
+        candidates,
+        selected_keys=selected_keys,
+        sample_count=args.sample_count,
+        seed=args.seed,
+        distinct_sources=not args.allow_same_source,
+    )
 
     diameters = _parse_diameters(args.diameters)
+    prob_thresholds = _parse_optional_floats(args.prob_thresholds)
+    nms_thresholds = _parse_optional_floats(args.nms_thresholds)
     grid = _parameter_grid(
         family,
         diameters,
         args.flow_thresholds,
         args.cellprob_thresholds,
         args.mask_thresholds,
+        prob_thresholds,
+        nms_thresholds,
         args.min_sizes,
     )
 
@@ -481,7 +657,11 @@ def main(default_family: str | None = None) -> int:
     model_display = (
         args.model_name
         or (Path(str(args.model)).stem if args.model else None)
-        or ("cpsam_v2" if family == "cellpose" else "bact_fluor_omni")
+        or {
+            "cellpose": "cpsam_v2",
+            "omnipose": "bact_fluor_omni",
+            "stardist": "2D_versatile_fluo",
+        }[family]
     )
     run_name = args.run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
     output_root = (
@@ -496,53 +676,47 @@ def main(default_family: str | None = None) -> int:
     )
     output_root.mkdir(parents=True, exist_ok=True)
 
+    selected_names = [item.sample_key for item, _image, _reference in loaded]
     print("\nPFT pretrained segmentation screening")
-    print("=" * 72)
-    print(f"Family:             {family}")
-    print(f"Model:              {model_display}")
-    print(f"Dataset:            {dataset}")
-    print(f"Source mode:        {source_mode}")
-    print(f"Samples:            {len(items)}")
-    print(f"Parameter settings: {len(grid)}")
-    print("Reference:          binary U-Net mask")
-    print("Ranking:            mean semantic IoU, then mean Dice")
-    print("Instance F1:        not calculated without instance labels")
-    print("Model normalization: DISABLED")
-
-    loaded: list[tuple[Any, np.ndarray, np.ndarray, Path]] = []
-    for item in items:
-        image = load_prepared_image(item.input_zarr)
-        reference, reference_path = _load_unet_binary_reference(
-            item.input_zarr, tuple(int(value) for value in image.shape[:2])
-        )
-        loaded.append((item, image, reference, reference_path))
+    print("=" * 78)
+    print(f"Family:              {family}")
+    print(f"Model:               {model_display}")
+    print(f"Dataset:             {dataset}")
+    print(f"Source mode:         {source_mode}")
+    print(f"Annotation source:   {args.annotation_source}")
+    print(f"Annotation split:    {args.annotation_split}")
+    print(f"Random seed:         {args.seed}")
+    print(f"Selected samples:    {len(loaded)}")
+    for name in selected_names:
+        print(f"  - {name}")
+    print(f"Parameter settings:  {len(grid)}")
+    print("Reference:           manual integer instance masks")
+    print("Ranking:             mean instance F1@0.50, then mean semantic IoU")
+    print("Model normalization: disabled")
 
     rows: list[dict[str, Any]] = []
     for parameter_index, parameters in enumerate(grid, start=1):
         print(f"\n[{parameter_index:03d}/{len(grid):03d}] {parameters}")
         parameter_rows: list[dict[str, Any]] = []
-        for item, image, reference, reference_path in loaded:
+        for item, image, reference in loaded:
             prediction_cfg = PredictionConfig(**asdict(base_cfg))
             for key, value in parameters.items():
                 setattr(prediction_cfg, key, value)
             prediction = predict_one(model, image, prediction_cfg)
-            predicted_binary = prediction > 0
-            ref_pixels = int(np.count_nonzero(reference))
-            pred_pixels = int(np.count_nonzero(predicted_binary))
+
+            metrics: dict[str, Any] = {}
+            metrics.update(_semantic_metrics(reference, prediction))
+            metrics.update(_instance_metrics(reference, prediction))
+
             sample_dir = output_root / f"parameter_{parameter_index:03d}" / Path(item.sample_key)
             comparison_path = sample_dir / "comparison.png"
             row: dict[str, Any] = {
                 "parameter_index": parameter_index,
                 "sample_key": item.sample_key,
                 **parameters,
-                "semantic_dice": semantic_dice(reference, predicted_binary),
-                "semantic_iou": semantic_iou(reference, predicted_binary),
-                "reference_foreground_pixels": ref_pixels,
-                "prediction_foreground_pixels": pred_pixels,
-                "foreground_area_ratio": float(pred_pixels / ref_pixels) if ref_pixels else float("nan"),
-                "predicted_instances": int(np.unique(prediction[prediction > 0]).size),
-                "approx_reference_components": _approx_component_count(reference),
-                "reference_mask": str(reference_path),
+                **metrics,
+                "manual_mask": str(item.training_mask),
+                "prepared_input": str(item.input_zarr),
                 "comparison_png": str(comparison_path),
             }
             _save_comparison(
@@ -551,58 +725,61 @@ def main(default_family: str | None = None) -> int:
                 reference,
                 prediction,
                 row,
+                dataset=dataset,
                 max_size=args.max_preview_size,
             )
             if args.save_labels:
                 sample_dir.mkdir(parents=True, exist_ok=True)
                 max_label = int(np.max(prediction)) if prediction.size else 0
                 dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
-                tiff.imwrite(sample_dir / "predicted_labels.tif", prediction.astype(dtype))
+                tiff.imwrite(
+                    sample_dir / "predicted_labels.tif",
+                    prediction.astype(dtype, copy=False),
+                    photometric="minisblack",
+                )
             parameter_rows.append(row)
             rows.append(row)
             print(
-                f"  {item.sample_key}: IoU={row['semantic_iou']:.4f}, "
-                f"Dice={row['semantic_dice']:.4f}, instances={row['predicted_instances']}"
+                f"  {item.sample_key}: semantic IoU={row['semantic_iou']:.4f}, "
+                f"Dice={row['semantic_dice']:.4f}, "
+                f"instance F1@0.50={row['instance_f1_50']:.4f}, "
+                f"manual/predicted={row['reference_instances']}/{row['predicted_instances']}"
             )
 
         aggregate: dict[str, Any] = {
             "parameter_index": parameter_index,
             "sample_key": "__MEAN__",
             **parameters,
-            "semantic_dice": float(np.mean([row["semantic_dice"] for row in parameter_rows])),
-            "semantic_iou": float(np.mean([row["semantic_iou"] for row in parameter_rows])),
-            "reference_foreground_pixels": int(
-                sum(row["reference_foreground_pixels"] for row in parameter_rows)
-            ),
-            "prediction_foreground_pixels": int(
-                sum(row["prediction_foreground_pixels"] for row in parameter_rows)
-            ),
-            "foreground_area_ratio": float(
-                np.mean([row["foreground_area_ratio"] for row in parameter_rows])
-            ),
-            "predicted_instances": float(
-                np.mean([row["predicted_instances"] for row in parameter_rows])
-            ),
-            "approx_reference_components": float(
-                np.mean(
-                    [
-                        row["approx_reference_components"]
-                        for row in parameter_rows
-                        if row["approx_reference_components"] is not None
-                    ]
-                )
-            )
-            if any(row["approx_reference_components"] is not None for row in parameter_rows)
-            else None,
-            "reference_mask": "",
-            "comparison_png": "",
         }
+        numeric_keys = [
+            key
+            for key, value in parameter_rows[0].items()
+            if key
+            not in {
+                "parameter_index",
+                "sample_key",
+                "manual_mask",
+                "prepared_input",
+                "comparison_png",
+                *parameters.keys(),
+            }
+            and isinstance(value, (int, float, np.integer, np.floating))
+        ]
+        for key in numeric_keys:
+            aggregate[key] = _mean_numeric(parameter_rows, key)
+        aggregate.update(
+            {
+                "manual_mask": "",
+                "prepared_input": "",
+                "comparison_png": "",
+            }
+        )
         rows.append(aggregate)
 
     aggregate_rows = [row for row in rows if row["sample_key"] == "__MEAN__"]
     best = max(
         aggregate_rows,
-        key=lambda row: (row["semantic_iou"], row["semantic_dice"]),
+        key=lambda row: (row["instance_f1_50"], row["semantic_iou"], row["semantic_dice"]),
     )
 
     csv_path = output_root / "screening_metrics.csv"
@@ -618,16 +795,17 @@ def main(default_family: str | None = None) -> int:
         "model": model_display,
         "dataset": dataset,
         "source_mode": source_mode,
-        "reference_type": "binary_unet_foreground",
-        "valid_metrics": ["semantic_iou", "semantic_dice", "foreground_area_ratio"],
-        "invalid_without_instance_labels": [
-            "instance_f1",
-            "split_error",
-            "merge_error",
-            "one_to_one_cell_matching",
-        ],
+        "reference_type": "manual_integer_instance_masks",
+        "annotation_source": args.annotation_source,
+        "annotation_split": args.annotation_split,
+        "random_selection": not bool(selected_keys),
+        "sample_count": len(loaded),
+        "seed": args.seed,
+        "distinct_source_images": not args.allow_same_source,
+        "selected_samples": selected_names,
+        "invalid_pairs_skipped": invalid_pairs,
         "best_parameters_and_metrics": best,
-        "evaluated_samples": [item.sample_key for item, *_ in loaded],
+        "ranking": "mean instance F1@0.50, then mean semantic IoU, then mean Dice",
         "model_normalization": False,
         "metrics_csv": str(csv_path),
     }
@@ -636,10 +814,12 @@ def main(default_family: str | None = None) -> int:
     html_path = output_root / "screening_report.html"
     _write_html(html_path, rows, best)
 
-    print("\nBest mean semantic setting")
+    print("\nBest mean setting")
+    print("=" * 78)
     print(json.dumps(best, indent=2, default=str))
     print(f"\nMetrics: {csv_path}")
     print(f"Report:  {html_path}")
+    print(f"Summary: {best_path}")
     return 0
 
 
