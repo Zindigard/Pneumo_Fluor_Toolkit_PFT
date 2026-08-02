@@ -1,4 +1,5 @@
-"""Training and evaluation for the per-volume merged-RGB 2.5D U-Net.
+"""
+Training and evaluation for the per-volume merged-RGB 2.5D U-Net.
 
 Each source stack has one manually selected target slice in the shared mapping.
 For a target Zn, the model input is the wavelength-mapped merged-RGB context

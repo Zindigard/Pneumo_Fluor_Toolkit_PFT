@@ -1,4 +1,5 @@
-"""Open one selected 2D U-Net input image in napari.
+"""
+Open one selected 2D U-Net input image in napari.
 
 The script supports four viewing modes for one individual sample:
 

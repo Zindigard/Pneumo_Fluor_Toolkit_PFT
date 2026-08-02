@@ -1,4 +1,4 @@
-r"""
+"""
 Unified visualization and image-export command for the PFT project.
 
 The command reads OME-Zarr images produced by the PFT pipeline and can:

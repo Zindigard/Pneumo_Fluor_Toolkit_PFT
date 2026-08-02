@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for Fourier-transform result three-dimensional data.
+"""
+Provide command-line and programmatic utilities for Fourier-transform result three-dimensional data.
 
 Examples
 --------

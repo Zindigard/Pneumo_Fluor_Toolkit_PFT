@@ -1,4 +1,5 @@
-r"""Validate a StarDist model using the training-consistent input policy.
+"""
+Validate a StarDist model using the training-consistent input policy.
 
 Examples
 --------

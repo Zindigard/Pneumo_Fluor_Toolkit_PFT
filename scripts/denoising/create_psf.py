@@ -1,4 +1,4 @@
-r"""
+"""
 Generate one reusable three-channel master PSF set for all 3D stacks.
 
 The script reads level-0 metadata from one reference ``image.ome.zarr`` and

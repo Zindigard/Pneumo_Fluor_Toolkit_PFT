@@ -1,4 +1,4 @@
-r"""
+"""
 Validate the repository layout and all local PFT imports.
 
 This script checks that ``scripts`` and ``src/PFT/core_prog_parts`` share the

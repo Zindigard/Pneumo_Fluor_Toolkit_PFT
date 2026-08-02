@@ -1,4 +1,5 @@
-r"""Run StarDist with the same channel policy used during fine-tuning.
+"""
+Run StarDist with the same channel policy used during fine-tuning.
 
 Examples
 --------

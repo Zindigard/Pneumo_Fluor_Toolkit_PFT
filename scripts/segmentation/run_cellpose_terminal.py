@@ -1,4 +1,5 @@
-r"""Compatibility terminal entry point for Cellpose prediction.
+"""
+Compatibility terminal entry point for Cellpose prediction.
 
 This script delegates to :mod:`run_segmentation_model` and fixes the model
 family to ``cellpose``. Inputs must first be prepared with

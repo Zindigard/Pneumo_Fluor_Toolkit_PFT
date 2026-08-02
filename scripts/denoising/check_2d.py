@@ -1,4 +1,4 @@
-r"""
+"""
 Quantify 2D microscopy noise and Noise2Void restoration quality from OME-Zarr.
 
 Two modes are provided:

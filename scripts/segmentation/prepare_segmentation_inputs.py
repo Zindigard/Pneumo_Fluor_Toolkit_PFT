@@ -1,4 +1,5 @@
-"""Create normalized OME-Zarr inputs for downstream instance segmentation.
+"""
+Create normalized OME-Zarr inputs for downstream instance segmentation.
 
 The script keeps each biological dataset and MIP source mode independent.
 

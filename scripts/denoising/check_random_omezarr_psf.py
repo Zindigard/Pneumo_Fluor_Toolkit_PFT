@@ -1,4 +1,5 @@
-r"""Check the fixed four-stack 3D cohort against the reusable master PSFs.
+"""
+Check the fixed four-stack 3D cohort against the reusable master PSFs.
 
 Without ``--zarr``, one mapped source stack from each acquisition directory is
 checked. Each stack is sampled at its configured U-Net target slice. Optional

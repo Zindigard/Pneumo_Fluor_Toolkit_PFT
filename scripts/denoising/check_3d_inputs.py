@@ -1,4 +1,5 @@
-r"""Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
+"""
+Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
 
 Each source volume has one manually selected target slice defined in the shared
 3D target-slice map. The binary TIFF is stored as

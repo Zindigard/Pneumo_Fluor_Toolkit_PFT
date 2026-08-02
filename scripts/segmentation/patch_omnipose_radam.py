@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-Patch the current PFT Omnipose training implementation to use RAdam.
+PFT Omnipose training implementation to use RAdam.
 
 Run once from the PFT project root:
 

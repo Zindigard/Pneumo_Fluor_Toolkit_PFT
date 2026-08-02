@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for create results graphs.
+"""
+Provide command-line and programmatic utilities for create results graphs.
 
 Examples
 --------

@@ -1,4 +1,5 @@
-r"""Run validated 3D Richardson-Lucy deconvolution without Fiji.
+"""
+Run validated 3D Richardson-Lucy deconvolution without Fiji.
 
 With no ``--zarr`` argument, the script processes the fixed four-stack test
 cohort, containing one source OME-Zarr from each acquisition directory. Each

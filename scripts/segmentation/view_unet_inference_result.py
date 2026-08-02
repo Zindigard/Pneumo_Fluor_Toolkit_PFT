@@ -1,4 +1,5 @@
-"""Interactively inspect one 2D U-Net inference result in napari.
+"""
+Interactively inspect one 2D U-Net inference result in napari.
 
 The viewer supports both ``2d_time`` and ``2d_wga_dapi``. It discovers
 completed inference runs under ``results/U-net``, lets the user select one

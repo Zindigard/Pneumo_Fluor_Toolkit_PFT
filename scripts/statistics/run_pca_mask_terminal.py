@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for run principal-component analysis result mask terminal.
+"""
+Provide command-line and programmatic utilities for run principal-component analysis result mask terminal.
 
 Examples
 --------

@@ -1,4 +1,4 @@
-r"""
+"""
 Import CZI datasets, create compact exports, and validate OME-Zarr data.
 The script supports three canonical datasets: ``2d_time``, ``2d_wga_dapi``,
 and ``3d``. A user can process one dataset at a time or select ``all`` to

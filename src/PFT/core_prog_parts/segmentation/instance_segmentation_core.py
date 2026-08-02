@@ -1,4 +1,5 @@
-"""Run, train, and tune 2D instance-segmentation models on prepared PFT inputs.
+"""
+Run, train, and tune 2D instance-segmentation models on prepared PFT inputs.
 
 All model families consume only ``segmentation_input.ome.zarr`` arrays created
 by :mod:`segmentation_input_core`. These arrays are already float32 in [0, 1].

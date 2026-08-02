@@ -1,4 +1,5 @@
-"""Optional free-hand Fourier-mask filtering for 2D OME-Zarr images.
+"""
+Optional free-hand Fourier-mask filtering for 2D OME-Zarr images.
 
 A free-hand filter multiplies the centered 2D Fourier transform by a user-
 supplied keep mask. The method remains callable for comparison and manual

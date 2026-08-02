@@ -290,7 +290,7 @@ print("Omnipose environment check: PASS")
 
 CHECKING, ACTIVATING, AND CHANGING ENVIRONMENTS
 ================================================================================
-E1. List all environments
+List all environments
 conda env list
 
 or:

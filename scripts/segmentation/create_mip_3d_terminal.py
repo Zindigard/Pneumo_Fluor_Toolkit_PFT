@@ -1,4 +1,5 @@
-r"""Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
+"""
+Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
 
 Interactive mode allows selection of:
 

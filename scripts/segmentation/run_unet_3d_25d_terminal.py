@@ -1,4 +1,5 @@
-r"""Infer the configured per-volume target slice and broadcast its mask in Z.
+"""
+Infer the configured per-volume target slice and broadcast its mask in Z.
 
 Examples
 --------

@@ -1,4 +1,4 @@
-r"""
+"""
 Interactive tuning of optional 2D Fourier and rolling-ball filters.
 
 This module supports manual comparison experiments.

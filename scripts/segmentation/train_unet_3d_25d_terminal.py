@@ -1,4 +1,5 @@
-r"""Train the per-volume-target merged-RGB 2.5D foreground U-Net.
+"""
+Train the per-volume-target merged-RGB 2.5D foreground U-Net.
 
 Each annotated stack contributes one target slice from the shared mapping. For
 configured target Zn, the input is merged-RGB Z(n-1)/Zn/Z(n+1), concatenated

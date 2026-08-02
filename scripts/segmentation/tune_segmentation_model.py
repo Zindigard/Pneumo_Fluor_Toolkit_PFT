@@ -1,4 +1,5 @@
-r"""Tune inference parameters after fine-tuning using manual validation masks.
+"""
+Tune inference parameters after fine-tuning using manual validation masks.
 
 Only binary semantic Dice and IoU are calculated. Instance F1 and split/merge
 metrics are not part of this thesis workflow.

@@ -1,4 +1,5 @@
-r"""Train the thesis-aligned 2D U-Net from terminal prompts or argparse.
+"""
+Train the thesis-aligned 2D U-Net from terminal prompts or argparse.
 
 Examples
 --------

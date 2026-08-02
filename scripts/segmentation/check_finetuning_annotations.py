@@ -1,4 +1,5 @@
-r"""Validate manual full-image or crop annotations before fine-tuning.
+"""
+Validate manual full-image or crop annotations before fine-tuning.
 
 The checker verifies that every selected image/mask pair exists, has matching
 YX dimensions, uses finite float32 image data in [0, 1], and contains positive

@@ -1,4 +1,5 @@
-r"""Create manual Cellpose/Omnipose instance masks in Napari.
+"""
+Create manual Cellpose/Omnipose instance masks in Napari.
 
 Two annotation modes are available.
 

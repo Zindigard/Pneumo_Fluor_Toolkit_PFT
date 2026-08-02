@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for sanity two-dimensional data.
+"""
+Provide command-line and programmatic utilities for sanity two-dimensional data.
 
 Examples
 --------

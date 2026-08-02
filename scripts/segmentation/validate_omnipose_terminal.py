@@ -1,4 +1,5 @@
-r"""Terminal entry point for validation of a saved Omnipose model.
+"""
+Terminal entry point for validation of a saved Omnipose model.
 
 Examples
 --------

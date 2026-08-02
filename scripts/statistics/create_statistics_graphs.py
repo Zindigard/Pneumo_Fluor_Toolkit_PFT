@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for create statistics graphs.
+"""
+Provide command-line and programmatic utilities for create statistics graphs.
 
 Examples
 --------
@@ -17,20 +18,6 @@ Representative execution:
 
 from __future__ import annotations
 
-"""Create quantitative-analysis graphs for one dataset or all supported datasets.
-
-Normal mode processes all eligible full images. Passing ``--example`` selects
-one low-cell full image per experimental condition. It consumes:
-
-* the selected mask/image manifest;
-* PCA outputs from ``align_cells_pca.py``;
-* normalized-cell outputs from ``normalize_aligned_cells.py``.
-
-Example mode is descriptive only. Full mode creates cell-level and ROI-level
-measurement tables and uses ROI-level summaries for condition plots. Inferential
-testing remains a separate stage. HADA time-course figures and WGA-DAPI
-channel-comparison figures use the thesis plotting layouts.
-"""
 
 import argparse
 import csv

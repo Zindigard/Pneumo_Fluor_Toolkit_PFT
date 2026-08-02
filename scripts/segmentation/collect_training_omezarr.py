@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for collect training OME-Zarr.
+"""
+Provide command-line and programmatic utilities for collect training OME-Zarr.
 
 
 Examples

@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-"""Create publication-ready original-versus-U-Net-filtered microscopy figures.
+"""
+Create publication-ready original-versus-U-Net-filtered microscopy figures.
 
 The script supports both PFT two-dimensional datasets:
 

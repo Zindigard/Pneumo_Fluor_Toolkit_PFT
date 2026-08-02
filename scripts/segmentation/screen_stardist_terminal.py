@@ -1,4 +1,5 @@
-r"""Screen StarDist predictions using the training-consistent input policy.
+"""
+Screen StarDist predictions using the training-consistent input policy.
 
 Examples
 --------

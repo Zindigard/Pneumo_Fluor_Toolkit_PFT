@@ -1,4 +1,5 @@
-"""Per-volume-target merged-RGB 2.5D U-Net inference.
+"""
+Per-volume-target merged-RGB 2.5D U-Net inference.
 
 For each source volume, the configured target Zn is inferred from the
 wavelength-mapped merged-RGB context Z(n-1)/Zn/Z(n+1). The predicted 2D mask

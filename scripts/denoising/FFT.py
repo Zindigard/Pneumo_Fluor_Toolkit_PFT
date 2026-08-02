@@ -1,4 +1,4 @@
-r"""
+"""
 Calculate raw and post-local-threshold structured-noise parameters for 2D data.
 
 The script reads source OME-Zarr images from both supported 2D datasets. Each

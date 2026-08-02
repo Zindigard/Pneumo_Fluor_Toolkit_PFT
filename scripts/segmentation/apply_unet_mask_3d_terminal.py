@@ -1,4 +1,5 @@
-r"""Apply a saved 2.5D U-Net mask to a saved deconvolved OME-Zarr.
+"""
+Apply a saved 2.5D U-Net mask to a saved deconvolved OME-Zarr.
 
 The configured per-volume target slice is used automatically for manual-mask
 SNR evaluation. Foreground values are preserved and 2% of intensity remains

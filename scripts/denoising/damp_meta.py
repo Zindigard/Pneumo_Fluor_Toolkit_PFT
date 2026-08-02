@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for damp meta.
+"""
+Provide command-line and programmatic utilities for damp meta.
 
 Examples
 --------

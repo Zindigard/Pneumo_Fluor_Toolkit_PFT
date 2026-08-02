@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for create results statistics.
+"""
+Provide command-line and programmatic utilities for create results statistics.
 
 Examples
 --------

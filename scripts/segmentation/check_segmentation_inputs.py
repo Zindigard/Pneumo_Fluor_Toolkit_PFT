@@ -1,4 +1,5 @@
-"""Audit PFT instance-segmentation inputs, provenance, metadata, and masks.
+"""
+Audit PFT instance-segmentation inputs, provenance, metadata, and masks.
 
 The checker can be run before or after input preparation. It verifies:
 

@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for check masks for statistics.
+"""
+Provide command-line and programmatic utilities for check masks for statistics.
 
 Examples
 --------

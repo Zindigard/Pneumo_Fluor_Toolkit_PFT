@@ -1,4 +1,5 @@
-r"""Screen pretrained instance-segmentation models against manual instance masks.
+"""
+Screen pretrained instance-segmentation models against manual instance masks.
 
 The script runs Cellpose, Omnipose, or StarDist without fine-tuning and compares
 predicted integer instance labels directly with manually annotated integer masks.
@@ -724,7 +725,7 @@ def _save_comparison(
     titles = [
         "Prepared input",
         f"Manual labels: {metrics['reference_instances']} instances",
-        f"StarDist prediction: {metrics['predicted_instances']} instances",
+        f"Model prediction: {metrics['predicted_instances']} instances",
         (
             f"IoU={metrics['semantic_iou']:.3f}, Dice={metrics['semantic_dice']:.3f}, "
             f"F1@0.50={metrics['instance_f1_50']:.3f}"
@@ -1013,7 +1014,10 @@ def main(default_family: str | None = None) -> int:
     for parameter_index, parameters in enumerate(grid, start=1):
         print(f"\n[{parameter_index:03d}/{len(grid):03d}] {parameters}")
         parameter_rows: list[dict[str, Any]] = []
-        for item, image, reference in loaded:
+        for sample_index, (item, image, reference) in enumerate(
+            loaded,
+            start=1,
+        ):
             prediction_cfg = PredictionConfig(**asdict(base_cfg))
             for key, value in parameters.items():
                 setattr(prediction_cfg, key, value)
@@ -1023,7 +1027,11 @@ def main(default_family: str | None = None) -> int:
             metrics.update(_semantic_metrics(reference, prediction))
             metrics.update(_instance_metrics(reference, prediction))
 
-            sample_dir = output_root / f"parameter_{parameter_index:03d}" / Path(item.sample_key)
+            sample_dir = (
+                output_root
+                / f"parameter_{parameter_index:03d}"
+                / f"sample_{sample_index:03d}"
+            )
             comparison_path = sample_dir / "comparison.png"
             row: dict[str, Any] = {
                 "parameter_index": parameter_index,

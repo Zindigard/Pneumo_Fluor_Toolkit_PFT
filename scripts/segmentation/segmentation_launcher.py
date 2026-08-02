@@ -1,4 +1,5 @@
-r"""Interactive launcher for the validated PFT instance-segmentation workflow.
+"""
+Interactive launcher for the validated PFT instance-segmentation workflow.
 
 The launcher deliberately calls the documented terminal scripts as separate
 processes. This keeps preparation, validation, labeling, prediction, training,

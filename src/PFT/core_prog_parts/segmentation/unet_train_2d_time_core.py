@@ -1,4 +1,5 @@
-"""Core training implementation for 2D U-Net foreground/background detection.
+"""
+ore training implementation for 2D U-Net foreground/background detection.
 
 This module is used for both supported 2D datasets:
 

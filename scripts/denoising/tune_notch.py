@@ -1,4 +1,5 @@
-r"""Interactive tuning of the optional directional notch filter.
+"""
+Interactive tuning of the optional directional notch filter.
 
 The script visualizes mean FFTs and lets the user select angular stop bands.
 It is retained for comparison experiments and is not the default 2D filter.

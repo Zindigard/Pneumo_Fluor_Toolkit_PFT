@@ -1,4 +1,4 @@
-r"""
+"""
 Revalidate existing OME-Zarr images against their original CZI files.
 With no arguments, the script validates every ``*.ome.zarr`` directory below
 ``<project>/results/img``. ``--root`` may select another directory tree and

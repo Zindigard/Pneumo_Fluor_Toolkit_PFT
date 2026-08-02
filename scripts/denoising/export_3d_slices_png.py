@@ -1,4 +1,5 @@
-r"""Export source 3D OME-Zarr Z-planes as normalized merged-RGB PNGs.
+"""
+Export source 3D OME-Zarr Z-planes as normalized merged-RGB PNGs.
 
 Each source volume has one configured target slice. The interactive menu and
 batch summary display that target, while all 40 planes are exported for visual

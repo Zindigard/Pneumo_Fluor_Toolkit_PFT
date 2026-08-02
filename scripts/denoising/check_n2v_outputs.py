@@ -1,4 +1,4 @@
-r"""
+"""#
 Validate N2V OME-Zarr outputs, source metadata identity, and raw-range storage.
 
 The checker pairs every standard N2V output with its original image under

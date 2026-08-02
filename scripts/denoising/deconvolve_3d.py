@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for deconvolve three-dimensional data.
+"""
+Provide command-line and programmatic utilities for deconvolve three-dimensional data.
 
 Examples
 --------

@@ -1,4 +1,4 @@
-r"""
+"""
 Structured-noise and FFT diagnostics for two-dimensional fluorescence data.
 
 Parameters

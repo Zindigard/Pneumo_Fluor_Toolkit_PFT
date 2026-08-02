@@ -1,4 +1,5 @@
-r"""Dataset-specific single-channel input adapter for StarDist.
+"""
+Dataset-specific single-channel input adapter for StarDist.
 
 The prepared PFT inputs remain unchanged on disk:
 

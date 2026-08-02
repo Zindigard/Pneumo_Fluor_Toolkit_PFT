@@ -1,4 +1,5 @@
-r"""Validate a saved Omnipose or StarDist model without repeating training.
+"""
+Validate a saved Omnipose or StarDist model without repeating training.
 
 The validation split is reconstructed from the same annotation source,
 validation policy, validation fraction, and random seed used during training.

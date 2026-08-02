@@ -1,4 +1,5 @@
-r"""Fine-tune Cellpose-SAM, Omnipose, or StarDist on PFT annotations.
+"""
+Fine-tune Cellpose-SAM, Omnipose, or StarDist on PFT annotations.
 
 The script supports complete-image annotations and crop-based annotations.
 Crop annotations can be assigned explicitly to ``train`` or ``validation``

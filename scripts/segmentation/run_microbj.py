@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for run microbj.
+"""
+Provide command-line and programmatic utilities for run microbj.
 
 Examples
 --------

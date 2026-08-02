@@ -1,5 +1,6 @@
-r"""Provide command-line and programmatic utilities for run statistics pipeline.
-
+"""
+Provide command-line and programmatic utilities for run statistics pipeline.
+Run PCA, normalization and graph generation with one command.
 Examples
 --------
 Show all command-line parameters:

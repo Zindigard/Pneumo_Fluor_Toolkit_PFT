@@ -1,4 +1,5 @@
-r"""Run pretrained Omnipose parameter screening against binary U-Net masks.
+"""
+Run pretrained Omnipose parameter screening against binary U-Net masks.
 
 Examples
 --------

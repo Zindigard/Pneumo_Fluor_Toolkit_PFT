@@ -1,4 +1,5 @@
-"""Apply a saved 2.5D U-Net mask to saved 3D deconvolution output.
+"""
+pply a saved 2.5D U-Net mask to saved 3D deconvolution output.
 
 This module performs the agreed final post-processing step only after both
 independent branches are complete:

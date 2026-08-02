@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for statistics pipeline common.
+"""
+Provide command-line and programmatic utilities for statistics pipeline common.
 
 Examples
 --------

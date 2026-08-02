@@ -1,4 +1,5 @@
-"""Core inference and quantitative evaluation for the 2D U-Net.
+"""
+Core inference and quantitative evaluation for the 2D U-Net.
 
 The module loads a trained dataset-specific model, applies the same complete-
 image normalization used during training, predicts foreground probabilities in

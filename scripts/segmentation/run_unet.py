@@ -1,4 +1,5 @@
-r"""Compatibility entry point for the 2D U-Net inference CLI.
+"""
+Compatibility entry point for the 2D U-Net inference CLI.
 
 Examples
 --------

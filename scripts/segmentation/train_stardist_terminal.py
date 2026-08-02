@@ -1,4 +1,5 @@
-r"""Terminal entry point for StarDist fine-tuning with PFT channel adaptation.
+"""
+Terminal entry point for StarDist fine-tuning with PFT channel adaptation.
 
 Input policy
 ------------

@@ -1,4 +1,4 @@
-r"""
+"""
 Create thesis-ready plots for the two-dimensional Noise2Void evaluation.
 
 The command combines two result sources:

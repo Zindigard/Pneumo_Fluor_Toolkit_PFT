@@ -1,4 +1,5 @@
-r"""Run pretrained Cellpose-SAM parameter screening against binary U-Net masks.
+"""
+Run pretrained Cellpose-SAM parameter screening against binary U-Net masks.
 
 Examples
 --------

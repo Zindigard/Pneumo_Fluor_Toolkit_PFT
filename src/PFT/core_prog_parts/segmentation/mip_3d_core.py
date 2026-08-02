@@ -1,4 +1,5 @@
-"""Create 2D maximum-intensity projections from PFT 3D OME-Zarr volumes.
+"""
+Create 2D maximum-intensity projections from PFT 3D OME-Zarr volumes.
 
 The workflow supports raw and Richardson-Lucy-deconvolved MIPs, either
 unmasked or followed by the existing per-volume 2.5D U-Net prediction.

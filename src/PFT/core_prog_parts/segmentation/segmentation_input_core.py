@@ -1,4 +1,5 @@
-"""Prepare and validate quantitative inputs for downstream instance segmentation.
+"""
+Prepare and validate quantitative inputs for downstream instance segmentation.
 
 This module defines one preprocessing contract for Cellpose, Omnipose, and
 StarDist. It supports the two independent 2D datasets and the 3D-to-2D MIP

@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for normalize aligned cells.
+"""
+Provide command-line and programmatic utilities for normalize aligned cells.
 
 Examples
 --------

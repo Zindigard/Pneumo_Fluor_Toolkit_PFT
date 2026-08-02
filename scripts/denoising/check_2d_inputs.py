@@ -1,4 +1,4 @@
-r"""
+"""
 Check whether 2D raw, mask, and Noise2Void data are ready for analysis.
 
 The checker validates:

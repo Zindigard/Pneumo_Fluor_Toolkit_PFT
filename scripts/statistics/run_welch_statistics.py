@@ -1,4 +1,5 @@
-r"""Provide command-line and programmatic utilities for run welch statistics.
+"""
+Provide command-line and programmatic utilities for run welch statistics.
 
 Examples
 --------

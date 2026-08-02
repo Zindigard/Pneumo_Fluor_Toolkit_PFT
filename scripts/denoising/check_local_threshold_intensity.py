@@ -1,4 +1,4 @@
-r"""
+"""
 Verify intensity preservation in saved local-threshold OME-Zarr outputs.
 
 The check compares each saved output against its source OME-Zarr image and the

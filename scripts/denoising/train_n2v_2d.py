@@ -1,4 +1,5 @@
-"""Terminal entry point for training one two-dimensional Noise2Void model.
+"""
+Terminal entry point for training one two-dimensional Noise2Void model.
 
 Run without ``--model`` to select the model interactively.  The command reads
 only original OME-Zarr images from ``results/img`` and creates an image-level

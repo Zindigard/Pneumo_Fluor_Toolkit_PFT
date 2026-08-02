@@ -1,4 +1,5 @@
-r"""Validate all files required for thesis-aligned 2D U-Net training and SNR.
+"""
+Validate all files required for thesis-aligned 2D U-Net training and SNR.
 
 The checker compares the canonical raw OME-Zarr stores, intensity-preserving
 local-threshold outputs, and hand-labelled masks converted to binary foreground.
