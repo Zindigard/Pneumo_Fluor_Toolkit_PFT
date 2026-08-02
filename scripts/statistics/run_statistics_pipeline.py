@@ -7,12 +7,14 @@ Show all command-line parameters:
 
     python scripts/statistics/run_statistics_pipeline.py --help
 
-Representative 2D execution:
+Representative 2D execution with at most 100 cells per ROI:
 
     python scripts/statistics/run_statistics_pipeline.py \
         --dataset 2d_time \
         --source-mode filtered_unet \
         --exclude-border \
+        --max-cells-per-roi-2d-time 100 \
+        --selection-seed 1337 \
         --overwrite
 
 Representative 3D execution with at most 100 cells per ROI:
@@ -106,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preferred-min-cells", type=int, default=5)
     parser.add_argument("--max-cells", type=int, default=80)
     parser.add_argument(
+        "--max-cells-per-roi-2d-time",
+        type=int,
+        default=100,
+        help=(
+            "Maximum valid cells retained per 2d_time ROI during full-mode PCA. "
+            "Use 0 to disable the cap. Default: 100."
+        ),
+    )
+    parser.add_argument(
         "--max-cells-per-roi-3d",
         type=int,
         default=100,
@@ -149,6 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         >>> exit_code = main()
     """
     args = build_parser().parse_args(argv)
+    if args.max_cells_per_roi_2d_time < 0:
+        raise ValueError("--max-cells-per-roi-2d-time must be 0 or greater")
     if args.max_cells_per_roi_3d < 0:
         raise ValueError("--max-cells-per-roi-3d must be 0 or greater")
     os.environ.setdefault("MPLBACKEND", "Agg")
@@ -180,6 +193,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(args.preferred_min_cells),
         "--max-cells",
         str(args.max_cells),
+        "--max-cells-per-roi-2d-time",
+        str(args.max_cells_per_roi_2d_time),
         "--max-cells-per-roi-3d",
         str(args.max_cells_per_roi_3d),
         "--selection-seed",

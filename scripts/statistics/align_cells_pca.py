@@ -998,6 +998,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preferred-min-cells", type=int, default=5)
     parser.add_argument("--max-cells", type=int, default=80)
     parser.add_argument(
+        "--max-cells-per-roi-2d-time",
+        type=int,
+        default=100,
+        help=(
+            "Maximum structurally eligible cells retained from each 2d_time ROI "
+            "in full mode. Use 0 to disable the cap. Default: 100."
+        ),
+    )
+    parser.add_argument(
         "--max-cells-per-roi-3d",
         type=int,
         default=100,
@@ -1059,6 +1068,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--preferred-min-cells must be at least 1")
     if args.max_cells is not None and args.max_cells < 1:
         raise ValueError("--max-cells must be at least 1")
+    if args.max_cells_per_roi_2d_time < 0:
+        raise ValueError("--max-cells-per-roi-2d-time must be 0 or greater")
     if args.max_cells_per_roi_3d < 0:
         raise ValueError("--max-cells-per-roi-3d must be 0 or greater")
     if args.manifest and args.dataset == "all":
@@ -1126,19 +1137,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             output_root = default_output
 
-        max_cells_per_roi = (
-            int(args.max_cells_per_roi_3d)
-            if dataset == "3d_mip"
-            and not args.example
-            and args.max_cells_per_roi_3d > 0
-            else None
-        )
-        if dataset == "3d_mip" and not args.example:
+        max_cells_per_roi: int | None = None
+        if not args.example:
+            if dataset == "2d_time" and args.max_cells_per_roi_2d_time > 0:
+                max_cells_per_roi = int(args.max_cells_per_roi_2d_time)
+            elif dataset == "3d_mip" and args.max_cells_per_roi_3d > 0:
+                max_cells_per_roi = int(args.max_cells_per_roi_3d)
+
+        if dataset in {"2d_time", "3d_mip"} and not args.example:
             if max_cells_per_roi is None:
-                print("[INFO] 3d_mip per-ROI cell cap is disabled.")
+                print(f"[INFO] {dataset} per-ROI cell cap is disabled.")
             else:
                 print(
-                    "[INFO] 3d_mip will retain at most "
+                    f"[INFO] {dataset} will retain at most "
                     f"{max_cells_per_roi} valid cells per ROI "
                     f"with seed {args.selection_seed}."
                 )
