@@ -7,13 +7,23 @@ Show all command-line parameters:
 
     python scripts/statistics/run_statistics_pipeline.py --help
 
-Representative execution:
+Representative 2D execution:
 
     python scripts/statistics/run_statistics_pipeline.py \
         --dataset 2d_time \
         --source-mode filtered_unet \
-        --sample WT_HADA_NHS_40min_ROI1_SIM \
-        --example
+        --exclude-border \
+        --overwrite
+
+Representative 3D execution with at most 100 cells per ROI:
+
+    python scripts/statistics/run_statistics_pipeline.py \
+        --dataset 3d_mip \
+        --source-mode deconv_masked \
+        --exclude-border \
+        --max-cells-per-roi-3d 100 \
+        --selection-seed 1337 \
+        --overwrite
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ from __future__ import annotations
 """Run PCA, normalization and graph generation with one command."""
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -94,6 +105,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--example", action="store_true")
     parser.add_argument("--preferred-min-cells", type=int, default=5)
     parser.add_argument("--max-cells", type=int, default=80)
+    parser.add_argument(
+        "--max-cells-per-roi-3d",
+        type=int,
+        default=100,
+        help=(
+            "Maximum valid cells retained per 3d_mip ROI during full-mode PCA. "
+            "Use 0 to disable the cap. Default: 100."
+        ),
+    )
+    parser.add_argument(
+        "--selection-seed",
+        type=int,
+        default=1337,
+        help="Base seed for reproducible per-ROI cell selection. Default: 1337.",
+    )
     parser.add_argument("--exclude-time", type=int, action="append", default=[])
     parser.add_argument("--sample", action="append", default=[])
     parser.add_argument("--exclude-border", action="store_true")
@@ -123,6 +149,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         >>> exit_code = main()
     """
     args = build_parser().parse_args(argv)
+    if args.max_cells_per_roi_3d < 0:
+        raise ValueError("--max-cells-per-roi-3d must be 0 or greater")
+    os.environ.setdefault("MPLBACKEND", "Agg")
     project_root = find_project_root(args.project_root)
     statistics_dir = project_root / "scripts" / "statistics"
     pca_script = statistics_dir / "align_cells_pca.py"
@@ -151,6 +180,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(args.preferred_min_cells),
         "--max-cells",
         str(args.max_cells),
+        "--max-cells-per-roi-3d",
+        str(args.max_cells_per_roi_3d),
+        "--selection-seed",
+        str(args.selection_seed),
     ]
     for time_value in args.exclude_time:
         pca_command.extend(["--exclude-time", str(time_value)])

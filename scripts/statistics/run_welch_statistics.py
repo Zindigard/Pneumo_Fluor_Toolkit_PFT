@@ -63,6 +63,21 @@ DEFAULT_SOURCE_MODES = {
     "2d_wga_dapi": "filtered_unet",
     "3d_mip": "deconv_masked",
 }
+THREE_D_CHANNEL_PAIRS = (("HADA", "NADA"), ("NADA", "TADA"), ("HADA", "TADA"))
+THREE_D_PAIRED_METRIC_BASES = (
+    "mean_intensity",
+    "integrated_intensity",
+    "positive_area_fraction",
+    "homogeneity",
+    "axial_auc",
+    "axial_centroid",
+    "axial_spread",
+    "axial_peak_position",
+    "axial_extent_50_fraction",
+    "radial_auc",
+    "radial_centroid",
+)
+
 CHANNELS = {
     "2d_time": ("HADA",),
     "2d_wga_dapi": ("DAPI", "WGA"),
@@ -390,6 +405,312 @@ def welch_test(a: np.ndarray, b: np.ndarray, min_group_n: int) -> WelchResult:
         hedges_g,
         "OK",
     )
+
+
+def paired_t_test(
+    first: np.ndarray,
+    second: np.ndarray,
+    min_group_n: int,
+) -> dict[str, object]:
+    """Perform a two-sided paired t-test using complete ROI pairs.
+
+    The reported difference is ``second - first``. This test is appropriate
+    for fluorescence channels measured in the same image/ROI.
+
+    Args:
+        first: First-channel ROI values.
+        second: Second-channel ROI values aligned to ``first``.
+        min_group_n: Minimum number of complete ROI pairs.
+
+    Returns:
+        Dictionary containing descriptive values, confidence interval, p-value,
+        and Cohen's dz for the paired differences.
+
+    Example:
+        >>> result = paired_t_test(
+        ...     np.asarray([1.0, 2.0, 3.0]),
+        ...     np.asarray([1.2, 2.1, 3.4]),
+        ...     2,
+        ... )
+        >>> result["n_pairs"]
+        3
+    """
+    first_values = np.asarray(first, dtype=np.float64).reshape(-1)
+    second_values = np.asarray(second, dtype=np.float64).reshape(-1)
+    if first_values.size != second_values.size:
+        raise ValueError("Paired arrays must have equal length.")
+    finite = np.isfinite(first_values) & np.isfinite(second_values)
+    first_values = first_values[finite]
+    second_values = second_values[finite]
+    differences = second_values - first_values
+    n_pairs = int(differences.size)
+    mean_first = float(np.mean(first_values)) if n_pairs else math.nan
+    mean_second = float(np.mean(second_values)) if n_pairs else math.nan
+    sd_first = float(np.std(first_values, ddof=1)) if n_pairs > 1 else math.nan
+    sd_second = float(np.std(second_values, ddof=1)) if n_pairs > 1 else math.nan
+    mean_difference = float(np.mean(differences)) if n_pairs else math.nan
+    sd_difference = float(np.std(differences, ddof=1)) if n_pairs > 1 else math.nan
+    if n_pairs < min_group_n:
+        return {
+            "n_pairs": n_pairs,
+            "mean_first": mean_first,
+            "sd_first": sd_first,
+            "mean_second": mean_second,
+            "sd_second": sd_second,
+            "mean_difference_second_minus_first": mean_difference,
+            "sd_difference": sd_difference,
+            "standard_error": math.nan,
+            "paired_t": math.nan,
+            "degrees_of_freedom": math.nan,
+            "ci95_low": math.nan,
+            "ci95_high": math.nan,
+            "p_raw": math.nan,
+            "cohen_dz": math.nan,
+            "status": "INSUFFICIENT_N",
+        }
+    if not np.isfinite(sd_difference) or sd_difference <= EPS:
+        standard_error = 0.0
+        paired_t = 0.0 if abs(mean_difference) <= EPS else math.copysign(
+            math.inf, mean_difference
+        )
+        p_raw = 1.0 if abs(mean_difference) <= EPS else 0.0
+        ci_low = mean_difference
+        ci_high = mean_difference
+        cohen_dz = 0.0 if abs(mean_difference) <= EPS else math.nan
+    else:
+        standard_error = sd_difference / math.sqrt(n_pairs)
+        paired_t = mean_difference / standard_error
+        df = n_pairs - 1
+        p_raw = float(2.0 * student_t.sf(abs(paired_t), df))
+        critical = float(student_t.ppf(0.975, df))
+        ci_low = mean_difference - critical * standard_error
+        ci_high = mean_difference + critical * standard_error
+        cohen_dz = mean_difference / sd_difference
+    return {
+        "n_pairs": n_pairs,
+        "mean_first": mean_first,
+        "sd_first": sd_first,
+        "mean_second": mean_second,
+        "sd_second": sd_second,
+        "mean_difference_second_minus_first": mean_difference,
+        "sd_difference": sd_difference,
+        "standard_error": standard_error,
+        "paired_t": paired_t,
+        "degrees_of_freedom": n_pairs - 1,
+        "ci95_low": ci_low,
+        "ci95_high": ci_high,
+        "p_raw": p_raw,
+        "cohen_dz": cohen_dz,
+        "status": "OK",
+    }
+
+
+def calculate_paired_channel_scalar_tests(
+    rows: Sequence[dict[str, str]],
+    conditions: Sequence[str],
+    correction: str,
+    alpha: float,
+    min_group_n: int,
+) -> list[dict[str, object]]:
+    """Calculate paired ROI-level scalar comparisons for all 3D channel pairs.
+
+    Args:
+        rows: ROI summary rows.
+        conditions: Conditions present in the dataset.
+        correction: Multiplicity-correction method.
+        alpha: Significance threshold.
+        min_group_n: Minimum complete ROI pairs.
+
+    Returns:
+        One result row per condition, channel pair, and scalar metric.
+    """
+    output: list[dict[str, object]] = []
+    for condition in conditions:
+        condition_rows = [
+            row for row in rows if str(row.get("condition", "")) == condition
+        ]
+        for metric_base in THREE_D_PAIRED_METRIC_BASES:
+            family_rows: list[dict[str, object]] = []
+            for first, second in THREE_D_CHANNEL_PAIRS:
+                first_key = f"{first.lower()}_{metric_base}"
+                second_key = f"{second.lower()}_{metric_base}"
+                first_values: list[float] = []
+                second_values: list[float] = []
+                for row in condition_rows:
+                    first_value = safe_float(row.get(first_key))
+                    second_value = safe_float(row.get(second_key))
+                    if np.isfinite(first_value) and np.isfinite(second_value):
+                        first_values.append(first_value)
+                        second_values.append(second_value)
+                result = paired_t_test(
+                    np.asarray(first_values),
+                    np.asarray(second_values),
+                    min_group_n,
+                )
+                family_rows.append(
+                    {
+                        "dataset": "3d_mip",
+                        "condition": condition,
+                        "metric_base": metric_base,
+                        "channel_first": first,
+                        "channel_second": second,
+                        "comparison": f"{first} vs {second}",
+                        "correction_family": (
+                            f"3d_mip::{condition}::{metric_base}::channel_pairs"
+                        ),
+                        **result,
+                        "p_adjusted": math.nan,
+                        "correction_method": correction,
+                        "alpha": alpha,
+                        "significant_after_correction": False,
+                    }
+                )
+            valid_indices = [
+                index
+                for index, row in enumerate(family_rows)
+                if row["status"] == "OK"
+            ]
+            adjusted = adjust_pvalues(
+                [safe_float(family_rows[index]["p_raw"]) for index in valid_indices],
+                correction,
+            )
+            for index, adjusted_p in zip(valid_indices, adjusted):
+                family_rows[index]["p_adjusted"] = adjusted_p
+                family_rows[index]["significant_after_correction"] = bool(
+                    np.isfinite(adjusted_p) and adjusted_p < alpha
+                )
+            output.extend(family_rows)
+    return output
+
+
+def read_paired_roi_profiles(
+    path: Path,
+) -> dict[tuple[str, str, str, str], np.ndarray]:
+    """Read ROI profiles indexed by ROI, condition, channel, and profile type.
+
+    Args:
+        path: ``roi_profiles_by_annotation.npz`` produced by graph generation.
+
+    Returns:
+        Mapping from ``(roi_id, condition, channel, profile_type)`` to profile.
+    """
+    store: dict[tuple[str, str, str, str], np.ndarray] = {}
+    with np.load(path) as archive:
+        for key in archive.files:
+            parts = key.split("|")
+            if len(parts) != 4:
+                continue
+            roi_id, condition, channel, profile_type = parts
+            if profile_type not in {"axial", "radial"}:
+                continue
+            store[(roi_id, condition, channel, profile_type)] = np.asarray(
+                archive[key], dtype=np.float64
+            )
+    return store
+
+
+def calculate_paired_channel_profile_tests(
+    store: dict[tuple[str, str, str, str], np.ndarray],
+    conditions: Sequence[str],
+    profile_type: str,
+    correction: str,
+    alpha: float,
+    min_group_n: int,
+) -> list[dict[str, object]]:
+    """Calculate pointwise paired tests between 3D fluorescence channels.
+
+    ROI profiles are paired by ``roi_id``. Multiplicity correction is applied
+    across profile coordinates within each condition/channel-pair family.
+    """
+    output: list[dict[str, object]] = []
+    for condition in conditions:
+        for first, second in THREE_D_CHANNEL_PAIRS:
+            first_profiles = {
+                roi_id: profile
+                for (roi_id, row_condition, channel, row_type), profile in store.items()
+                if row_condition == condition
+                and channel == first
+                and row_type == profile_type
+            }
+            second_profiles = {
+                roi_id: profile
+                for (roi_id, row_condition, channel, row_type), profile in store.items()
+                if row_condition == condition
+                and channel == second
+                and row_type == profile_type
+            }
+            common_roi_ids = sorted(set(first_profiles) & set(second_profiles))
+            if not common_roi_ids:
+                continue
+            lengths = {
+                first_profiles[roi_id].size for roi_id in common_roi_ids
+            } | {second_profiles[roi_id].size for roi_id in common_roi_ids}
+            if len(lengths) != 1:
+                raise ValueError(
+                    f"Paired profile lengths differ for {condition}, "
+                    f"{first}-{second}, {profile_type}: {sorted(lengths)}"
+                )
+            profile_length = next(iter(lengths))
+            first_matrix = np.vstack(
+                [first_profiles[roi_id] for roi_id in common_roi_ids]
+            )
+            second_matrix = np.vstack(
+                [second_profiles[roi_id] for roi_id in common_roi_ids]
+            )
+            family_rows: list[dict[str, object]] = []
+            family_id = (
+                f"3d_mip::{condition}::{first}_vs_{second}::"
+                f"{profile_type}::coordinates"
+            )
+            for coordinate_index in range(profile_length):
+                result = paired_t_test(
+                    first_matrix[:, coordinate_index],
+                    second_matrix[:, coordinate_index],
+                    min_group_n,
+                )
+                coordinate = (
+                    coordinate_index / (profile_length - 1)
+                    if profile_length > 1
+                    else 0.0
+                )
+                family_rows.append(
+                    {
+                        "dataset": "3d_mip",
+                        "profile_type": profile_type,
+                        "channel": f"{first}_vs_{second}",
+                        "condition": condition,
+                        "comparison": condition,
+                        "group_a": first,
+                        "group_b": second,
+                        "correction_family": family_id,
+                        "coordinate_index": coordinate_index,
+                        "normalized_coordinate": coordinate,
+                        **result,
+                        "difference_b_minus_a": result[
+                            "mean_difference_second_minus_first"
+                        ],
+                        "p_adjusted": math.nan,
+                        "correction_method": correction,
+                        "alpha": alpha,
+                        "significant_after_correction": False,
+                    }
+                )
+            valid_indices = [
+                index
+                for index, row in enumerate(family_rows)
+                if row["status"] == "OK"
+            ]
+            adjusted = adjust_pvalues(
+                [safe_float(family_rows[index]["p_raw"]) for index in valid_indices],
+                correction,
+            )
+            for index, adjusted_p in zip(valid_indices, adjusted):
+                family_rows[index]["p_adjusted"] = adjusted_p
+                family_rows[index]["significant_after_correction"] = bool(
+                    np.isfinite(adjusted_p) and adjusted_p < alpha
+                )
+            output.extend(family_rows)
+    return output
 
 
 def adjust_pvalues(values: Sequence[float], method: str) -> list[float]:
@@ -1287,6 +1608,26 @@ def write_workbook(
     workbook.save(path)
 
 
+def write_paired_channel_workbook(
+    path: Path,
+    scalar_rows: Sequence[dict[str, object]],
+    axial_rows: Sequence[dict[str, object]],
+    radial_rows: Sequence[dict[str, object]],
+    intervals: Sequence[dict[str, object]],
+    notes: Sequence[dict[str, object]],
+) -> None:
+    """Write paired 3D channel-comparison results to one Excel workbook."""
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    add_sheet_from_rows(workbook, "paired_scalar", scalar_rows)
+    add_sheet_from_rows(workbook, "paired_axial", axial_rows)
+    add_sheet_from_rows(workbook, "paired_radial", radial_rows)
+    add_sheet_from_rows(workbook, "significant_intervals", intervals)
+    add_sheet_from_rows(workbook, "notes", notes)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(path)
+
+
 def validate_full_mode_input(input_root: Path) -> dict[str, object]:
     """Validate full mode input against the required constraints.
 
@@ -1390,10 +1731,16 @@ def process_dataset(
     summary = validate_full_mode_input(input_root)
     roi_summary_path = input_root / "roi_summary.csv"
     roi_profiles_path = input_root / "roi_profiles.npz"
+    paired_roi_profiles_path = input_root / "roi_profiles_by_annotation.npz"
     if not roi_summary_path.exists():
         raise FileNotFoundError(f"Missing ROI summary: {roi_summary_path}")
     if not roi_profiles_path.exists():
         raise FileNotFoundError(f"Missing ROI profiles: {roi_profiles_path}")
+    if dataset == "3d_mip" and not paired_roi_profiles_path.exists():
+        raise FileNotFoundError(
+            "Missing paired ROI profiles. Rerun create_statistics_graphs.py "
+            f"with the updated script: {paired_roi_profiles_path}"
+        )
 
     prepare_output(output_root, overwrite)
     roi_rows = read_csv(roi_summary_path)
@@ -1449,11 +1796,59 @@ def process_dataset(
     )
     intervals = significant_intervals([*axial_rows, *radial_rows])
 
+    paired_scalar_rows: list[dict[str, object]] = []
+    paired_axial_rows: list[dict[str, object]] = []
+    paired_radial_rows: list[dict[str, object]] = []
+    paired_intervals: list[dict[str, object]] = []
+    if dataset == "3d_mip":
+        paired_scalar_rows = calculate_paired_channel_scalar_tests(
+            roi_rows,
+            conditions_present,
+            scalar_correction,
+            alpha,
+            min_group_n,
+        )
+        paired_profiles = read_paired_roi_profiles(paired_roi_profiles_path)
+        paired_axial_rows = calculate_paired_channel_profile_tests(
+            paired_profiles,
+            conditions_present,
+            "axial",
+            profile_correction,
+            alpha,
+            min_group_n,
+        )
+        paired_radial_rows = calculate_paired_channel_profile_tests(
+            paired_profiles,
+            conditions_present,
+            "radial",
+            profile_correction,
+            alpha,
+            min_group_n,
+        )
+        paired_intervals = significant_intervals(
+            [*paired_axial_rows, *paired_radial_rows]
+        )
+
     write_csv(output_root / "welch_scalar_planned.csv", scalar_planned)
     write_csv(output_root / "welch_scalar_all_pairwise.csv", scalar_all_pairs)
     write_csv(output_root / "welch_axial_pointwise.csv", axial_rows)
     write_csv(output_root / "welch_radial_pointwise.csv", radial_rows)
     write_csv(output_root / "welch_significant_profile_intervals.csv", intervals)
+
+    if dataset == "3d_mip":
+        write_csv(
+            output_root / "paired_channel_scalar.csv", paired_scalar_rows
+        )
+        write_csv(
+            output_root / "paired_channel_axial_pointwise.csv", paired_axial_rows
+        )
+        write_csv(
+            output_root / "paired_channel_radial_pointwise.csv", paired_radial_rows
+        )
+        write_csv(
+            output_root / "paired_channel_significant_profile_intervals.csv",
+            paired_intervals,
+        )
 
     batch_distribution: list[dict[str, object]] = []
     if dataset == "3d_mip":
@@ -1500,7 +1895,7 @@ def process_dataset(
         },
         {
             "item": "3d_channel_comparisons",
-            "value": "Genotype and medium comparisons are tested separately at 0 and 40 min for each fluorescence channel; channel-versus-channel comparisons require paired analysis and are not tested here",
+            "value": "Genotype and medium comparisons are tested separately at 0 and 40 min for each fluorescence channel. HADA-NADA, NADA-TADA, and HADA-TADA are additionally tested with paired ROI-level analyses in paired_channel_statistics.xlsx.",
         },
         {
             "item": "3d_batch_caution",
@@ -1516,6 +1911,42 @@ def process_dataset(
         intervals,
         notes,
     )
+
+    if dataset == "3d_mip":
+        paired_notes = [
+            {
+                "item": "statistical_unit",
+                "value": "complete channel pairs measured in the same image/ROI",
+            },
+            {
+                "item": "test",
+                "value": "two-sided paired t-test",
+            },
+            {
+                "item": "difference_direction",
+                "value": "second channel minus first channel",
+            },
+            {
+                "item": "channel_pairs",
+                "value": "HADA-NADA; NADA-TADA; HADA-TADA",
+            },
+            {
+                "item": "profile_correction",
+                "value": profile_correction,
+            },
+            {
+                "item": "interpretation",
+                "value": "Profile tests compare normalized spatial distributions. Direct cross-dye brightness comparisons require matched acquisition settings and calibration.",
+            },
+        ]
+        write_paired_channel_workbook(
+            output_root / "paired_channel_statistics.xlsx",
+            paired_scalar_rows,
+            paired_axial_rows,
+            paired_radial_rows,
+            paired_intervals,
+            paired_notes,
+        )
 
     valid_scalar = [row for row in scalar_planned if row.get("status") == "OK"]
     significant_scalar = [
@@ -1546,6 +1977,22 @@ def process_dataset(
         "n_pointwise_profile_tests_valid": len(valid_profile),
         "n_pointwise_profile_bins_significant": len(significant_profile),
         "n_significant_profile_intervals": len(intervals),
+        "n_paired_channel_scalar_tests_valid": (
+            sum(row.get("status") == "OK" for row in paired_scalar_rows)
+            if dataset == "3d_mip"
+            else 0
+        ),
+        "n_paired_channel_profile_tests_valid": (
+            sum(
+                row.get("status") == "OK"
+                for row in (*paired_axial_rows, *paired_radial_rows)
+            )
+            if dataset == "3d_mip"
+            else 0
+        ),
+        "n_paired_channel_significant_intervals": (
+            len(paired_intervals) if dataset == "3d_mip" else 0
+        ),
         "statistical_unit": "independent image/ROI",
         "three_d_batch_distribution": (
             batch_distribution if dataset == "3d_mip" else None

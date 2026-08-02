@@ -48,6 +48,7 @@ EXAMPLE_MODE = False
 THESIS_HEATMAP_ROWS = 50
 TIME_POINTS_2D = (5, 20, 40, 120)
 MEDIA_2D = ("THY", "NHS")
+THREE_D_CHANNEL_PAIRS = (("HADA", "NADA"), ("NADA", "TADA"), ("HADA", "TADA"))
 
 
 
@@ -796,6 +797,66 @@ def channel_overlap_metrics(
     }
 
 
+def profile_relationship_metrics(
+    first: np.ndarray,
+    second: np.ndarray,
+) -> dict[str, float]:
+    """Describe similarity between two normalized one-dimensional profiles.
+
+    The profiles are compared within the same segmented cell. Correlation
+    captures similarity of profile shape, whereas RMSE and mean absolute
+    difference quantify the magnitude of the shape difference.
+
+    Args:
+        first: First normalized axial or radial profile.
+        second: Second normalized axial or radial profile.
+
+    Returns:
+        Mapping containing Pearson correlation, RMSE, mean absolute
+        difference, and the signed integral of ``second - first``.
+
+    Example:
+        >>> result = profile_relationship_metrics(
+        ...     np.asarray([0.0, 1.0, 0.0]),
+        ...     np.asarray([0.0, 0.8, 0.2]),
+        ... )
+        >>> "correlation" in result
+        True
+    """
+    first_values = np.asarray(first, dtype=np.float64).reshape(-1)
+    second_values = np.asarray(second, dtype=np.float64).reshape(-1)
+    if first_values.size != second_values.size:
+        raise ValueError("Profiles must have the same length.")
+    finite = np.isfinite(first_values) & np.isfinite(second_values)
+    first_values = first_values[finite]
+    second_values = second_values[finite]
+    if first_values.size == 0:
+        return {
+            "correlation": math.nan,
+            "rmse": math.nan,
+            "mean_absolute_difference": math.nan,
+            "signed_auc_difference": math.nan,
+        }
+    difference = second_values - first_values
+    if (
+        first_values.size >= 3
+        and np.std(first_values) > EPS
+        and np.std(second_values) > EPS
+    ):
+        correlation = float(np.corrcoef(first_values, second_values)[0, 1])
+    else:
+        correlation = math.nan
+    coordinate = np.linspace(0.0, 1.0, first_values.size)
+    return {
+        "correlation": correlation,
+        "rmse": float(np.sqrt(np.mean(difference**2))),
+        "mean_absolute_difference": float(np.mean(np.abs(difference))),
+        "signed_auc_difference": float(
+            trapezoidal_integral(difference, x=coordinate)
+        ),
+    }
+
+
 def condition_sort_key(spec: DatasetSpec, condition: str) -> tuple[int, str]:
     """Return condition sort key for the supplied inputs.
 
@@ -1516,7 +1577,13 @@ def _plot_binned_heatmap_grid(
         )
     fig.suptitle(
         f"{title}: binned population heatmaps\n"
-        f"All cells retained; maximum {THESIS_HEATMAP_ROWS} display rows per condition"
+        + (
+            f"All PCA-selected cells retained; maximum {THESIS_HEATMAP_ROWS} "
+            "display rows per condition"
+            if dataset == "3d_mip"
+            else f"All cells retained; maximum {THESIS_HEATMAP_ROWS} "
+            "display rows per condition"
+        )
     )
     add_note(fig)
     save_figure(fig, output_dir, stem)
@@ -1538,7 +1605,9 @@ def plot_heatmaps(
     available channel. Every panel is capped at 50 displayed profiles, while
     every detected cell remains represented either directly or through an
     equal-count median bin. Full-cell condition heatmaps are exported for the
-    appendix. Heatmaps remain disabled for ``3d_mip``.
+    appendix. ``3d_mip`` uses a 2 × 4 layout with genotype rows and
+    medium/time columns. The 3D heatmaps contain all PCA-selected cells,
+    while the displayed population is capped at 50 rows per condition.
 
     Args:
         profile_store: Cell-level normalized axial profiles.
@@ -1556,9 +1625,6 @@ def plot_heatmaps(
         ...     "2d_time",
         ... )
     """
-    if dataset == "3d_mip":
-        return
-
     cmap = plt.get_cmap("viridis").copy()
     cmap.set_bad(color="0.92")
 
@@ -1587,6 +1653,26 @@ def plot_heatmaps(
                 dataset=dataset,
                 stem=f"axial_heatmap_{channel.lower()}",
                 title=f"{channel} axial fluorescence",
+                cmap=cmap,
+            )
+        elif dataset == "3d_mip":
+            _plot_binned_heatmap_grid(
+                profile_store=profile_store,
+                channel=channel,
+                row_definitions=(("WT", "WT"), ("DpspA", "ΔpspA")),
+                column_definitions=(
+                    ("THY_0", "THY, 0 min"),
+                    ("NHS_0", "NHS, 0 min"),
+                    ("THY_40", "THY, 40 min"),
+                    ("NHS_40", "NHS, 40 min"),
+                ),
+                condition_builder=lambda genotype, medium_time: (
+                    f"{genotype}_{medium_time}min"
+                ),
+                output_dir=output_dir,
+                dataset=dataset,
+                stem=f"axial_heatmap_{channel.lower()}",
+                title=f"{channel} axial fluorescence in 3D MIPs",
                 cmap=cmap,
             )
 
@@ -1736,6 +1822,82 @@ def plot_radial_profiles(
         return
 
 
+def plot_3d_pairwise_radial_profiles(
+    radial_store: dict[tuple[str, str], list[np.ndarray]],
+    conditions: list[str],
+    output_dir: Path,
+) -> None:
+    """Plot all three pairwise radial channel comparisons for each 3D condition.
+
+    Each panel compares ROI-level mean radial profiles from the same biological
+    condition. The shaded band is one standard deviation across ROI profiles.
+
+    Args:
+        radial_store: ROI-level radial profiles indexed by condition and channel.
+        conditions: Ordered 3D biological conditions.
+        output_dir: Directory where figures are written.
+
+    Example:
+        >>> plot_3d_pairwise_radial_profiles({}, [], Path("results"))
+    """
+    cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
+        "color", [f"C{i}" for i in range(10)]
+    )
+    for condition in conditions:
+        fig, axes = plt.subplots(
+            1,
+            len(THREE_D_CHANNEL_PAIRS),
+            figsize=(15.0, 4.6),
+            sharex=True,
+            sharey=True,
+            constrained_layout=True,
+        )
+        axes = np.atleast_1d(axes)
+        any_panel = False
+        for axis, (first, second) in zip(axes, THREE_D_CHANNEL_PAIRS):
+            panel_plotted = False
+            for channel_index, channel in enumerate((first, second)):
+                profiles = radial_store.get((condition, channel), [])
+                if not profiles:
+                    continue
+                panel_plotted = True
+                any_panel = True
+                matrix = np.vstack(profiles)
+                mean, low, high = mean_and_band(matrix)
+                coordinate = np.linspace(0.0, 1.0, mean.size)
+                color = cycle[channel_index % len(cycle)]
+                axis.plot(
+                    coordinate,
+                    mean,
+                    color=color,
+                    linewidth=1.8,
+                    label=f"{channel} (n={matrix.shape[0]} ROIs)",
+                )
+                axis.fill_between(coordinate, low, high, color=color, alpha=0.12)
+            if not panel_plotted:
+                axis.text(0.5, 0.5, "No profiles", ha="center", va="center")
+            axis.set_title(f"{first} vs {second}")
+            axis.set_xlabel("Normalized radial distance")
+            axis.set_xticks([0.0, 0.5, 1.0], ["Centre", "0.5", "Boundary"])
+            axis.grid(alpha=0.2)
+            if panel_plotted:
+                axis.legend(fontsize=8)
+        axes[0].set_ylabel("Normalized fluorescence intensity")
+        if not any_panel:
+            plt.close(fig)
+            continue
+        fig.suptitle(
+            "3D MIP pairwise radial fluorescence profiles: "
+            f"{condition_display(condition)}"
+        )
+        add_note(fig)
+        save_figure(
+            fig,
+            output_dir,
+            f"radial_profile_pairwise_{condition.lower()}",
+        )
+
+
 def plot_standardized_maps(
     map_store: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]],
     conditions: list[str],
@@ -1861,6 +2023,96 @@ def plot_wga_dapi_overlap_maps(
     )
     add_note(fig)
     save_figure(fig, output_dir, "wga_dapi_standardized_overlap_map")
+
+
+def plot_3d_pairwise_overlap_maps(
+    map_store: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]],
+    conditions: list[str],
+    output_dir: Path,
+) -> None:
+    """Create standardized spatial-overlap maps for each 3D channel pair.
+
+    The first channel is shown in magenta, the second in cyan, and coincident
+    normalized signal appears white. A separate multi-condition figure is
+    generated for HADA-NADA, NADA-TADA, and HADA-TADA.
+
+    Args:
+        map_store: Condition-level standardized maps.
+        conditions: Ordered biological conditions.
+        output_dir: Directory where figures are written.
+
+    Example:
+        >>> plot_3d_pairwise_overlap_maps({}, [], Path("results"))
+    """
+    for first, second in THREE_D_CHANNEL_PAIRS:
+        available = [
+            condition
+            for condition in conditions
+            if (condition, first) in map_store and (condition, second) in map_store
+        ]
+        if not available:
+            continue
+        ncols = 2 if len(available) > 1 else 1
+        nrows = int(math.ceil(len(available) / ncols))
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(6.2 * ncols, 3.5 * nrows),
+            constrained_layout=True,
+            squeeze=False,
+        )
+        axes = axes.reshape(-1)
+        for axis, condition in zip(axes, available):
+            first_sum, first_weight = map_store[(condition, first)]
+            second_sum, second_weight = map_store[(condition, second)]
+            first_map = np.divide(
+                first_sum,
+                np.maximum(first_weight, EPS),
+                out=np.zeros_like(first_sum, dtype=np.float64),
+                where=first_weight > 0,
+            )
+            second_map = np.divide(
+                second_sum,
+                np.maximum(second_weight, EPS),
+                out=np.zeros_like(second_sum, dtype=np.float64),
+                where=second_weight > 0,
+            )
+            first_map = np.clip(first_map, 0.0, 1.0)
+            second_map = np.clip(second_map, 0.0, 1.0)
+            rgb = np.zeros((*first_map.shape, 3), dtype=np.float64)
+            rgb[..., 0] = first_map
+            rgb[..., 1] = second_map
+            rgb[..., 2] = np.maximum(first_map, second_map)
+            axis.imshow(rgb, interpolation="nearest")
+            axis.axvline(
+                (first_map.shape[1] - 1) / 2,
+                linestyle="--",
+                linewidth=0.8,
+                color="yellow",
+            )
+            axis.set_xticks(
+                [0, (first_map.shape[1] - 1) / 2, first_map.shape[1] - 1],
+                ["Pole 1", "Midcell", "Pole 2"],
+            )
+            axis.set_yticks([])
+            axis.set_title(condition_display(condition))
+        for axis in axes[len(available):]:
+            axis.axis("off")
+        fig.suptitle(f"Standardized {first}-{second} spatial-overlap maps")
+        fig.text(
+            0.5,
+            0.01,
+            f"{first}: magenta   {second}: cyan   spatial overlap: white",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+        add_note(fig)
+        save_figure(
+            fig,
+            output_dir,
+            f"standardized_overlap_map_{first.lower()}_{second.lower()}",
+        )
 
 
 def _numeric_metrics(records: list[dict[str, object]]) -> list[str]:
@@ -2277,6 +2529,13 @@ def write_condition_metric_workbook(
         ("*_radial_centroid", "Intensity-weighted radial position from cell centre 0 to boundary 1."),
         ("*_boundary_to_centre_ratio", "Mean boundary-region intensity divided by mean centre-region intensity."),
         ("wga_dapi_pearson", "Within-cell Pearson correlation of background-corrected WGA and DAPI intensities."),
+        ("*_pearson", "Within-cell Pearson correlation of two background-corrected fluorescence channels."),
+        ("*_overlap_cosine", "Cosine overlap coefficient for a fluorescence-channel pair."),
+        ("*_positive_overlap_fraction", "Fraction of cell pixels positive in both channels of a pair."),
+        ("*_manders_in_*", "Directional fraction of one channel intensity located in pixels positive for the paired channel."),
+        ("*_axial_profile_correlation", "Within-cell correlation between two normalized axial profile shapes."),
+        ("*_radial_profile_correlation", "Within-cell correlation between two normalized radial profile shapes."),
+        ("*_profile_rmse", "Root mean square difference between two within-cell normalized profile shapes."),
         ("wga_dapi_overlap_cosine", "Cosine overlap coefficient of background-corrected WGA and DAPI intensities."),
         ("wga_dapi_positive_overlap_fraction", "Fraction of cell pixels positive in both WGA and DAPI."),
         ("wga_manders_in_dapi", "Fraction of WGA intensity located in DAPI-positive pixels."),
@@ -2292,6 +2551,9 @@ def write_condition_metric_workbook(
     notes_sheet.append(["records_used", "Cell-level records in example mode; independent image/ROI-level records in full mode."])
     notes_sheet.append(["inference", "This workbook is descriptive. Significance testing should use full-mode ROI-level records."])
     notes_sheet.append(["DAPI_length", "DAPI length is represented by dapi_axial_extent_50_fraction and, when calibrated, dapi_axial_extent_50_um."])
+    if dataset == "3d_mip":
+        notes_sheet.append(["3D_channel_pairs", "Pairwise HADA-NADA, NADA-TADA, and HADA-TADA metrics are calculated within the same segmented cells and summarized per ROI."])
+        notes_sheet.append(["3D_intensity_caution", "Raw intensity magnitudes are compared across biological conditions within a channel. Direct brightness comparison between different dyes requires matched acquisition settings and calibration."])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
 
@@ -2847,6 +3109,8 @@ def process_dataset(
             area_px = int(np.count_nonzero(cell_mask))
 
             corrected_channels: list[np.ndarray] = []
+            axial_by_channel: dict[str, np.ndarray] = {}
+            radial_by_channel: dict[str, np.ndarray] = {}
             channel_metrics: dict[str, object] = {}
             for channel_index, channel_name in enumerate(spec.channel_names):
                 raw = image_cyx[channel_index]
@@ -2860,6 +3124,14 @@ def process_dataset(
                 channel_metrics[f"{channel_name.lower()}_integrated_intensity"] = (
                     float(np.sum(finite)) if finite.size else math.nan
                 )
+                if dataset == "3d_mip":
+                    channel_metrics[
+                        f"{channel_name.lower()}_positive_area_fraction"
+                    ] = float(
+                        np.mean(
+                            corrected[cell_mask] > (3.0 * bg[channel_index]["mad"])
+                        )
+                    )
 
                 axial = profile_minmax(
                     axial_profile(standardized_absolute[channel_index], standardized_mask)
@@ -2888,6 +3160,8 @@ def process_dataset(
                         else math.nan
                     )
 
+                axial_by_channel[channel_name] = axial
+                radial_by_channel[channel_name] = radial
                 cell_profile_store[(condition, channel_name)].append(axial)
                 cell_radial_store[(condition, channel_name)].append(radial)
                 annotation_profile_store[(annotation_id, condition, channel_name)].append(axial)
@@ -2922,6 +3196,58 @@ def process_dataset(
                             bg[channel_index]["threshold"],
                         )
                     )
+
+            if dataset == "3d_mip":
+                channel_index = {
+                    channel: index
+                    for index, channel in enumerate(spec.channel_names)
+                }
+                for first, second in THREE_D_CHANNEL_PAIRS:
+                    first_index = channel_index[first]
+                    second_index = channel_index[second]
+                    first_corrected = corrected_channels[first_index]
+                    second_corrected = corrected_channels[second_index]
+                    pair_prefix = f"{first.lower()}_{second.lower()}"
+                    channel_metrics[f"{pair_prefix}_pearson"] = pearson_inside(
+                        first_corrected, second_corrected, cell_mask
+                    )
+                    overlap = channel_overlap_metrics(
+                        first_corrected,
+                        second_corrected,
+                        cell_mask,
+                        first_positive_threshold=3.0 * bg[first_index]["mad"],
+                        second_positive_threshold=3.0 * bg[second_index]["mad"],
+                    )
+                    channel_metrics[f"{pair_prefix}_overlap_cosine"] = overlap[
+                        "overlap_cosine"
+                    ]
+                    channel_metrics[
+                        f"{pair_prefix}_positive_overlap_fraction"
+                    ] = overlap["positive_overlap_fraction"]
+                    channel_metrics[
+                        f"{pair_prefix}_positive_union_fraction"
+                    ] = overlap["positive_union_fraction"]
+                    channel_metrics[
+                        f"{first.lower()}_manders_in_{second.lower()}"
+                    ] = overlap["manders_first_in_second"]
+                    channel_metrics[
+                        f"{second.lower()}_manders_in_{first.lower()}"
+                    ] = overlap["manders_second_in_first"]
+
+                    axial_relationship = profile_relationship_metrics(
+                        axial_by_channel[first], axial_by_channel[second]
+                    )
+                    radial_relationship = profile_relationship_metrics(
+                        radial_by_channel[first], radial_by_channel[second]
+                    )
+                    for metric_name, metric_value in axial_relationship.items():
+                        channel_metrics[
+                            f"{pair_prefix}_axial_profile_{metric_name}"
+                        ] = metric_value
+                    for metric_name, metric_value in radial_relationship.items():
+                        channel_metrics[
+                            f"{pair_prefix}_radial_profile_{metric_name}"
+                        ] = metric_value
 
             if dataset == "2d_wga_dapi":
                 dapi_raw = image_cyx[0]
@@ -3004,6 +3330,46 @@ def process_dataset(
             )
     np.savez_compressed(output_root / "roi_profiles.npz", **roi_archive)
 
+    paired_roi_archive: dict[str, np.ndarray] = {}
+    roi_profile_index_rows: list[dict[str, object]] = []
+    annotation_ids = sorted(
+        {annotation_id for annotation_id, _condition, _channel in annotation_profile_store}
+    )
+    for roi_index, annotation_id in enumerate(annotation_ids):
+        roi_id = f"roi_{roi_index:04d}"
+        matching_keys = [
+            key for key in annotation_profile_store if key[0] == annotation_id
+        ]
+        if not matching_keys:
+            continue
+        condition = matching_keys[0][1]
+        roi_profile_index_rows.append(
+            {
+                "roi_id": roi_id,
+                "annotation_id": annotation_id,
+                "condition": condition,
+            }
+        )
+        for channel in spec.channel_names:
+            axial_profiles = annotation_profile_store.get(
+                (annotation_id, condition, channel), []
+            )
+            radial_profiles = annotation_radial_store.get(
+                (annotation_id, condition, channel), []
+            )
+            if axial_profiles:
+                paired_roi_archive[
+                    f"{roi_id}|{condition}|{channel}|axial"
+                ] = np.nanmean(np.vstack(axial_profiles), axis=0).astype(np.float32)
+            if radial_profiles:
+                paired_roi_archive[
+                    f"{roi_id}|{condition}|{channel}|radial"
+                ] = np.nanmean(np.vstack(radial_profiles), axis=0).astype(np.float32)
+    np.savez_compressed(
+        output_root / "roi_profiles_by_annotation.npz", **paired_roi_archive
+    )
+    write_csv(output_root / "roi_profile_index.csv", roi_profile_index_rows)
+
     count_rows = (
         read_csv(all_mask_summary)
         if all_mask_summary is not None and all_mask_summary.exists()
@@ -3054,6 +3420,147 @@ def process_dataset(
             output_root,
             "cell_length",
         )
+
+    if dataset == "3d_mip":
+        width_key = "width_um" if pixel_size_um is not None else "width_pixels"
+        area_key = "area_um2" if pixel_size_um is not None else "area_pixels"
+        width_label = (
+            "ROI mean PCA-derived cell width, µm"
+            if pixel_size_um is not None and not example
+            else "PCA-derived cell width, µm"
+            if pixel_size_um is not None
+            else "ROI mean PCA-derived cell width, pixels"
+            if not example
+            else "PCA-derived cell width, pixels"
+        )
+        area_label = (
+            "ROI mean cell area, µm²"
+            if pixel_size_um is not None and not example
+            else "Cell area, µm²"
+            if pixel_size_um is not None
+            else "ROI mean cell area, pixels²"
+            if not example
+            else "Cell area, pixels²"
+        )
+        boxplot_metric(
+            plot_records,
+            conditions,
+            width_key,
+            width_label,
+            "Cell width by condition",
+            output_root,
+            "cell_width",
+        )
+        boxplot_metric(
+            plot_records,
+            conditions,
+            area_key,
+            area_label,
+            "Cell area by condition",
+            output_root,
+            "cell_area",
+        )
+        for channel in spec.channel_names:
+            channel_lower = channel.lower()
+            scalar_specs = (
+                (
+                    f"{channel_lower}_mean_intensity",
+                    f"ROI mean background-corrected {channel} intensity",
+                    f"{channel} mean cellular intensity by condition",
+                    f"{channel_lower}_mean_intensity",
+                ),
+                (
+                    f"{channel_lower}_integrated_intensity",
+                    f"ROI mean integrated background-corrected {channel} intensity",
+                    f"{channel} integrated cellular intensity by condition",
+                    f"{channel_lower}_integrated_intensity",
+                ),
+                (
+                    f"{channel_lower}_positive_area_fraction",
+                    f"ROI mean {channel}-positive cell-area fraction",
+                    f"{channel} positive area fraction by condition",
+                    f"{channel_lower}_positive_area_fraction",
+                ),
+                (
+                    f"{channel_lower}_radial_centroid",
+                    f"ROI mean {channel} radial centroid (centre 0, boundary 1)",
+                    f"{channel} radial centroid by condition",
+                    f"{channel_lower}_radial_centroid",
+                ),
+                (
+                    f"{channel_lower}_radial_auc",
+                    f"ROI mean normalized {channel} radial-profile AUC",
+                    f"{channel} radial-profile area by condition",
+                    f"{channel_lower}_radial_auc",
+                ),
+            )
+            for key, ylabel, title, stem in scalar_specs:
+                boxplot_metric(
+                    plot_records,
+                    conditions,
+                    key,
+                    ylabel,
+                    title,
+                    output_root,
+                    stem,
+                )
+
+        for first, second in THREE_D_CHANNEL_PAIRS:
+            pair_prefix = f"{first.lower()}_{second.lower()}"
+            pair_specs = (
+                (
+                    f"{pair_prefix}_pearson",
+                    "ROI mean within-cell Pearson correlation",
+                    f"{first}-{second} spatial intensity correlation",
+                    f"{pair_prefix}_spatial_correlation",
+                ),
+                (
+                    f"{pair_prefix}_overlap_cosine",
+                    "ROI mean cosine overlap coefficient",
+                    f"{first}-{second} intensity overlap",
+                    f"{pair_prefix}_overlap_cosine",
+                ),
+                (
+                    f"{pair_prefix}_positive_overlap_fraction",
+                    "ROI mean double-positive cell-area fraction",
+                    f"{first}-{second} positive spatial overlap",
+                    f"{pair_prefix}_positive_overlap",
+                ),
+                (
+                    f"{pair_prefix}_axial_profile_correlation",
+                    "ROI mean within-cell axial-profile correlation",
+                    f"{first}-{second} axial profile similarity",
+                    f"{pair_prefix}_axial_profile_similarity",
+                ),
+                (
+                    f"{pair_prefix}_radial_profile_correlation",
+                    "ROI mean within-cell radial-profile correlation",
+                    f"{first}-{second} radial profile similarity",
+                    f"{pair_prefix}_radial_profile_similarity",
+                ),
+                (
+                    f"{first.lower()}_manders_in_{second.lower()}",
+                    f"Fraction of {first} intensity in {second}-positive pixels",
+                    f"{first} signal located in {second}-positive regions",
+                    f"{first.lower()}_manders_in_{second.lower()}",
+                ),
+                (
+                    f"{second.lower()}_manders_in_{first.lower()}",
+                    f"Fraction of {second} intensity in {first}-positive pixels",
+                    f"{second} signal located in {first}-positive regions",
+                    f"{second.lower()}_manders_in_{first.lower()}",
+                ),
+            )
+            for key, ylabel, title, stem in pair_specs:
+                boxplot_metric(
+                    plot_records,
+                    conditions,
+                    key,
+                    ylabel,
+                    title,
+                    output_root,
+                    stem,
+                )
 
     prefix = "" if example else "ROI mean "
     if dataset == "2d_time":
@@ -3154,17 +3661,23 @@ def process_dataset(
     plot_axial_profiles(
         profile_store_for_lines, conditions, spec.channel_names, output_root, dataset
     )
-    # Both 2D datasets use at most 50 thesis-display rows per condition and
-    # retain full-cell appendix files for every available fluorescence channel.
+    # Every dataset uses at most 50 thesis-display rows per condition and
+    # retains full selected-cell appendix files for every fluorescence channel.
     plot_heatmaps(cell_profile_store, conditions, spec.channel_names, output_root, dataset)
     plot_radial_profiles(
         radial_store_for_lines, conditions, spec.channel_names, output_root, dataset
     )
+    if dataset == "3d_mip":
+        plot_3d_pairwise_radial_profiles(
+            radial_store_for_lines, conditions, output_root
+        )
     plot_standardized_maps(
         condition_map_store, conditions, spec.channel_names, output_root
     )
     if dataset == "2d_wga_dapi":
         plot_wga_dapi_overlap_maps(condition_map_store, conditions, output_root)
+    elif dataset == "3d_mip":
+        plot_3d_pairwise_overlap_maps(condition_map_store, conditions, output_root)
 
     summary = {
         "dataset": dataset,
@@ -3188,6 +3701,8 @@ def process_dataset(
                     "2 x 4: THY/NHS by 5/20/40/120 min"
                     if dataset == "2d_time"
                     else "2 x 2: THY/NHS by no-CSP/CSP"
+                    if dataset == "2d_wga_dapi"
+                    else "2 x 4: WT/ΔpspA by medium and labeling time"
                 ),
                 "channels": list(spec.channel_names),
                 "display_rows_per_condition": THESIS_HEATMAP_ROWS,
@@ -3195,10 +3710,10 @@ def process_dataset(
                 "small_group_method": "individual profiles with blank padding",
                 "full_cell_outputs": "appendix_heatmaps",
             }
-            if dataset in {"2d_time", "2d_wga_dapi"}
+            if dataset in {"2d_time", "2d_wga_dapi", "3d_mip"}
             else {
                 "generated": False,
-                "reason": "Heatmaps restricted to 2D datasets",
+                "reason": "Heatmaps not configured for this dataset",
             }
         ),
         "plotting_unit": "cells" if example else "independent images/ROIs",

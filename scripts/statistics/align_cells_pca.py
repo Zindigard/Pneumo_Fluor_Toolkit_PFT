@@ -6,14 +6,23 @@ Show all command-line parameters:
 
     python scripts/statistics/align_cells_pca.py --help
 
-Representative execution:
+Representative 2D execution:
 
     python scripts/statistics/align_cells_pca.py \
         --dataset 2d_time \
         --source-mode filtered_unet \
-        --sample WT_HADA_NHS_40min_ROI1_SIM \
-        --manifest results/statistics/manifest.csv \
-        --example
+        --exclude-border \
+        --overwrite
+
+Representative 3D execution with a reproducible per-ROI cap:
+
+    python scripts/statistics/align_cells_pca.py \
+        --dataset 3d_mip \
+        --source-mode deconv_masked \
+        --exclude-border \
+        --max-cells-per-roi-3d 100 \
+        --selection-seed 1337 \
+        --overwrite
 """
 
 from __future__ import annotations
@@ -21,9 +30,10 @@ from __future__ import annotations
 """PCA-align cells for one dataset or all supported datasets.
 
 Normal mode processes every eligible annotation from the mask-check manifest.
-Passing ``--example`` changes only the input selection: one low-cell full image
-is chosen per experimental condition. The PCA calculations are identical in
-both modes.
+For ``3d_mip`` full-mode runs, a reproducible per-ROI cap can limit expensive
+cell extraction while retaining every ROI. Passing ``--example`` changes only
+the image selection: one low-cell full image is chosen per experimental
+condition. The PCA calculations are identical for all selected cells.
 
 The script preserves original instance-label values. PCA aligns the major axis
 horizontally, but it does not assign biological left and right poles.
@@ -31,6 +41,7 @@ horizontally, but it does not assign biological left and right poles.
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import shutil
@@ -38,6 +49,10 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
+
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -134,6 +149,7 @@ class PCAResult:
     major_variance: float
     minor_variance: float
     anisotropy_ratio: float
+    selected_for_analysis: bool
     status: str
     cell_output_dir: str
 
@@ -151,6 +167,73 @@ def _safe_relative(annotation_id: str) -> Path:
         >>> result = _safe_relative(annotation_id="annotation_id")
     """
     return Path(*[part for part in annotation_id.replace("\\", "/").split("/") if part])
+
+
+
+def _stable_roi_seed(base_seed: int, annotation_id: str) -> int:
+    """Return a deterministic random seed for one ROI.
+
+    The built-in Python hash is intentionally randomized between processes.
+    A SHA-256 digest is therefore used so that the same annotation and base
+    seed produce the same selected labels on every supported computer.
+
+    Args:
+        base_seed (int): User-defined base seed controlling reproducible sampling.
+        annotation_id (str): Stable identifier of one image-mask annotation.
+
+    Returns:
+        int: Non-negative seed accepted by ``numpy.random.default_rng``.
+
+    Example:
+        >>> _stable_roi_seed(1337, "sample/full") == _stable_roi_seed(
+        ...     1337, "sample/full"
+        ... )
+        True
+    """
+    digest = hashlib.sha256(annotation_id.encode("utf-8")).digest()
+    annotation_value = int.from_bytes(digest[:8], byteorder="little", signed=False)
+    return int((int(base_seed) + annotation_value) % (2**63 - 1))
+
+
+def _select_labels_reproducibly(
+    eligible_labels: Sequence[int],
+    *,
+    maximum: int | None,
+    base_seed: int,
+    annotation_id: str,
+) -> set[int]:
+    """Select at most ``maximum`` eligible labels without replacement.
+
+    Sampling is performed independently for every ROI. When the number of
+    eligible labels does not exceed the requested maximum, all labels are
+    retained. A fixed base seed and stable annotation-specific seed make the
+    selection reproducible across runs and computers.
+
+    Args:
+        eligible_labels (Sequence[int]): Valid instance-label values available in one ROI.
+        maximum (int | None): Maximum retained labels. ``None`` disables the cap.
+        base_seed (int): User-defined base seed for reproducible sampling.
+        annotation_id (str): Stable identifier of the current ROI.
+
+    Returns:
+        set[int]: Selected instance-label values.
+
+    Example:
+        >>> selected = _select_labels_reproducibly(
+        ...     list(range(1, 201)),
+        ...     maximum=100,
+        ...     base_seed=1337,
+        ...     annotation_id="sample/full",
+        ... )
+        >>> len(selected)
+        100
+    """
+    ordered = np.asarray(sorted({int(value) for value in eligible_labels}), dtype=np.int64)
+    if maximum is None or ordered.size <= maximum:
+        return {int(value) for value in ordered.tolist()}
+    rng = np.random.default_rng(_stable_roi_seed(base_seed, annotation_id))
+    selected = rng.choice(ordered, size=int(maximum), replace=False)
+    return {int(value) for value in selected.tolist()}
 
 
 def _tight_bounds(binary: np.ndarray, padding: int) -> tuple[int, int, int, int]:
@@ -505,47 +588,55 @@ def process_manifest(
     exclude_border: bool,
     include_failed_pairs: bool,
     max_overview_cells: int,
+    max_cells_per_roi: int | None,
+    selection_seed: int,
     overwrite: bool,
 ) -> dict[str, object]:
-    """Process manifest using the configured workflow.
+    """PCA-align validated cells from every selected ROI.
+
+    A per-ROI cap can be applied after structural eligibility checks. The cap
+    affects only expensive cell extraction, rotation, normalization and
+    downstream per-cell measurements. It does not change the original mask
+    counts stored by ``check_masks_for_statistics.py``.
 
     Args:
-        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
-        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
-        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
-        run_mode (str): Text value specifying run mode.
-        manifest_rows (list[dict[str, object]]): Text value specifying manifest rows.
-        output_root (Path): Directory used for output.
-        min_object_pixels (int): Minimum permitted value of object pixels.
-        min_anisotropy (float): Minimum permitted value of anisotropy.
-        input_padding (int): Numerical value controlling input padding.
-        output_padding (int): Numerical value controlling output padding.
-        exclude_border (bool): Boolean flag controlling exclude border.
-        include_failed_pairs (bool): Boolean flag controlling whether to failed pairs.
-        max_overview_cells (int): Maximum permitted value of overview cells.
-        overwrite (bool): Whether an existing output may be replaced.
+        project_root (Path): Root directory of the PFT project.
+        dataset (str): Dataset identifier, for example ``"2d_time"`` or ``"3d_mip"``.
+        source_mode (str): Preprocessing source used to construct the images.
+        run_mode (str): ``"full"`` or ``"example"``.
+        manifest_rows (list[dict[str, object]]): Validated image-mask pairs.
+        output_root (Path): Directory receiving PCA-aligned cell data.
+        min_object_pixels (int): Minimum accepted instance area in pixels.
+        min_anisotropy (float): Minimum anisotropy required for rotation.
+        input_padding (int): Padding added before rotation.
+        output_padding (int): Padding retained after rotation.
+        exclude_border (bool): Exclude labels touching the image boundary.
+        include_failed_pairs (bool): Permit manifest rows marked as failed.
+        max_overview_cells (int): Maximum cells shown in each overview figure.
+        max_cells_per_roi (int | None): Maximum valid cells retained per ROI. ``None`` keeps all.
+        selection_seed (int): Base seed for reproducible per-ROI sampling.
+        overwrite (bool): Replace an existing PCA output directory.
 
     Returns:
-        dict[str, object]: Mapping containing the generated or resolved values.
-
-    Raises:
-        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+        dict[str, object]: Run-level summary.
 
     Example:
-        >>> result = process_manifest(
-        ...     project_root=Path("path/to/resource"),
-        ...     dataset="2d_time",
-        ...     source_mode="original",
-        ...     run_mode="run_mode",
-        ...     manifest_rows="manifest_rows",
-        ...     output_root=Path("path/to/resource"),
-        ...     min_object_pixels=1,
-        ...     min_anisotropy=0.5,
-        ...     input_padding=1,
-        ...     output_padding=1,
+        >>> summary = process_manifest(
+        ...     project_root=Path("project"),
+        ...     dataset="3d_mip",
+        ...     source_mode="deconv_masked",
+        ...     run_mode="full",
+        ...     manifest_rows=[],
+        ...     output_root=Path("output"),
+        ...     min_object_pixels=5,
+        ...     min_anisotropy=1.05,
+        ...     input_padding=4,
+        ...     output_padding=3,
         ...     exclude_border=True,
-        ...     include_failed_pairs=True,
-        ...     max_overview_cells=1,
+        ...     include_failed_pairs=False,
+        ...     max_overview_cells=20,
+        ...     max_cells_per_roi=100,
+        ...     selection_seed=1337,
         ...     overwrite=True,
         ... )
     """
@@ -554,9 +645,13 @@ def process_manifest(
 
     image_to_rgb, load_image_cyx, load_label_mask = import_check_helpers(project_root)
     all_results: list[dict[str, object]] = []
+    selection_rows: list[dict[str, object]] = []
     processed_annotations = 0
     saved_cells = 0
     excluded_cells = 0
+    not_selected_cells = 0
+    total_labels_seen = 0
+    total_valid_before_cap = 0
 
     for row in manifest_rows:
         pair_status = str(row.get("overall_status", ""))
@@ -581,10 +676,14 @@ def process_manifest(
         annotation_output.mkdir(parents=True, exist_ok=True)
         overview_entries: list[tuple[int, np.ndarray, np.ndarray]] = []
 
+        label_evaluations: list[dict[str, object]] = []
         for label_value in [int(value) for value in np.unique(labels) if value > 0]:
             binary = labels == label_value
             area = int(np.count_nonzero(binary))
-            _, components = ndi.label(binary, structure=np.ones((3, 3), dtype=np.uint8))
+            _, components = ndi.label(
+                binary,
+                structure=np.ones((3, 3), dtype=np.uint8),
+            )
             pca = _pca(binary)
             border = _touches_border(binary)
             status_terms: list[str] = []
@@ -605,11 +704,111 @@ def process_manifest(
                 status_terms.append("not_rotated_low_anisotropy")
                 should_rotate = False
 
+            excluded = any(term.startswith("excluded_") for term in status_terms)
+            label_evaluations.append(
+                {
+                    "label_value": label_value,
+                    "binary": binary,
+                    "area": area,
+                    "components": int(components),
+                    "pca": pca,
+                    "border": border,
+                    "status_terms": status_terms,
+                    "should_rotate": should_rotate,
+                    "excluded": excluded,
+                }
+            )
+
+        eligible_labels = [
+            int(item["label_value"])
+            for item in label_evaluations
+            if not bool(item["excluded"])
+        ]
+        selected_labels = _select_labels_reproducibly(
+            eligible_labels,
+            maximum=max_cells_per_roi,
+            base_seed=selection_seed,
+            annotation_id=annotation_id,
+        )
+        n_unselected = len(eligible_labels) - len(selected_labels)
+        total_labels_seen += len(label_evaluations)
+        total_valid_before_cap += len(eligible_labels)
+        not_selected_cells += n_unselected
+
+        selection_rows.append(
+            {
+                "dataset": dataset,
+                "source_mode": source_mode,
+                "annotation_id": annotation_id,
+                "sample_name": sample_name,
+                "n_total_instance_labels": len(label_evaluations),
+                "n_structurally_eligible_before_cap": len(eligible_labels),
+                "n_selected_for_analysis": len(selected_labels),
+                "n_not_selected_by_cap": n_unselected,
+                "max_cells_per_roi": (
+                    "" if max_cells_per_roi is None else int(max_cells_per_roi)
+                ),
+                "selection_seed": int(selection_seed),
+                "roi_seed": _stable_roi_seed(selection_seed, annotation_id),
+                "selection_method": (
+                    "all eligible cells retained"
+                    if max_cells_per_roi is None
+                    or len(eligible_labels) <= max_cells_per_roi
+                    else "reproducible random sampling without replacement"
+                ),
+                "selected_source_labels": ";".join(
+                    str(value) for value in sorted(selected_labels)
+                ),
+            }
+        )
+
+        for item in label_evaluations:
+            label_value = int(item["label_value"])
+            binary = np.asarray(item["binary"], dtype=bool)
+            area = int(item["area"])
+            components = int(item["components"])
+            pca = dict(item["pca"])
+            border = bool(item["border"])
+            status_terms = list(item["status_terms"])
+            should_rotate = bool(item["should_rotate"])
+            excluded = bool(item["excluded"])
+            selected_for_analysis = not excluded and label_value in selected_labels
+
+            if not excluded and not selected_for_analysis:
+                status_terms.append("not_selected_per_roi_cap")
+                result = PCAResult(
+                    dataset=dataset,
+                    source_mode=source_mode,
+                    run_mode=run_mode,
+                    annotation_id=annotation_id,
+                    sample_name=sample_name,
+                    split=split,
+                    source_label=label_value,
+                    area_pixels=area,
+                    component_count=components,
+                    touches_border=border,
+                    centroid_y=float(pca["centroid_y"]),
+                    centroid_x=float(pca["centroid_x"]),
+                    pca_angle_deg=float(pca["angle_deg"]),
+                    applied_rotation_deg=0.0,
+                    major_variance=float(pca["major_variance"]),
+                    minor_variance=float(pca["minor_variance"]),
+                    anisotropy_ratio=float(pca["anisotropy_ratio"]),
+                    selected_for_analysis=False,
+                    status=";".join(status_terms),
+                    cell_output_dir="",
+                )
+                all_results.append(asdict(result))
+                continue
+
             cell_dir = annotation_output / "cells" / f"label_{label_value:06d}"
             cell_dir.mkdir(parents=True, exist_ok=True)
-            mask_before, image_before = _crop_to_mask(binary, image, padding=input_padding)
+            mask_before, image_before = _crop_to_mask(
+                binary,
+                image,
+                padding=input_padding,
+            )
             applied_angle = float(pca["angle_deg"]) if should_rotate else 0.0
-            excluded = any(term.startswith("excluded_") for term in status_terms)
 
             if excluded:
                 mask_after = mask_before.copy()
@@ -624,17 +823,23 @@ def process_manifest(
                 )
             else:
                 mask_after, image_after = _crop_to_mask(
-                    mask_before, image_before, padding=output_padding
+                    mask_before,
+                    image_before,
+                    padding=output_padding,
                 )
 
-            tiff.imwrite(cell_dir / "mask_before_pca.tif", mask_before.astype(np.uint8))
-            tiff.imwrite(cell_dir / "mask_after_pca.tif", mask_after.astype(np.uint8))
+            tiff.imwrite(
+                cell_dir / "mask_before_pca.tif",
+                mask_before.astype(np.uint8),
+            )
+            tiff.imwrite(
+                cell_dir / "mask_after_pca.tif",
+                mask_after.astype(np.uint8),
+            )
             _save_tiff_cyx(cell_dir / "image_before_pca.tif", image_before)
             _save_tiff_cyx(cell_dir / "image_after_pca.tif", image_after)
 
-            # Only valid cells receive pca_cell_data.npz. Normalization therefore
-            # cannot silently include cells excluded at this stage.
-            if not excluded:
+            if selected_for_analysis:
                 np.savez_compressed(
                     cell_dir / "pca_cell_data.npz",
                     source_label=np.int64(label_value),
@@ -655,7 +860,7 @@ def process_manifest(
                 split=split,
                 source_label=label_value,
                 area_pixels=area,
-                component_count=int(components),
+                component_count=components,
                 touches_border=border,
                 centroid_y=float(pca["centroid_y"]),
                 centroid_x=float(pca["centroid_x"]),
@@ -664,6 +869,7 @@ def process_manifest(
                 major_variance=float(pca["major_variance"]),
                 minor_variance=float(pca["minor_variance"]),
                 anisotropy_ratio=float(pca["anisotropy_ratio"]),
+                selected_for_analysis=selected_for_analysis,
                 status=status,
                 cell_output_dir=str(cell_dir),
             )
@@ -673,6 +879,15 @@ def process_manifest(
                         **asdict(result),
                         "source_mask": str(mask_path),
                         "source_image": str(image_path),
+                        "selection": {
+                            "max_cells_per_roi": max_cells_per_roi,
+                            "base_seed": int(selection_seed),
+                            "roi_seed": _stable_roi_seed(
+                                selection_seed,
+                                annotation_id,
+                            ),
+                            "selected_for_analysis": selected_for_analysis,
+                        },
                         "orientation_note": (
                             "The major axis is horizontal after PCA. The eigenvector "
                             "sign is arbitrary, so positions 0 and 1 remain geometric "
@@ -704,9 +919,17 @@ def process_manifest(
             title=f"PCA alignment: {annotation_id}",
         )
         processed_annotations += 1
-        print(f"[PCA] {dataset} | {annotation_id}: {len(overview_entries)} labels processed")
+        print(
+            f"[PCA] {dataset} | {annotation_id}: "
+            f"selected={len(selected_labels)}/{len(eligible_labels)} eligible, "
+            f"total_labels={len(label_evaluations)}"
+        )
 
     COMMON["write_csv"](output_root / "pca_alignment_summary.csv", all_results)
+    COMMON["write_csv"](
+        output_root / "per_roi_cell_selection.csv",
+        selection_rows,
+    )
     summary = {
         "dataset": dataset,
         "source_mode": source_mode,
@@ -714,17 +937,28 @@ def process_manifest(
         "output_root": str(output_root),
         "n_manifest_rows": len(manifest_rows),
         "n_processed_annotations": processed_annotations,
-        "n_cell_records": len(all_results),
+        "n_total_instance_labels": total_labels_seen,
+        "n_structurally_eligible_before_cap": total_valid_before_cap,
         "n_saved_valid_cells": saved_cells,
+        "n_not_selected_by_cap": not_selected_cells,
         "n_excluded_cells": excluded_cells,
+        "max_cells_per_roi": max_cells_per_roi,
+        "selection_seed": int(selection_seed),
+        "selection_method": (
+            "reproducible random sampling without replacement per ROI"
+            if max_cells_per_roi is not None
+            else "all structurally eligible cells"
+        ),
         "min_object_pixels": min_object_pixels,
         "min_anisotropy": min_anisotropy,
         "exclude_border": exclude_border,
     }
     (output_root / "pca_run_summary.json").write_text(
-        json.dumps(summary, indent=2), encoding="utf-8"
+        json.dumps(summary, indent=2),
+        encoding="utf-8",
     )
     print(f"PCA output: {output_root}")
+    print(f"Per-ROI selection report: {output_root / 'per_roi_cell_selection.csv'}")
     return summary
 
 
@@ -763,6 +997,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--example", action="store_true")
     parser.add_argument("--preferred-min-cells", type=int, default=5)
     parser.add_argument("--max-cells", type=int, default=80)
+    parser.add_argument(
+        "--max-cells-per-roi-3d",
+        type=int,
+        default=100,
+        help=(
+            "Maximum structurally eligible cells retained from each 3d_mip ROI "
+            "in full mode. Use 0 to disable the cap. Default: 100."
+        ),
+    )
+    parser.add_argument(
+        "--selection-seed",
+        type=int,
+        default=1337,
+        help="Base seed for reproducible per-ROI cell selection. Default: 1337.",
+    )
     parser.add_argument("--exclude-time", type=int, action="append", default=[])
     parser.add_argument("--sample", action="append", default=[])
     parser.add_argument(
@@ -810,6 +1059,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("--preferred-min-cells must be at least 1")
     if args.max_cells is not None and args.max_cells < 1:
         raise ValueError("--max-cells must be at least 1")
+    if args.max_cells_per_roi_3d < 0:
+        raise ValueError("--max-cells-per-roi-3d must be 0 or greater")
     if args.manifest and args.dataset == "all":
         raise ValueError("An explicit --manifest requires one concrete --dataset.")
     if args.example and args.include != "full":
@@ -875,6 +1126,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             output_root = default_output
 
+        max_cells_per_roi = (
+            int(args.max_cells_per_roi_3d)
+            if dataset == "3d_mip"
+            and not args.example
+            and args.max_cells_per_roi_3d > 0
+            else None
+        )
+        if dataset == "3d_mip" and not args.example:
+            if max_cells_per_roi is None:
+                print("[INFO] 3d_mip per-ROI cell cap is disabled.")
+            else:
+                print(
+                    "[INFO] 3d_mip will retain at most "
+                    f"{max_cells_per_roi} valid cells per ROI "
+                    f"with seed {args.selection_seed}."
+                )
+
         summary = process_manifest(
             project_root=project_root,
             dataset=dataset,
@@ -889,6 +1157,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             exclude_border=args.exclude_border,
             include_failed_pairs=args.include_failed_pairs,
             max_overview_cells=args.max_overview_cells,
+            max_cells_per_roi=max_cells_per_roi,
+            selection_seed=args.selection_seed,
             overwrite=args.overwrite,
         )
         if report:
@@ -908,6 +1178,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "requested_dataset": args.dataset,
         "run_mode": "example" if args.example else "full",
         "processed_datasets": [item["dataset"] for item in summaries],
+        "max_cells_per_roi_3d": int(args.max_cells_per_roi_3d),
+        "selection_seed": int(args.selection_seed),
         "summaries": summaries,
     }
     batch_path = (
