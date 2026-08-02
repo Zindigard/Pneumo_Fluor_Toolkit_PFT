@@ -32,6 +32,10 @@ from itertools import combinations
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
@@ -44,6 +48,38 @@ EXAMPLE_MODE = False
 THESIS_HEATMAP_ROWS = 50
 TIME_POINTS_2D = (5, 20, 40, 120)
 MEDIA_2D = ("THY", "NHS")
+
+
+
+def trapezoidal_integral(
+    values: np.ndarray,
+    *,
+    x: np.ndarray | None = None,
+    axis: int = -1,
+) -> float | np.ndarray:
+    """Integrate values using a NumPy-version-compatible trapezoidal rule.
+
+    NumPy 2.0 introduced ``numpy.trapezoid``. NumPy 1.x provides the
+    equivalent ``numpy.trapz`` implementation. This helper selects the
+    available implementation without changing the numerical method.
+
+    Args:
+        values: Values to integrate.
+        x: Optional coordinates associated with ``values``.
+        axis: Array axis along which integration is performed.
+
+    Returns:
+        Scalar or array containing the trapezoidal numerical integral.
+
+    Example:
+        >>> y = np.asarray([0.0, 1.0, 0.0])
+        >>> float(trapezoidal_integral(y, x=np.asarray([0.0, 0.5, 1.0])))
+        0.5
+    """
+    trapezoid = getattr(np, "trapezoid", None)
+    if trapezoid is not None:
+        return trapezoid(values, x=x, axis=axis)
+    return np.trapz(values, x=x, axis=axis)
 
 
 @dataclass(frozen=True)
@@ -402,7 +438,7 @@ def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
     midcell = float(np.mean(values[centre_start:centre_end]))
     mean_pole = 0.5 * (pole1 + pole2)
     return {
-        "axial_auc": float(np.trapezoid(values, x=x)),
+        "axial_auc": float(trapezoidal_integral(values, x=x)),
         "axial_centroid": centroid,
         "axial_spread": spread,
         "axial_peak_position": float(x[int(np.argmax(values))]),
@@ -446,7 +482,7 @@ def radial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
     centre_intensity = float(np.mean(values[:region]))
     boundary_intensity = float(np.mean(values[-region:]))
     return {
-        "radial_auc": float(np.trapezoid(values, x=x)),
+        "radial_auc": float(trapezoidal_integral(values, x=x)),
         "radial_centroid": float(np.sum(x * values) / (total + EPS)),
         "centre_intensity": centre_intensity,
         "boundary_intensity": boundary_intensity,
