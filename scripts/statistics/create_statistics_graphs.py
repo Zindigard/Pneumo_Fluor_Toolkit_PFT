@@ -41,6 +41,9 @@ from scipy import ndimage as ndi
 SCRIPT_FILE = Path(__file__).resolve()
 EPS = np.finfo(np.float64).eps
 EXAMPLE_MODE = False
+THESIS_HEATMAP_ROWS = 40
+TIME_POINTS_2D = (5, 20, 40, 120)
+MEDIA_2D = ("THY", "NHS")
 
 
 @dataclass(frozen=True)
@@ -1102,6 +1105,146 @@ def plot_axial_profiles(
         return
 
 
+def _sorted_profile_matrix(profiles: Sequence[np.ndarray]) -> np.ndarray:
+    """Stack axial profiles and sort cells by fluorescence-peak position.
+
+    Sorting gives the heatmap a reproducible biological order from profiles
+    peaking near Pole 1 to profiles peaking near Pole 2.
+
+    Args:
+        profiles (Sequence[np.ndarray]): One-dimensional normalized axial
+            fluorescence profiles with a common profile length.
+
+    Returns:
+        np.ndarray: Two-dimensional matrix with one sorted cell profile per row.
+
+    Raises:
+        ValueError: If no profiles are supplied or profile lengths differ.
+
+    Example:
+        >>> matrix = _sorted_profile_matrix([
+        ...     np.array([0.0, 1.0, 0.2]),
+        ...     np.array([0.1, 0.4, 1.0]),
+        ... ])
+        >>> matrix.shape
+        (2, 3)
+    """
+    if not profiles:
+        raise ValueError("At least one profile is required for a heatmap.")
+    matrix = np.vstack([np.asarray(profile, dtype=np.float64) for profile in profiles])
+    safe_matrix = np.nan_to_num(matrix, nan=-np.inf, posinf=-np.inf, neginf=-np.inf)
+    peak_positions = np.argmax(safe_matrix, axis=1)
+    order = np.argsort(peak_positions, kind="stable")
+    return matrix[order]
+
+
+def _binned_population_matrix(
+    sorted_matrix: np.ndarray,
+    display_rows: int = THESIS_HEATMAP_ROWS,
+) -> tuple[np.ndarray, int, str]:
+    """Compress a sorted cell population into a fixed-height thesis heatmap.
+
+    If the condition contains more cells than ``display_rows``, cells are split
+    into equal-count groups and the median profile of every group is displayed.
+    If the condition contains fewer cells, each real profile is retained and
+    the unused rows are filled with ``NaN`` so that no artificial cells are
+    created.
+
+    Args:
+        sorted_matrix (np.ndarray): Two-dimensional matrix containing one
+            peak-position-sorted profile per row.
+        display_rows (int): Fixed number of rows in each main heatmap panel.
+            Defaults to ``THESIS_HEATMAP_ROWS`` (40).
+
+    Returns:
+        tuple[np.ndarray, int, str]: Display matrix, number of populated display
+        rows, and a short description of the visualization method.
+
+    Raises:
+        ValueError: If the matrix is not two-dimensional or ``display_rows`` is
+            smaller than one.
+
+    Example:
+        >>> source = np.arange(150, dtype=float).reshape(50, 3)
+        >>> display, populated, method = _binned_population_matrix(source, 10)
+        >>> display.shape, populated, method
+        ((10, 3), 10, 'equal-count median bins')
+    """
+    matrix = np.asarray(sorted_matrix, dtype=np.float64)
+    if matrix.ndim != 2:
+        raise ValueError("The profile matrix must be two-dimensional.")
+    if display_rows < 1:
+        raise ValueError("display_rows must be at least 1.")
+
+    n_cells, n_positions = matrix.shape
+    if n_cells <= display_rows:
+        display = np.full((display_rows, n_positions), np.nan, dtype=np.float64)
+        display[:n_cells] = matrix
+        return display, n_cells, "individual profiles"
+
+    groups = np.array_split(matrix, display_rows, axis=0)
+    display = np.vstack([np.nanmedian(group, axis=0) for group in groups])
+    return display, display_rows, "equal-count median bins"
+
+
+def _save_full_cell_heatmap(
+    matrix: np.ndarray,
+    *,
+    channel: str,
+    condition: str,
+    output_dir: Path,
+    cmap,
+) -> None:
+    """Save one all-cell axial heatmap for use as an appendix figure.
+
+    Args:
+        matrix (np.ndarray): Peak-position-sorted matrix with one row per cell.
+        channel (str): Fluorescence-channel name shown in the title and file name.
+        condition (str): Experimental condition represented by the matrix.
+        output_dir (Path): Main graph output directory. Appendix figures are
+            written to its ``appendix_heatmaps`` subdirectory.
+        cmap: Matplotlib colour map used for normalized fluorescence values.
+
+    Example:
+        >>> _save_full_cell_heatmap(
+        ...     np.random.default_rng(1).random((12, 90)),
+        ...     channel="HADA",
+        ...     condition="THY_5min",
+        ...     output_dir=Path("results/statistics/graphs"),
+        ...     cmap=plt.get_cmap("viridis"),
+        ... )
+    """
+    n_cells, profile_length = matrix.shape
+    figure_height = min(18.0, max(4.8, 2.8 + 0.0045 * n_cells))
+    fig, ax = plt.subplots(figsize=(8.2, figure_height), constrained_layout=True)
+    image = ax.imshow(
+        matrix,
+        aspect="auto",
+        interpolation="nearest",
+        vmin=0.0,
+        vmax=1.0,
+        cmap=cmap,
+    )
+    ax.set_xticks(
+        [0, (profile_length - 1) / 2, profile_length - 1],
+        ["Pole 1", "Midcell", "Pole 2"],
+    )
+    if n_cells == 1:
+        ax.set_yticks([0], ["1"])
+    else:
+        ax.set_yticks([0, n_cells - 1], ["1", f"{n_cells:,}"])
+    ax.set_xlabel("Normalized axial coordinate")
+    ax.set_ylabel("Individual cells, ordered by peak position")
+    ax.set_title(
+        f"{channel} full-cell axial heatmap: {condition_display(condition)}\n"
+        f"n = {n_cells:,} cells"
+    )
+    fig.colorbar(image, ax=ax, label="Within-cell normalized fluorescence")
+    add_note(fig)
+    stem = f"axial_heatmap_full_cells_{channel.lower()}_{condition.lower()}"
+    save_figure(fig, output_dir / "appendix_heatmaps", stem)
+
+
 def plot_heatmaps(
     profile_store: dict[tuple[str, str], list[np.ndarray]],
     conditions: list[str],
@@ -1109,94 +1252,190 @@ def plot_heatmaps(
     output_dir: Path,
     dataset: str,
 ) -> None:
-    """Plot heatmaps for visual assessment.
+    """Create thesis and appendix axial-profile heatmaps for 2D datasets.
+
+    For ``2d_time``, the main thesis output is a fixed ``2 x 4`` grid: THY and
+    NHS form the rows, and 5, 20, 40, and 120 minutes form the columns. Every
+    panel has 40 display rows. Conditions with more than 40 cells use
+    equal-count median bins after sorting by peak position. Conditions with 40
+    cells or fewer retain every individual profile and leave the unused rows
+    blank. The actual number of cells is printed in every panel and written to
+    a CSV summary. One full-cell heatmap per condition is also generated in the
+    ``appendix_heatmaps`` subdirectory.
+
+    The existing ``2d_wga_dapi`` full-cell population heatmaps are retained.
+    Heatmaps are intentionally not generated for ``3d_mip``; all other 3D
+    graphs and measurements remain unchanged.
 
     Args:
-        profile_store (dict[tuple[str, str], list[np.ndarray]]): Array containing profile store.
-        conditions (list[str]): Text value specifying conditions.
-        channel_names (tuple[str, ...]): Text value specifying channel names.
-        output_dir (Path): Directory where generated resources are written.
-        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        profile_store (dict[tuple[str, str], list[np.ndarray]]): Cell-level
+            normalized axial profiles indexed by ``(condition, channel)``.
+        conditions (list[str]): Conditions detected in the processed dataset.
+        channel_names (tuple[str, ...]): Fluorescence-channel names.
+        output_dir (Path): Directory where PNG, PDF, and CSV outputs are saved.
+        dataset (str): Dataset identifier, such as ``"2d_time"``,
+            ``"2d_wga_dapi"``, or ``"3d_mip"``.
 
     Example:
         >>> plot_heatmaps(
-        ...     profile_store=image_array,
-        ...     conditions="conditions",
-        ...     channel_names="channel_names",
-        ...     output_dir=Path("path/to/resource"),
+        ...     profile_store={
+        ...         ("THY_5min", "HADA"): [np.linspace(0, 1, 90)],
+        ...         ("NHS_5min", "HADA"): [np.linspace(1, 0, 90)],
+        ...     },
+        ...     conditions=["THY_5min", "NHS_5min"],
+        ...     channel_names=("HADA",),
+        ...     output_dir=Path("results/statistics/graphs/2d_time/filtered_unet"),
         ...     dataset="2d_time",
         ... )
     """
+    if dataset == "3d_mip":
+        return
+
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad(color="0.92")
+
     for channel in channel_names:
         if dataset == "2d_time":
-            times = sorted(
-                {
-                    int(match.group(1))
+            profile_length = next(
+                (
+                    int(np.asarray(profile).size)
                     for condition in conditions
-                    for match in [re.search(r"(\d+)min", condition)]
-                    if match is not None
-                    and any(
-                        profile_store.get(
-                            (f"{medium}_{int(match.group(1))}min", channel)
-                        )
-                        for medium in ("THY", "NHS")
-                    )
-                }
+                    for profile in profile_store.get((condition, channel), [])
+                ),
+                90,
             )
-            if not times:
-                continue
-            ncols = 2 if len(times) > 1 else 1
-            nrows = int(math.ceil(len(times) / ncols))
             fig, axes = plt.subplots(
-                nrows,
-                ncols,
-                figsize=(6.0 * ncols, 3.8 * nrows),
+                len(MEDIA_2D),
+                len(TIME_POINTS_2D),
+                figsize=(15.8, 7.2),
                 sharex=True,
+                sharey=True,
                 constrained_layout=True,
             )
-            axes = np.atleast_1d(axes).reshape(-1)
             rendered = []
-            for axis, time in zip(axes, times):
-                profiles: list[np.ndarray] = []
-                for medium in ("THY", "NHS"):
-                    profiles.extend(
-                        profile_store.get((f"{medium}_{time}min", channel), [])
+            summary_rows: list[dict[str, object]] = []
+
+            for row_index, medium in enumerate(MEDIA_2D):
+                for column_index, time_min in enumerate(TIME_POINTS_2D):
+                    axis = axes[row_index, column_index]
+                    condition = f"{medium}_{time_min}min"
+                    profiles = profile_store.get((condition, channel), [])
+
+                    if not profiles:
+                        axis.set_facecolor("0.92")
+                        axis.text(
+                            0.5,
+                            0.5,
+                            "No cells",
+                            transform=axis.transAxes,
+                            ha="center",
+                            va="center",
+                            fontsize=9,
+                        )
+                        n_cells = 0
+                        populated_rows = 0
+                        method = "no profiles"
+                    else:
+                        sorted_matrix = _sorted_profile_matrix(profiles)
+                        n_cells = sorted_matrix.shape[0]
+                        display_matrix, populated_rows, method = _binned_population_matrix(
+                            sorted_matrix,
+                            THESIS_HEATMAP_ROWS,
+                        )
+                        image = axis.imshow(
+                            display_matrix,
+                            aspect="auto",
+                            interpolation="nearest",
+                            vmin=0.0,
+                            vmax=1.0,
+                            cmap=cmap,
+                        )
+                        rendered.append(image)
+                        _save_full_cell_heatmap(
+                            sorted_matrix,
+                            channel=channel,
+                            condition=condition,
+                            output_dir=output_dir,
+                            cmap=cmap,
+                        )
+
+                    summary_rows.append(
+                        {
+                            "dataset": dataset,
+                            "channel": channel,
+                            "condition": condition,
+                            "medium": medium,
+                            "time_min": time_min,
+                            "n_cells": n_cells,
+                            "display_rows": THESIS_HEATMAP_ROWS,
+                            "populated_display_rows": populated_rows,
+                            "visualization_method": method,
+                            "appendix_full_cell_heatmap": (
+                                f"appendix_heatmaps/"
+                                f"axial_heatmap_full_cells_{channel.lower()}_"
+                                f"{condition.lower()}.png"
+                                if n_cells > 0
+                                else ""
+                            ),
+                        }
                     )
-                if not profiles:
-                    axis.axis("off")
-                    continue
-                matrix = np.vstack(profiles)
-                order = np.argsort(np.argmax(matrix, axis=1))
-                matrix = matrix[order]
-                image = axis.imshow(
-                    matrix,
-                    aspect="auto",
-                    interpolation="nearest",
-                    vmin=0.0,
-                    vmax=1.0,
-                )
-                rendered.append(image)
-                axis.set_title(f"{time} min")
-                axis.set_xticks(
-                    [0, (matrix.shape[1] - 1) / 2, matrix.shape[1] - 1],
-                    ["0", "0.5", "1"],
-                )
-                axis.set_xlabel("Normalized axial coordinate")
-                axis.set_ylabel("Individual cells")
-            for axis in axes[len(times):]:
-                axis.axis("off")
+
+                    if row_index == 0:
+                        axis.set_title(f"{time_min} min")
+                    axis.text(
+                        0.02,
+                        0.98,
+                        f"n = {n_cells:,} cells\n"
+                        + (
+                            f"{populated_rows} median bins"
+                            if method == "equal-count median bins"
+                            else f"{populated_rows} individual profiles"
+                            if method == "individual profiles"
+                            else "no profiles"
+                        ),
+                        transform=axis.transAxes,
+                        ha="left",
+                        va="top",
+                        fontsize=7.5,
+                        bbox={
+                            "boxstyle": "round,pad=0.25",
+                            "facecolor": "white",
+                            "edgecolor": "0.75",
+                            "alpha": 0.82,
+                        },
+                    )
+                    axis.set_yticks([])
+                    axis.set_xticks(
+                        [0, (profile_length - 1) / 2, profile_length - 1],
+                        ["Pole 1", "Midcell", "Pole 2"],
+                    )
+                    if row_index == 0:
+                        axis.tick_params(labelbottom=False)
+                    if column_index == 0:
+                        axis.set_ylabel(f"{medium}\nPopulation rows")
+                    if row_index == len(MEDIA_2D) - 1:
+                        axis.set_xlabel("Normalized axial coordinate")
+
             if rendered:
                 fig.colorbar(
                     rendered[0],
-                    ax=list(axes[: len(times)]),
+                    ax=axes.ravel().tolist(),
                     label="Within-cell normalized fluorescence",
                     shrink=0.88,
                 )
-            fig.suptitle(f"{channel} axial-profile heatmaps by time point")
+            fig.suptitle(
+                f"{channel} axial fluorescence: binned population heatmaps\n"
+                f"All cells retained; maximum {THESIS_HEATMAP_ROWS} display rows per condition"
+            )
             add_note(fig)
             save_figure(fig, output_dir, f"axial_heatmap_{channel.lower()}")
+            write_csv(
+                output_dir / f"axial_heatmap_{channel.lower()}_population_summary.csv",
+                summary_rows,
+            )
             continue
 
+        # Preserve the previous 2d_wga_dapi heatmap implementation unchanged.
         blocks: list[np.ndarray] = []
         labels: list[tuple[str, int]] = []
         total = 0
@@ -1216,7 +1455,11 @@ def plot_heatmaps(
             constrained_layout=True,
         )
         image = ax.imshow(
-            matrix, aspect="auto", interpolation="nearest", vmin=0.0, vmax=1.0
+            matrix,
+            aspect="auto",
+            interpolation="nearest",
+            vmin=0.0,
+            vmax=1.0,
         )
         start = 0
         tick_positions = []
@@ -1238,7 +1481,6 @@ def plot_heatmaps(
         fig.colorbar(image, ax=ax, label="Within-cell normalized fluorescence")
         add_note(fig)
         save_figure(fig, output_dir, f"axial_heatmap_{channel.lower()}")
-
 
 def plot_radial_profiles(
     radial_store: dict[tuple[str, str], list[np.ndarray]],
@@ -2720,7 +2962,8 @@ def process_dataset(
     plot_axial_profiles(
         profile_store_for_lines, conditions, spec.channel_names, output_root, dataset
     )
-    # Heatmaps retain one row per cell in both modes.
+    # 2D time heatmaps use 40 thesis-display rows and retain full-cell appendix files.
+    # The quantitative profiles and all non-heatmap figures are unchanged.
     plot_heatmaps(cell_profile_store, conditions, spec.channel_names, output_root, dataset)
     plot_radial_profiles(
         radial_store_for_lines, conditions, spec.channel_names, output_root, dataset
@@ -2746,6 +2989,26 @@ def process_dataset(
         "channel_names": list(spec.channel_names),
         "radial_bins": radial_bins,
         "pixel_size_um": pixel_size_um,
+        "heatmap_policy": (
+            {
+                "generated": True,
+                "main_layout": "2 x 4: THY/NHS by 5/20/40/120 min",
+                "display_rows_per_condition": THESIS_HEATMAP_ROWS,
+                "large_group_method": "equal-count median bins after peak-position sorting",
+                "small_group_method": "individual profiles with blank padding",
+                "full_cell_outputs": "appendix_heatmaps",
+            }
+            if dataset == "2d_time"
+            else {
+                "generated": True,
+                "main_layout": "existing full-cell condition heatmap",
+            }
+            if dataset == "2d_wga_dapi"
+            else {
+                "generated": False,
+                "reason": "Heatmaps restricted to 2D datasets",
+            }
+        ),
         "plotting_unit": "cells" if example else "independent images/ROIs",
         "interpretation": (
             "Example mode uses one selected image per condition and is intended for "
