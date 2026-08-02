@@ -138,6 +138,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-width", type=int, default=30)
     parser.add_argument("--margin", type=int, default=2)
     parser.add_argument("--radial-bins", type=int, default=20)
+    parser.add_argument(
+        "--diagnostic-cells-per-roi",
+        type=int,
+        default=1,
+        help=(
+            "Maximum cells per ROI for which normalization before/after PNG "
+            "figures are saved. Default: 1."
+        ),
+    )
     parser.add_argument("--pixel-size-um", type=float)
     parser.add_argument("--skip-missing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -160,6 +169,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         >>> exit_code = main()
     """
     args = build_parser().parse_args(argv)
+    if args.diagnostic_cells_per_roi < 0:
+        raise ValueError("--diagnostic-cells-per-roi must be 0 or greater")
     if args.max_cells_per_roi_2d_time < 0:
         raise ValueError("--max-cells-per-roi-2d-time must be 0 or greater")
     if args.max_cells_per_roi_3d < 0:
@@ -218,6 +229,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(args.target_width),
         "--margin",
         str(args.margin),
+        "--diagnostic-cells-per-roi",
+        str(args.diagnostic_cells_per_roi),
     ]
     run(normalization_command, project_root)
 

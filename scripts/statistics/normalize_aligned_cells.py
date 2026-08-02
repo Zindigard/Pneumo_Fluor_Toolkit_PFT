@@ -34,6 +34,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+
 import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tiff
@@ -427,7 +431,7 @@ def save_normalization_figures(
         axis.axis("off")
     spatial_figure.suptitle(title)
     spatial_figure.savefig(
-        output_dir / "spatial_normalization_before_after.png",
+        output_dir / "spatial_norm.png",
         dpi=180,
         bbox_inches="tight",
     )
@@ -446,7 +450,7 @@ def save_normalization_figures(
         axis.axis("off")
     intensity_figure.suptitle(title)
     intensity_figure.savefig(
-        output_dir / "intensity_normalization_before_after.png",
+        output_dir / "intensity_norm.png",
         dpi=180,
         bbox_inches="tight",
     )
@@ -548,6 +552,7 @@ def process_pca_root(
     target_width: int,
     margin: int,
     intensity_normalization: str,
+    diagnostic_cells_per_roi: int,
     overwrite: bool,
 ) -> dict[str, object]:
     """Process principal-component analysis result root using the configured workflow.
@@ -563,6 +568,10 @@ def process_pca_root(
         target_width (int): Numerical value controlling target width.
         margin (int): Numerical value controlling margin.
         intensity_normalization (str): Text value specifying intensity normalization.
+        diagnostic_cells_per_roi (int): Maximum number of cells per ROI for
+            which before/after PNG figures are written. A value of 0 disables
+            per-cell diagnostic figures. All cells remain normalized and
+            included in downstream measurements.
         overwrite (bool): Whether an existing output may be replaced.
 
     Returns:
@@ -584,6 +593,7 @@ def process_pca_root(
         ...     target_width=1,
         ...     margin=1,
         ...     intensity_normalization="intensity_normalization",
+        ...     diagnostic_cells_per_roi=1,
         ...     overwrite=True,
         ... )
     """
@@ -597,6 +607,9 @@ def process_pca_root(
 
     rows: list[dict[str, object]] = []
     accumulators: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    diagnostic_counts: dict[str, int] = {}
+    diagnostic_figures_written = 0
+
     for cell_file in cell_files:
         relative = cell_file.parent.relative_to(pca_root)
         annotation_relative = (
@@ -675,17 +688,28 @@ def process_pca_root(
             ),
             encoding="utf-8",
         )
-        save_normalization_figures(
-            output_dir=cell_output,
-            image_pca=image_pca,
-            mask_pca=mask_pca,
-            image_standardized=standardized_absolute,
-            mask_standardized=standardized_mask,
-            image_normalized=standardized_normalized,
-            image_to_rgb=image_to_rgb,
-            title=f"{annotation_id}, original label {source_label}",
+        current_diagnostic_count = diagnostic_counts.get(annotation_id, 0)
+        save_diagnostic = (
+            diagnostic_cells_per_roi > 0
+            and current_diagnostic_count < diagnostic_cells_per_roi
         )
-        rows.append(asdict(result))
+        if save_diagnostic:
+            save_normalization_figures(
+                output_dir=cell_output,
+                image_pca=image_pca,
+                mask_pca=mask_pca,
+                image_standardized=standardized_absolute,
+                mask_standardized=standardized_mask,
+                image_normalized=standardized_normalized,
+                image_to_rgb=image_to_rgb,
+                title=f"{annotation_id}, original label {source_label}",
+            )
+            diagnostic_counts[annotation_id] = current_diagnostic_count + 1
+            diagnostic_figures_written += 2
+
+        row = asdict(result)
+        row["diagnostic_figures_saved"] = bool(save_diagnostic)
+        rows.append(row)
 
         if annotation_id not in accumulators:
             accumulators[annotation_id] = (
@@ -724,6 +748,12 @@ def process_pca_root(
         "target_width": target_width,
         "margin": margin,
         "intensity_normalization": intensity_normalization,
+        "diagnostic_cells_per_roi": diagnostic_cells_per_roi,
+        "diagnostic_figures_written": diagnostic_figures_written,
+        "diagnostic_note": (
+            "Before/after PNG figures are written only for representative cells. "
+            "All normalized cells remain available in normalized_cell_data.npz."
+        ),
     }
     (output_root / "normalization_run_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
@@ -766,6 +796,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("none", "minmax", "percentile"),
         default="minmax",
     )
+    parser.add_argument(
+        "--diagnostic-cells-per-roi",
+        type=int,
+        default=1,
+        help=(
+            "Maximum cells per ROI for which normalization before/after PNG "
+            "figures are saved. Use 0 to disable them. All cells are still "
+            "normalized and measured. Default: 1."
+        ),
+    )
     parser.add_argument("--skip-missing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -794,6 +834,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("Target dimensions must be at least 3 pixels")
     if args.margin < 0:
         raise ValueError("--margin cannot be negative")
+    if args.diagnostic_cells_per_roi < 0:
+        raise ValueError("--diagnostic-cells-per-roi must be 0 or greater")
     if args.pca_root and args.dataset == "all":
         raise ValueError("An explicit --pca-root requires one concrete --dataset.")
 
@@ -840,6 +882,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 target_width=args.target_width,
                 margin=args.margin,
                 intensity_normalization=args.intensity_normalization,
+                diagnostic_cells_per_roi=args.diagnostic_cells_per_roi,
                 overwrite=args.overwrite,
             )
         )
