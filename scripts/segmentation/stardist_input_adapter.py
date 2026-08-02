@@ -1,5 +1,21 @@
-"""
-Dataset-specific single-channel input adapter for StarDist.
+r"""Dataset-specific single-channel input adapter for StarDist.
+
+The prepared PFT segmentation inputs remain unchanged on disk:
+
+* ``2d_time`` stores one numerical HADA channel.
+* ``2d_wga_dapi`` stores two independently normalized DAPI/WGA channels.
+* ``3d_mip`` stores three independently normalized HADA/NADA/TADA MIP channels.
+
+The pretrained and fine-tuned ``StarDist2D`` models used by PFT expect one
+numerical input channel. Therefore, only inside StarDist processes, multichannel
+prepared inputs are converted to one float32 image by a pixelwise maximum:
+
+* DAPI/WGA -> ``max(DAPI, WGA)``
+* HADA/NADA/TADA MIP -> ``max(HADA, NADA, TADA)``
+
+The same adapter is installed for training-data collection and all supported
+StarDist prediction methods. This keeps screening, fine-tuning, validation, and
+production inference consistent.
 
 Examples
 --------
@@ -525,8 +541,14 @@ def _patch_stardist_prediction_methods() -> None:
     StarDist2D._pft_stardist_merge_prediction_installed = True
 
 
-def policy_description() -> str:
+def policy_description(dataset: str | None = None) -> str:
     """Return a concise description of the active StarDist input policy.
+
+    Parameters
+    ----------
+    dataset : str or None, optional
+        PFT dataset name. When supplied, the returned text describes the exact
+        single-channel conversion used for that dataset.
 
     Returns
     -------
@@ -536,10 +558,33 @@ def policy_description() -> str:
 
     Examples
     --------
-    >>> policy_description()
-    'automatic StarDist single-channel policy'
+    Generic description:
+
+        >>> policy_description()
+        'automatic StarDist single-channel policy'
+
+    Three-channel MIP description:
+
+        >>> policy_description("3d_mip")
+        '3d_mip: pixelwise maximum of HADA, NADA, and TADA channels'
     """
-    return "automatic StarDist single-channel policy"
+    descriptions = {
+        "2d_time": "2d_time: single HADA channel",
+        "2d_wga_dapi": (
+            "2d_wga_dapi: pixelwise maximum of DAPI and WGA channels"
+        ),
+        "3d_mip": (
+            "3d_mip: pixelwise maximum of HADA, NADA, and TADA channels"
+        ),
+    }
+
+    if dataset is None:
+        return "automatic StarDist single-channel policy"
+
+    return descriptions.get(
+        str(dataset),
+        f"automatic StarDist single-channel policy for {dataset}",
+    )
 
 
 
