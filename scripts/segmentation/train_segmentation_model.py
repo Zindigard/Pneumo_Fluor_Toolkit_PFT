@@ -1,4 +1,4 @@
-"""Fine-tune Cellpose-SAM, Omnipose, or StarDist on PFT annotations.
+r"""Fine-tune Cellpose-SAM, Omnipose, or StarDist on PFT annotations.
 
 The script supports complete-image annotations and crop-based annotations.
 Crop annotations can be assigned explicitly to ``train`` or ``validation``
@@ -31,6 +31,24 @@ Models and reports are stored below::
 
 The validation metrics are binary Dice and IoU. Instance F1 and split/merge
 metrics are intentionally not calculated for this thesis workflow.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/train_segmentation_model.py --help
+
+Representative execution:
+
+    python scripts/segmentation/train_segmentation_model.py \
+        --dataset 2d_time \
+        --family omnipose \
+        --source-mode filtered_unet \
+        --annotation-source all \
+        --run-name example_run \
+        --pretrained-model bact_fluor_omni \
+        --epochs 50 \
+        --batch-size 8
 """
 
 from __future__ import annotations
@@ -45,6 +63,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -71,6 +100,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -81,10 +125,38 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _default_run_name(family: str, dataset: str, source_mode: str) -> str:
+    """Return default run name for the supplied inputs.
+
+    Args:
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _default_run_name(
+        ...     family="cellpose",
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     return f"{family}_{dataset}_{source_mode}_finetuned_v1"
 
 
 def main(default_family: str | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        default_family (str | None): Text value specifying default family. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Fine-tune a pretrained instance-segmentation model.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

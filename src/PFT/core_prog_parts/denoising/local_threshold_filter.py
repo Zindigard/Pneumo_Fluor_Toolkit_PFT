@@ -62,7 +62,15 @@ class LocalThresholdParams:
     frac10_keep: float = 0.40
 
     def validate(self) -> None:
-        """Raise ``ValueError`` when a parameter is outside its valid range."""
+        """Raise ``ValueError`` when a parameter is outside its valid range.
+
+        Raises:
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = LocalThresholdParams(...)
+            >>> instance.validate()
+        """
         if not 0.0 <= self.high_percentile <= 100.0:
             raise ValueError("high_percentile must be in [0, 100]")
         for name, value in (
@@ -77,7 +85,15 @@ class LocalThresholdParams:
 
     @property
     def label(self) -> str:
-        """Return a stable folder-safe parameter label."""
+        """Return a stable folder-safe parameter label.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = LocalThresholdParams(...)
+            >>> value = instance.label
+        """
         return (
             f"p{self.high_percentile:.1f}_k3f{int(round(self.frac3_keep * 100))}"
             f"_s3{int(round(self.support3_frac * 100))}"
@@ -86,7 +102,15 @@ class LocalThresholdParams:
 
     @property
     def human_title(self) -> str:
-        """Return a readable parameter description for reports."""
+        """Return a readable parameter description for reports.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = LocalThresholdParams(...)
+            >>> value = instance.human_title
+        """
         return (
             "local-threshold "
             f"(high >= p{self.high_percentile:.1f}, "
@@ -97,7 +121,18 @@ class LocalThresholdParams:
 
 
 def _mean_filter(mask: np.ndarray, size: int) -> np.ndarray:
-    """Return the zero-padded local mean of a Boolean mask."""
+    """Return the zero-padded local mean of a Boolean mask.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        size (int): Requested size or size constraint for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _mean_filter(mask=image_array, size=1)
+    """
     x = np.asarray(mask, dtype=np.float32)
     if uniform_filter is not None:
         return uniform_filter(x, size=size, mode="constant", cval=0.0)
@@ -121,7 +156,18 @@ def _mean_filter(mask: np.ndarray, size: int) -> np.ndarray:
 
 
 def _maximum_filter(mask: np.ndarray, size: int) -> np.ndarray:
-    """Return whether each neighborhood contains at least one true pixel."""
+    """Return whether each neighborhood contains at least one true pixel.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        size (int): Requested size or size constraint for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _maximum_filter(mask=image_array, size=1)
+    """
     x = np.asarray(mask, dtype=np.uint8)
     if maximum_filter is not None:
         return maximum_filter(x, size=size, mode="constant", cval=0) > 0
@@ -160,15 +206,19 @@ def apply_local_threshold_2d(
        satisfy the broader-window candidate-fraction requirement.
     6. Copy original values at retained positions and write zero elsewhere.
 
-    Returns
-    -------
-    filtered:
-        Array with the same shape and dtype as ``image``. Retained values are
-        copied exactly from the input. Rejected values are zero.
-    keep_mask:
-        Boolean mask of retained pixels.
-    info:
-        Threshold, counts, fractions, and dtype information for CSV reporting.
+    Args:
+        image (np.ndarray): Input image array to process.
+        params (LocalThresholdParams | None): Value specifying params for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, dict[str, float | int | str]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_local_threshold_2d(image=image_array)
     """
     chosen = params or LocalThresholdParams()
     chosen.validate()
@@ -226,6 +276,22 @@ def validate_intensity_preservation(
     Integer data are checked exactly. Floating-point data use ``atol`` with zero
     relative tolerance. The returned dictionary is designed for direct CSV
     export by the validation script.
+
+    Args:
+        original (np.ndarray): Array containing original.
+        filtered (np.ndarray): Array containing filtered.
+        keep_mask (np.ndarray): Array containing keep mask.
+        atol (float): Numerical value controlling atol. Defaults to ``0.0``.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = validate_intensity_preservation(
+        ...     original=image_array,
+        ...     filtered=image_array,
+        ...     keep_mask=image_array,
+        ... )
     """
     source = np.asarray(original)
     result = np.asarray(filtered)
@@ -286,5 +352,16 @@ def apply_local_high_threshold_single(
     raw_img: np.ndarray,
     spec: LocalHighThresholdSpec,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float | int | str]]:
-    """Backward-compatible wrapper for :func:`apply_local_threshold_2d`."""
+    """Backward-compatible wrapper for :func:`apply_local_threshold_2d`.
+
+    Args:
+        raw_img (np.ndarray): Array containing raw img.
+        spec (LocalHighThresholdSpec): Value specifying spec for the operation.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, dict[str, float | int | str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = apply_local_high_threshold_single(raw_img=image_array, spec=...)
+    """
     return apply_local_threshold_2d(raw_img, spec)

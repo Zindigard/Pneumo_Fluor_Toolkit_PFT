@@ -65,6 +65,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -85,6 +96,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -96,6 +122,18 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _write_summary(output_rows: list[dict[str, object]], output_root: Path) -> Path:
+    """Write summary to persistent storage.
+
+    Args:
+        output_rows (list[dict[str, object]]): Text value specifying output rows.
+        output_root (Path): Directory used for output.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_summary(output_rows="output_rows", output_root=Path("path/to/resource"))
+    """
     output_root.mkdir(parents=True, exist_ok=True)
     path = output_root / "prepare_segmentation_inputs_summary.csv"
     if not output_rows:
@@ -110,6 +148,14 @@ def _write_summary(output_rows: list[dict[str, object]], output_root: Path) -> P
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Prepare validated float32 inputs for Cellpose, Omnipose, or StarDist.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

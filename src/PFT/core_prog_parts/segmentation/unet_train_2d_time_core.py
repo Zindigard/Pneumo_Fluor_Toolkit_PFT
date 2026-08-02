@@ -211,7 +211,17 @@ class UNet2DTrainConfig:
 
 
 def validate_train_config(cfg: UNet2DTrainConfig) -> None:
-    """Validate parameters that affect U-Net dimensions and sampling."""
+    """Validate parameters that affect U-Net dimensions and sampling.
+
+    Args:
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_train_config(cfg=config)
+    """
     if cfg.patch <= 0 or cfg.patch % 16 != 0:
         raise ValueError("patch must be a positive multiple of 16 for four pooling stages")
     if cfg.batch <= 0 or cfg.epochs <= 0:
@@ -241,14 +251,50 @@ def validate_train_config(cfg: UNet2DTrainConfig) -> None:
 
 
 def _default_mask_root(project_root: Path, dataset: str) -> Path:
+    """Return default mask root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_mask_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "results" / "training_files" / "U-net" / dataset
 
 
 def _default_model_root(project_root: Path, dataset: str) -> Path:
+    """Return default model root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_model_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "models" / f"u_net_{dataset}"
 
 
 def _local_threshold_base(project_root: Path, dataset: str) -> Path:
+    """Return local threshold base for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _local_threshold_base(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return (
         project_root
         / "results"
@@ -265,6 +311,20 @@ def default_filtered_root(project_root: Path, dataset: str) -> Path:
     The selected production settings are p97.5 for ``2d_time`` and p98.0 for
     ``2d_wga_dapi``. The remainder of the folder label is discovered so minor
     parameter-label changes do not break the training command.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = default_filtered_root(project_root=Path("path/to/resource"), dataset="2d_time")
     """
     dataset = dataset.strip().lower()
     if dataset not in DATASETS_2D:
@@ -299,6 +359,19 @@ def normalize_image01(x: np.ndarray, mode: str = "percentile") -> np.ndarray:
     Percentile normalization maps P1 to zero and P99.8 to one. It must be
     applied to the complete image before patch extraction, not independently
     to every patch. This keeps training and inference preprocessing identical.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        mode (str): Text value specifying mode. Defaults to ``"percentile"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_image01(x=image_array)
     """
     x = np.asarray(x, dtype=np.float32)
     squeeze = x.ndim == 2
@@ -327,6 +400,25 @@ def normalize_image01(x: np.ndarray, mode: str = "percentile") -> np.ndarray:
 
 
 def _select_axis(arr: np.ndarray, axes: str, axis: str, index: int) -> tuple[np.ndarray, str]:
+    """Select axis according to the configured criteria.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        axis (str): Array axis along which the operation is performed.
+        index (int): Zero-based index of the selected element.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _select_axis(
+        ...     arr=image_array,
+        ...     axes="axes",
+        ...     axis="axis",
+        ...     index=1,
+        ... )
+    """
     position = axes.index(axis)
     arr = np.take(arr, int(index), axis=position)
     return arr, axes[:position] + axes[position + 1 :]
@@ -338,7 +430,22 @@ def ome_zarr_to_hwc_frames_2d(
     dataset: str,
     level: int = 0,
 ) -> list[np.ndarray]:
-    """Load every 2D frame from an OME-Zarr store as HWC float32 arrays."""
+    """Load every 2D frame from an OME-Zarr store as HWC float32 arrays.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = ome_zarr_to_hwc_frames_2d(zarr_path=Path("path/to/resource"), dataset="2d_time")
+    """
     dataset = dataset.strip().lower()
     if dataset not in DATASETS_2D:
         raise ValueError(f"Unsupported 2D dataset: {dataset}")
@@ -393,7 +500,19 @@ def ome_zarr_to_hwc_frames_2d(
 
 
 def ome_zarr_to_hwc_2d(zarr_path: Path, *, dataset: str, level: int = 0) -> np.ndarray:
-    """Backward-compatible loader returning the first available 2D frame."""
+    """Backward-compatible loader returning the first available 2D frame.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = ome_zarr_to_hwc_2d(zarr_path=Path("path/to/resource"), dataset="2d_time")
+    """
     return ome_zarr_to_hwc_frames_2d(zarr_path, dataset=dataset, level=level)[0]
 
 
@@ -403,6 +522,18 @@ def read_reference_mask_2d(mask_path: Path) -> tuple[np.ndarray, int]:
     The source mask may already be binary or may contain positive instance
     labels. This follows the Methods definition ``M_bin = 1`` for ``M > 0``.
     Negative, non-finite, or non-2D masks are rejected.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        tuple[np.ndarray, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_reference_mask_2d(mask_path=Path("path/to/resource"))
     """
     source = np.asarray(tiff.imread(mask_path))
     source = np.squeeze(source)
@@ -423,13 +554,33 @@ def read_reference_mask_2d(mask_path: Path) -> tuple[np.ndarray, int]:
 
 
 def read_binary_mask_2d(mask_path: Path) -> np.ndarray:
-    """Return the binary semantic foreground target derived from a source mask."""
+    """Return the binary semantic foreground target derived from a source mask.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = read_binary_mask_2d(mask_path=Path("path/to/resource"))
+    """
     binary, _ = read_reference_mask_2d(mask_path)
     return binary
 
 
 def find_mask_file(sample_dir: Path) -> Path | None:
-    """Find the canonical numerical reference mask for one sample."""
+    """Find the canonical numerical reference mask for one sample.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_mask_file(sample_dir=Path("path/to/resource"))
+    """
     canonical = sample_dir / "mask.tif"
     if canonical.is_file():
         return canonical
@@ -441,7 +592,20 @@ def find_mask_file(sample_dir: Path) -> Path | None:
 
 
 def list_2d_training_pairs(cfg: UNet2DTrainConfig) -> list[tuple[Path, Path]]:
-    """Pair filtered image stores and hand-labelled masks by sample directory."""
+    """Pair filtered image stores and hand-labelled masks by sample directory.
+
+    Args:
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[tuple[Path, Path]]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_2d_training_pairs(cfg=config)
+    """
     image_root = Path(cfg.image_root or default_filtered_root(cfg.project_root, cfg.dataset))
     mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root, cfg.dataset))
     if not image_root.is_dir():
@@ -464,7 +628,21 @@ def list_2d_training_pairs(cfg: UNet2DTrainConfig) -> list[tuple[Path, Path]]:
 def validate_2d_training_pairs(
     pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig
 ) -> list[dict[str, Any]]:
-    """Validate shapes, channels, source masks, and foreground/background pixels."""
+    """Validate shapes, channels, source masks, and foreground/background pixels.
+
+    Args:
+        pairs (list[tuple[Path, Path]]): Filesystem path used for pairs.
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_2d_training_pairs(pairs=Path("path/to/resource"), cfg=config)
+    """
     rows: list[dict[str, Any]] = []
     for image_path, mask_path in pairs:
         sample = image_path.parent.name
@@ -528,7 +706,21 @@ def validate_2d_training_pairs(
 def split_pairs(
     pairs: list[tuple[Path, Path]], cfg: UNet2DTrainConfig
 ) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
-    """Create the fixed 80:20 image-pair split before patch extraction."""
+    """Create the fixed 80:20 image-pair split before patch extraction.
+
+    Args:
+        pairs (list[tuple[Path, Path]]): Filesystem path used for pairs.
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = split_pairs(pairs=Path("path/to/resource"), cfg=config)
+    """
     shuffled = list(pairs)
     random.Random(cfg.seed).shuffle(shuffled)
     if len(shuffled) < 2:
@@ -540,6 +732,25 @@ def split_pairs(
 
 
 def _random_crop(height: int, width: int, patch: int, rng: random.Random) -> tuple[int, int]:
+    """Return random crop for the supplied inputs.
+
+    Args:
+        height (int): Numerical value controlling height.
+        width (int): Numerical value controlling width.
+        patch (int): Numerical value controlling patch.
+        rng (random.Random): Random-number generator used for reproducible sampling or augmentation.
+
+    Returns:
+        tuple[int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _random_crop(
+        ...     height=1,
+        ...     width=1,
+        ...     patch=1,
+        ...     rng=...,
+        ... )
+    """
     return rng.randint(0, height - patch), rng.randint(0, width - patch)
 
 
@@ -562,6 +773,27 @@ def sample_patch_2d(
     Some negative patches are intentionally retained. Removing all negative
     examples would make false-positive foreground predictions more likely at
     inference time.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+        rng (random.Random): Random-number generator used for reproducible sampling or augmentation.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = sample_patch_2d(
+        ...     img=image_array,
+        ...     mask=image_array,
+        ...     cfg=config,
+        ...     rng=...,
+        ... )
     """
     height, width = mask.shape
     patch = cfg.patch
@@ -635,6 +867,21 @@ def make_2d_dataset(
     by default and then repeated unchanged for every epoch. This makes validation
     loss, Dice, and IoU directly comparable between epochs. A bounded LRU cache
     avoids reopening and normalizing the same OME-Zarr image for every patch.
+
+    Args:
+        pairs (list[tuple[Path, Path]]): Filesystem path used for pairs.
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+        training (bool): Boolean flag controlling training.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_2d_dataset(
+        ...     pairs=Path("path/to/resource"),
+        ...     cfg=config,
+        ...     training=True,
+        ... )
     """
     rng = random.Random(cfg.seed + (0 if training else 10000))
     first_frame = ome_zarr_to_hwc_frames_2d(
@@ -644,6 +891,21 @@ def make_2d_dataset(
     cache: OrderedDict[tuple[str, str], tuple[list[np.ndarray], np.ndarray]] = OrderedDict()
 
     def load_pair(image_path: Path, mask_path: Path) -> tuple[list[np.ndarray], np.ndarray]:
+        """Load pair from persistent storage.
+
+        Args:
+            image_path (Path): Filesystem path associated with image.
+            mask_path (Path): Filesystem path associated with mask.
+
+        Returns:
+            tuple[list[np.ndarray], np.ndarray]: Collection containing the generated or selected values.
+
+        Raises:
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> result = load_pair(image_path=Path("path/to/resource"), mask_path=Path("path/to/resource"))
+        """
         key = (str(image_path), str(mask_path))
         if key in cache:
             cache.move_to_end(key)
@@ -669,6 +931,14 @@ def make_2d_dataset(
         return normalized_frames, mask
 
     def sample_one() -> tuple[np.ndarray, np.ndarray]:
+        """Return sample one for the supplied inputs.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+        Example:
+            >>> result = sample_one()
+        """
         image_path, mask_path = pairs[rng.randrange(len(pairs))]
         frames, mask = load_pair(image_path, mask_path)
         image = frames[rng.randrange(len(frames))]
@@ -694,6 +964,14 @@ def make_2d_dataset(
         return dataset.prefetch(tf.data.AUTOTUNE), channels
 
     def generator():
+        """Return generator for the supplied inputs.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = generator()
+        """
         while True:
             yield sample_one()
 
@@ -714,7 +992,19 @@ def make_2d_dataset(
 
 
 def conv_block(x, filters: int, dropout: float = 0.0):
-    """Two 3 x 3 convolutions, each followed by batch normalization and ReLU."""
+    """Two 3 x 3 convolutions, each followed by batch normalization and ReLU.
+
+    Args:
+        x (Any): Horizontal coordinate or numerical input value used by the operation.
+        filters (int): Numerical value controlling filters.
+        dropout (float): Numerical value controlling dropout. Defaults to ``0.0``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = conv_block(x=..., filters=1)
+    """
     for _ in range(2):
         x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
         x = tf.keras.layers.BatchNormalization()(x)
@@ -736,6 +1026,17 @@ def build_unet(
     after ``patch`` and ``batch``. ``dropout`` regularizes every convolutional
     block. Both parameters alter training behaviour, while ``base_filters`` also
     alters the saved model architecture.
+
+    Args:
+        input_shape (tuple[int, int, int]): Numerical value controlling input shape.
+        base_filters (int): Numerical value controlling base filters. Defaults to ``16``.
+        dropout (float): Numerical value controlling dropout. Defaults to ``0.0``.
+
+    Returns:
+        tf.keras.Model: Result produced by the operation.
+
+    Example:
+        >>> result = build_unet(input_shape=1)
     """
     inputs = tf.keras.Input(shape=input_shape)
     c1 = conv_block(inputs, base_filters, dropout)
@@ -761,6 +1062,19 @@ def build_unet(
 
 
 def soft_dice_coef(y_true, y_pred, eps: float = 1e-6):
+    """Return soft dice coef for the supplied inputs.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+        eps (float): Numerical value controlling eps. Defaults to ``1e-6``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = soft_dice_coef(y_true=..., y_pred=...)
+    """
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.clip_by_value(tf.cast(y_pred, tf.float32), 0.0, 1.0)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
@@ -769,7 +1083,19 @@ def soft_dice_coef(y_true, y_pred, eps: float = 1e-6):
 
 
 def dice_coef(y_true, y_pred, eps: float = 1e-6):
-    """Binary Dice coefficient after thresholding probabilities at 0.5."""
+    """Binary Dice coefficient after thresholding probabilities at 0.5.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+        eps (float): Numerical value controlling eps. Defaults to ``1e-6``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = dice_coef(y_true=..., y_pred=...)
+    """
     y_true = tf.cast(y_true >= 0.5, tf.float32)
     y_pred = tf.cast(y_pred >= 0.5, tf.float32)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
@@ -778,17 +1104,52 @@ def dice_coef(y_true, y_pred, eps: float = 1e-6):
 
 
 def dice_loss(y_true, y_pred):
-    """Differentiable soft Dice loss used in the combined training objective."""
+    """Differentiable soft Dice loss used in the combined training objective.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = dice_loss(y_true=..., y_pred=...)
+    """
     return 1.0 - soft_dice_coef(y_true, y_pred)
 
 
 def bce_dice_loss(y_true, y_pred):
+    """Return bce dice loss for the supplied inputs.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = bce_dice_loss(y_true=..., y_pred=...)
+    """
     bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
     return 0.5 * tf.reduce_mean(bce) + 0.5 * dice_loss(y_true, y_pred)
 
 
 def iou_coef(y_true, y_pred, eps: float = 1e-6):
-    """Binary intersection over union after thresholding at 0.5."""
+    """Binary intersection over union after thresholding at 0.5.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+        eps (float): Numerical value controlling eps. Defaults to ``1e-6``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = iou_coef(y_true=..., y_pred=...)
+    """
     y_true = tf.cast(y_true >= 0.5, tf.float32)
     y_pred = tf.cast(y_pred >= 0.5, tf.float32)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
@@ -800,6 +1161,16 @@ class LearningRateHistory(tf.keras.callbacks.Callback):
     """Add the effective optimizer learning rate to every history epoch."""
 
     def on_epoch_end(self, epoch, logs=None):  # type: ignore[override]
+        """Handle the epoch end callback event.
+
+        Args:
+            epoch (Any): Value specifying epoch for the operation.
+            logs (Any): Value specifying logs for the operation. ``None`` selects the function's default behavior.
+
+        Example:
+            >>> instance = LearningRateHistory(...)
+            >>> instance.on_epoch_end(epoch=...)
+        """
         logs = logs if logs is not None else {}
         value = tf.keras.backend.get_value(self.model.optimizer.learning_rate)
         logs["learning_rate"] = float(value)
@@ -813,6 +1184,29 @@ def _save_curve(
     title: str,
     path: Path,
 ) -> Path:
+    """Save curve to persistent storage.
+
+    Args:
+        history (dict[str, list[float]]): Text value specifying history.
+        train_key (str): Text value specifying train key.
+        validation_key (str): Text value specifying validation key.
+        ylabel (str): Text value specifying ylabel.
+        title (str): Title displayed on the generated figure or report section.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_curve(
+        ...     history=0.5,
+        ...     train_key="train_key",
+        ...     validation_key="validation_key",
+        ...     ylabel="ylabel",
+        ...     title="title",
+        ...     path=Path("path/to/resource"),
+        ... )
+    """
     figure = plt.figure(figsize=(7.2, 4.8), dpi=180)
     axis = figure.add_subplot(1, 1, 1)
     epochs = np.arange(1, len(history.get(train_key, [])) + 1)
@@ -832,7 +1226,23 @@ def _save_curve(
 
 
 def save_training_curves(history: tf.keras.callbacks.History, model_root: Path, dataset: str) -> dict[str, Path]:
-    """Save separate thesis-ready loss, Dice, IoU, and learning-rate curves."""
+    """Save separate thesis-ready loss, Dice, IoU, and learning-rate curves.
+
+    Args:
+        history (tf.keras.callbacks.History): Value specifying history for the operation.
+        model_root (Path): Directory used for model.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_training_curves(
+        ...     history=...,
+        ...     model_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     model_root.mkdir(parents=True, exist_ok=True)
     values = {key: [float(v) for v in sequence] for key, sequence in history.history.items()}
     outputs = {
@@ -885,6 +1295,15 @@ def save_training_curves(history: tf.keras.callbacks.History, model_root: Path, 
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = list(rows[0]) if rows else ["status"]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -914,6 +1333,19 @@ def train_2d_binary_unet(cfg: UNet2DTrainConfig) -> dict[str, Path]:
     without validation-loss improvement, down to 1e-6. Those callback constants
     may be changed in this function, but the initial learning rate is controlled
     by ``cfg.lr``.
+
+    Args:
+        cfg (UNet2DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = train_2d_binary_unet(cfg=config)
     """
     cfg.dataset = cfg.dataset.strip().lower()
     validate_train_config(cfg)
@@ -1058,6 +1490,17 @@ def train_2d_binary_unet(cfg: UNet2DTrainConfig) -> dict[str, Path]:
 
 
 def train_2d_time_unet(cfg: UNet2DTrainConfig | None = None) -> dict[str, Path]:
+    """Train two-dimensional data time U-Net result using the supplied data and configuration.
+
+    Args:
+        cfg (UNet2DTrainConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = train_2d_time_unet()
+    """
     cfg = cfg or UNet2DTrainConfig()
     cfg.dataset = "2d_time"
     return train_2d_binary_unet(cfg)

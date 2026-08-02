@@ -1,3 +1,21 @@
+r"""Provide command-line and programmatic utilities for create results graphs.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/create_results_graphs.py --help
+
+Representative execution:
+
+    python scripts/statistics/create_results_graphs.py \
+        --dataset 2d_time \
+        --csv results/statistics/example.csv \
+        --graph axial \
+        --project-root . \
+        --value-col intensity
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +31,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -76,6 +106,18 @@ DATASET_HINTS = {
 
 
 def choose_from_list(title: str, options: list[str]) -> str:
+    """Choose from list according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        options (list[str]): Text value specifying options.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_from_list(title="title", options="options")
+    """
     print(f"\n{title}")
     for idx, item in enumerate(options, start=1):
         print(f"  {idx}. {item}")
@@ -87,6 +129,14 @@ def choose_from_list(title: str, options: list[str]) -> str:
 
 
 def choose_dataset() -> str:
+    """Choose dataset according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_dataset()
+    """
     print("\nChoose dataset:")
     for key, value in DATASETS.items():
         print(f"  {key}. {value}")
@@ -98,6 +148,14 @@ def choose_dataset() -> str:
 
 
 def choose_graph() -> str:
+    """Choose graph according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_graph()
+    """
     print("\nChoose graph type:")
     for key, value in GRAPH_TYPES.items():
         print(f"  {key}. {value}")
@@ -109,11 +167,38 @@ def choose_graph() -> str:
 
 
 def score_csv_for_dataset(path: Path, dataset: str) -> int:
+    """Return score CSV data for dataset for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = score_csv_for_dataset(path=Path("path/to/resource"), dataset="2d_time")
+    """
     name = path.name.lower()
     return sum(1 for hint in DATASET_HINTS.get(dataset, []) if hint in name)
 
 
 def choose_csv(project_root: Path, dataset: str) -> Path:
+    """Choose CSV data according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_csv(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     csvs = list_csv_files(project_root)
     if not csvs:
         raise FileNotFoundError(f"No CSV files found in {project_root / 'results' / 'final_values'}.")
@@ -125,12 +210,31 @@ def choose_csv(project_root: Path, dataset: str) -> Path:
 
 
 def parse_value_cols(raw: str | None) -> list[str] | None:
+    """Parse value cols into a validated representation.
+
+    Args:
+        raw (str | None): Text value specifying raw.
+
+    Returns:
+        list[str] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = parse_value_cols(raw="raw")
+    """
     if not raw:
         return None
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(description="Create thesis result graphs from existing CSV files.")
     parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--dataset", choices=list(DATASETS.values()), default=None)
@@ -156,6 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = build_parser()
     args = parser.parse_args()
 

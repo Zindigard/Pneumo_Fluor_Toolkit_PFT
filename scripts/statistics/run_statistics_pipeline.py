@@ -1,3 +1,20 @@
+r"""Provide command-line and programmatic utilities for run statistics pipeline.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/run_statistics_pipeline.py --help
+
+Representative execution:
+
+    python scripts/statistics/run_statistics_pipeline.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --sample WT_HADA_NHS_40min_ROI1_SIM \
+        --example
+"""
+
 from __future__ import annotations
 
 """Run PCA, normalization and graph generation with one command."""
@@ -12,6 +29,20 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def find_project_root(explicit: Path | None = None) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        explicit (Path | None): Filesystem path used for explicit. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     if explicit is not None:
         return explicit.expanduser().resolve()
     current = SCRIPT_FILE.resolve()
@@ -22,12 +53,29 @@ def find_project_root(explicit: Path | None = None) -> Path:
 
 
 def run(command: list[str], cwd: Path) -> None:
+    """Run the requested operation using the supplied configuration.
+
+    Args:
+        command (list[str]): Text value specifying command.
+        cwd (Path): Filesystem path used for cwd.
+
+    Example:
+        >>> run(command="command", cwd=Path("path/to/resource"))
+    """
     print("\nRunning:")
     print(" ".join(f'"{part}"' if " " in part else part for part in command))
     subprocess.run(command, cwd=cwd, check=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Run PCA alignment, normalization and graph generation. Normal mode "
@@ -59,6 +107,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     project_root = find_project_root(args.project_root)
     statistics_dir = project_root / "scripts" / "statistics"

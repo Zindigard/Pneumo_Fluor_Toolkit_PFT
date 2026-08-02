@@ -1,7 +1,21 @@
-"""
+r"""
 Interactive tuning of optional 2D Fourier and rolling-ball filters.
 
 This module supports manual comparison experiments.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/tune_freehand.py --help
+
+Representative execution:
+
+    python scripts/denoising/tune_freehand.py \
+        --dataset 2d_time \
+        --fft_size 512 \
+        --image_index 1 \
+        --overwrite_threshold_cache
 """
 
 from __future__ import annotations
@@ -58,7 +72,15 @@ class MaskSpec:
 
     @property
     def label(self) -> str:
-        """Create a short folder-safe name for the selected mask."""
+        """Create a short folder-safe name for the selected mask.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = MaskSpec(...)
+            >>> value = instance.label
+        """
         if self.kind == "soft":
             base = f"soft_r{self.radius}_f{self.feather}"
         elif self.kind == "outer_cross":
@@ -74,7 +96,15 @@ class MaskSpec:
 
     @property
     def human_title(self) -> str:
-        """Create a readable text label for the selected mask."""
+        """Create a readable text label for the selected mask.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = MaskSpec(...)
+            >>> value = instance.human_title
+        """
         if self.kind == "soft":
             return f"soft mask (r={self.radius}, feather={self.feather})"
         if self.kind == "outer_cross":
@@ -88,20 +118,53 @@ class MaskSpec:
 
 
 def list_curated_test_images(dataset: str, zarrs: list[Path]) -> list[Path]:
-    """Return the curated subset available for the chosen dataset."""
+    """Return the curated subset available for the chosen dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_curated_test_images(dataset="2d_time", zarrs=Path("path/to/resource"))
+    """
     want = CURATED_TEST_STEMS.get(dataset, [])
     by_stem = {p.parent.name: p for p in zarrs}
     return [by_stem[s] for s in want if s in by_stem]
 
 
 def missing_curated_test_stems(dataset: str, zarrs: list[Path]) -> list[str]:
-    """Report curated image names that were not found."""
+    """Report curated image names that were not found.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = missing_curated_test_stems(dataset="2d_time", zarrs=Path("path/to/resource"))
+    """
     all_stems = {p.parent.name for p in zarrs}
     return [s for s in CURATED_TEST_STEMS.get(dataset, []) if s not in all_stems]
 
 
 def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute Pearson correlation between two arrays."""
+    """Compute Pearson correlation between two arrays.
+
+    Args:
+        a (np.ndarray): Array containing a.
+        b (np.ndarray): Array containing b.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _pearson_corr(a=image_array, b=image_array)
+    """
     a = a.astype(np.float64, copy=False).ravel()
     b = b.astype(np.float64, copy=False).ravel()
     a = a - a.mean()
@@ -111,7 +174,17 @@ def _pearson_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def neighbor_corr(x: np.ndarray) -> float:
-    """Measure how similar neighboring pixels are."""
+    """Measure how similar neighboring pixels are.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = neighbor_corr(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     vals = []
     if x.shape[1] >= 2:
@@ -122,7 +195,18 @@ def neighbor_corr(x: np.ndarray) -> float:
 
 
 def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
-    """Estimate the strength of strong FFT peaks outside the center."""
+    """Estimate the strength of strong FFT peaks outside the center.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        dc_halfwidth (int): Numerical value controlling dc halfwidth. Defaults to ``8``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = fft_peak_score(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -138,14 +222,35 @@ def fft_peak_score(x: np.ndarray, dc_halfwidth: int = 8) -> float:
 
 
 def gradient_mag_mean(x: np.ndarray) -> float:
-    """Measure average gradient strength in the image."""
+    """Measure average gradient strength in the image.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = gradient_mag_mean(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     gy, gx = np.gradient(x)
     return float(np.mean(np.sqrt(gx * gx + gy * gy)))
 
 
 def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> dict:
-    """Compute summary metrics for the used channels."""
+    """Compute summary metrics for the used channels.
+
+    Args:
+        blue (np.ndarray): Array containing blue.
+        green (np.ndarray | None): Array containing green.
+
+    Returns:
+        dict: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = compute_metrics_per_channel(blue=image_array, green=image_array)
+    """
     out = {
         "blue": {
             "neighbor_corr": neighbor_corr(blue),
@@ -163,7 +268,20 @@ def compute_metrics_per_channel(blue: np.ndarray, green: np.ndarray | None) -> d
 
 
 def write_metrics_block(f, title: str, metrics: dict) -> None:
-    """Write one metrics section into a text file."""
+    """Write one metrics section into a text file.
+
+    Args:
+        f (Any): Value specifying f for the operation.
+        title (str): Title displayed on the generated figure or report section.
+        metrics (dict): Value specifying metrics for the operation.
+
+    Example:
+        >>> write_metrics_block(
+        ...     f=...,
+        ...     title="title",
+        ...     metrics={},
+        ... )
+    """
     f.write(f"\n=== {title} ===\n")
     for ch_name, m in metrics.items():
         f.write(f"\n[{ch_name}]\n")
@@ -172,7 +290,18 @@ def write_metrics_block(f, title: str, metrics: dict) -> None:
 
 
 def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
-    """Build a normalized RGB image from blue and optional green channels."""
+    """Build a normalized RGB image from blue and optional green channels.
+
+    Args:
+        blue (np.ndarray): Array containing blue.
+        green (np.ndarray | None): Array containing green.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _to_rgb_from_blue_green(blue=image_array, green=image_array)
+    """
     B = norm01_percentile(blue)
     G = norm01_percentile(green) if green is not None else np.zeros_like(B)
     R = np.zeros_like(B)
@@ -180,7 +309,18 @@ def _to_rgb_from_blue_green(blue: np.ndarray, green: np.ndarray | None) -> np.nd
 
 
 def _scale_shared_raw(orig: np.ndarray, filt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Scale original and filtered images to the same raw range."""
+    """Scale original and filtered images to the same raw range.
+
+    Args:
+        orig (np.ndarray): Array containing orig.
+        filt (np.ndarray): Array containing filt.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _scale_shared_raw(orig=image_array, filt=image_array)
+    """
     lo = float(min(np.min(orig), np.min(filt)))
     hi = float(max(np.max(orig), np.max(filt)))
     if hi <= lo:
@@ -192,7 +332,25 @@ def _scale_shared_raw(orig: np.ndarray, filt: np.ndarray) -> tuple[np.ndarray, n
 
 
 def _to_rgb_from_blue_green_raw_shared(blue_orig, green_orig, blue_filt, green_filt):
-    """Build two comparable RGB images using one shared raw scale."""
+    """Build two comparable RGB images using one shared raw scale.
+
+    Args:
+        blue_orig (Any): Value specifying blue orig for the operation.
+        green_orig (Any): Value specifying green orig for the operation.
+        blue_filt (Any): Value specifying blue filt for the operation.
+        green_filt (Any): Value specifying green filt for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _to_rgb_from_blue_green_raw_shared(
+        ...     blue_orig=...,
+        ...     green_orig=...,
+        ...     blue_filt=...,
+        ...     green_filt=...,
+        ... )
+    """
     b1, b2 = _scale_shared_raw(np.asarray(blue_orig, dtype=np.float32), np.asarray(blue_filt, dtype=np.float32))
     if green_orig is not None and green_filt is not None:
         g1, g2 = _scale_shared_raw(np.asarray(green_orig, dtype=np.float32), np.asarray(green_filt, dtype=np.float32))
@@ -203,7 +361,14 @@ def _to_rgb_from_blue_green_raw_shared(blue_orig, green_orig, blue_filt, green_f
 
 
 def _make_crimson_cmap():
-    """Create the colormap used for difference views."""
+    """Create the colormap used for difference views.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _make_crimson_cmap()
+    """
     return LinearSegmentedColormap.from_list(
         "black_to_crimson",
         [
@@ -217,7 +382,24 @@ def _make_crimson_cmap():
 
 
 def _plot_rgb_comparison(orig_rgb, filt_rgb, title: str, out_png: Path, *, variant_label: str):
-    """Save a side-by-side RGB comparison with a difference map."""
+    """Save a side-by-side RGB comparison with a difference map.
+
+    Args:
+        orig_rgb (Any): Value specifying orig RGB representation for the operation.
+        filt_rgb (Any): Value specifying filt RGB representation for the operation.
+        title (str): Title displayed on the generated figure or report section.
+        out_png (Path): Filesystem path used for out PNG image.
+        variant_label (str): Text value specifying variant label.
+
+    Example:
+        >>> _plot_rgb_comparison(
+        ...     orig_rgb=...,
+        ...     filt_rgb=...,
+        ...     title="title",
+        ...     out_png=Path("path/to/resource"),
+        ...     variant_label="variant_label",
+        ... )
+    """
     diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
     diff_map = np.mean(diff, axis=-1)
     scale = float(np.percentile(diff_map, 99.7)) + EPS
@@ -248,7 +430,26 @@ def _plot_rgb_comparison(orig_rgb, filt_rgb, title: str, out_png: Path, *, varia
 
 
 def _save_both_comparisons(blue_before, green_before, blue_after, green_after, title: str, out_dir: Path):
-    """Save both raw-scale and normalized RGB comparisons."""
+    """Save both raw-scale and normalized RGB comparisons.
+
+    Args:
+        blue_before (Any): Value specifying blue before for the operation.
+        green_before (Any): Value specifying green before for the operation.
+        blue_after (Any): Value specifying blue after for the operation.
+        green_after (Any): Value specifying green after for the operation.
+        title (str): Title displayed on the generated figure or report section.
+        out_dir (Path): Directory used for out.
+
+    Example:
+        >>> _save_both_comparisons(
+        ...     blue_before=...,
+        ...     green_before=...,
+        ...     blue_after=...,
+        ...     green_after=...,
+        ...     title="title",
+        ...     out_dir=Path("path/to/resource"),
+        ... )
+    """
     raw_orig_rgb, raw_filt_rgb = _to_rgb_from_blue_green_raw_shared(
         blue_before, green_before, blue_after, green_after
     )
@@ -269,7 +470,17 @@ def _save_both_comparisons(blue_before, green_before, blue_after, green_after, t
 
 
 def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
-    """Compute the log-magnitude FFT view of one image."""
+    """Compute the log-magnitude FFT view of one image.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _fft_logmag(img2d=image_array)
+    """
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -277,7 +488,18 @@ def _fft_logmag(img2d: np.ndarray) -> np.ndarray:
 
 
 def _center_crop(img2d: np.ndarray, target: int = 512) -> np.ndarray:
-    """Take a centered crop used for FFT-based tuning."""
+    """Take a centered crop used for FFT-based tuning.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        target (int): Numerical value controlling target. Defaults to ``512``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _center_crop(img2d=image_array)
+    """
     h, w = img2d.shape
     if min(h, w) <= target:
         return img2d
@@ -287,7 +509,22 @@ def _center_crop(img2d: np.ndarray, target: int = 512) -> np.ndarray:
 
 
 def mean_fft_magnitude(zarr_paths: list[Path], *, channel_index: int, fft_size: int = 512) -> np.ndarray:
-    """Compute the mean FFT magnitude over multiple images."""
+    """Compute the mean FFT magnitude over multiple images.
+
+    Args:
+        zarr_paths (list[Path]): Filesystem path used for Zarr paths.
+        channel_index (int): Zero-based index selecting channel.
+        fft_size (int): Size parameter controlling Fourier-transform result. Defaults to ``512``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = mean_fft_magnitude(zarr_paths=Path("path/to/resource"), channel_index=1)
+    """
     acc = None
     used = 0
     for p in zarr_paths:
@@ -315,12 +552,35 @@ def mean_fft_magnitude(zarr_paths: list[Path], *, channel_index: int, fft_size: 
 
 
 def _channel_cmap(name: str) -> str:
-    """Return the display colormap for a channel."""
+    """Return the display colormap for a channel.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _channel_cmap(name="name")
+    """
     return {"blue": "Blues", "green": "Greens"}.get(name, "gray")
 
 
 def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
-    """Show an FFT image with stable display scaling."""
+    """Show an FFT image with stable display scaling.
+
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        fft_img (np.ndarray): Array containing Fourier-transform result img.
+        cmap (str): Matplotlib colormap used to display scalar image intensities.
+
+    Example:
+        >>> _imshow_fft(
+        ...     ax=...,
+        ...     fft_img=image_array,
+        ...     cmap="cmap",
+        ... )
+    """
     vmin = float(np.percentile(fft_img, 1.0))
     vmax = float(np.percentile(fft_img, 99.7))
     if vmax <= vmin:
@@ -330,7 +590,18 @@ def _imshow_fft(ax, fft_img: np.ndarray, cmap: str):
 
 
 def _prompt_bool(prompt: str, default: bool = False) -> bool:
-    """Ask the user for a yes or no answer."""
+    """Ask the user for a yes or no answer.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (bool): Boolean flag controlling default. Defaults to ``False``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _prompt_bool(prompt="prompt")
+    """
     suffix = "Y/n" if default else "y/N"
     val = input(f"{prompt.strip()} [{suffix}]: ").strip().lower()
     if not val:
@@ -339,7 +610,18 @@ def _prompt_bool(prompt: str, default: bool = False) -> bool:
 
 
 def _prompt_int(prompt: str, default: int) -> int:
-    """Ask the user for an integer value."""
+    """Ask the user for an integer value.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (int): Numerical value controlling default.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _prompt_int(prompt="prompt", default=1)
+    """
     s = input(prompt).strip()
     if not s:
         return default
@@ -347,7 +629,18 @@ def _prompt_int(prompt: str, default: int) -> int:
 
 
 def _prompt_float(prompt: str, default: float) -> float:
-    """Ask the user for a float value."""
+    """Ask the user for a float value.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (float): Numerical value controlling default.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _prompt_float(prompt="prompt", default=0.5)
+    """
     s = input(prompt).strip()
     if not s:
         return default
@@ -355,7 +648,14 @@ def _prompt_float(prompt: str, default: float) -> float:
 
 
 def _choose_dataset_interactive() -> str:
-    """Let the user choose which dataset to use."""
+    """Let the user choose which dataset to use.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_dataset_interactive()
+    """
     print("Choose dataset:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
@@ -369,7 +669,14 @@ def _choose_dataset_interactive() -> str:
 
 
 def _choose_mode_interactive() -> str:
-    """Let the user choose whether to process one or many images."""
+    """Let the user choose whether to process one or many images.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_mode_interactive()
+    """
     print("Choose mode:")
     print("  1) One image")
     print("  2) Tune on curated subset using mean FFT")
@@ -382,7 +689,26 @@ def _choose_mode_interactive() -> str:
 
 
 def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
-    """Let the user click a center-based mask radius on the FFT."""
+    """Let the user click a center-based mask radius on the FFT.
+
+    Args:
+        mean_fft (np.ndarray): Array containing mean Fourier-transform result.
+        title (str): Title displayed on the generated figure or report section.
+        cmap (str): Matplotlib colormap used to display scalar image intensities.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pick_radius_centered(
+        ...     mean_fft=image_array,
+        ...     title="title",
+        ...     cmap="cmap",
+        ... )
+    """
     h, w = mean_fft.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
     fig, ax = plt.subplots()
@@ -404,7 +730,14 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
     selected = {"r": None}
 
     def on_move(event):
-        """Update the preview radius while the mouse moves."""
+        """Update the preview radius while the mouse moves.
+
+        Args:
+            event (Any): Event object supplied by the graphical user interface or callback framework.
+
+        Example:
+            >>> on_move(event=event)
+        """
         if event.inaxes != ax or event.xdata is None or event.ydata is None:
             return
         r = float(np.sqrt((event.xdata - cx) ** 2 + (event.ydata - cy) ** 2))
@@ -413,7 +746,14 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
         fig.canvas.draw_idle()
 
     def on_click(event):
-        """Store the chosen radius when the user clicks."""
+        """Store the chosen radius when the user clicks.
+
+        Args:
+            event (Any): Event object supplied by the graphical user interface or callback framework.
+
+        Example:
+            >>> on_click(event=event)
+        """
         if event.inaxes != ax or event.xdata is None or event.ydata is None:
             return
         r = float(np.sqrt((event.xdata - cx) ** 2 + (event.ydata - cy) ** 2))
@@ -432,7 +772,26 @@ def _pick_radius_centered(mean_fft: np.ndarray, title: str, cmap: str) -> int:
 
 
 def _pick_multiple_rectangles_on_fft(fft_img: np.ndarray, title: str, cmap: str) -> list[tuple[int, int, int, int]]:
-    """Let the user draw FFT rectangles to suppress selected regions."""
+    """Let the user draw FFT rectangles to suppress selected regions.
+
+    Args:
+        fft_img (np.ndarray): Array containing Fourier-transform result img.
+        title (str): Title displayed on the generated figure or report section.
+        cmap (str): Matplotlib colormap used to display scalar image intensities.
+
+    Returns:
+        list[tuple[int, int, int, int]]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pick_multiple_rectangles_on_fft(
+        ...     fft_img=image_array,
+        ...     title="title",
+        ...     cmap="cmap",
+        ... )
+    """
     fig, ax = plt.subplots()
     fig.patch.set_facecolor("black")
     ax.set_facecolor("black")
@@ -442,7 +801,15 @@ def _pick_multiple_rectangles_on_fft(fft_img: np.ndarray, title: str, cmap: str)
     selected: list[tuple[int, int, int, int]] = []
 
     def on_select(eclick, erelease):
-        """Store one drawn rectangle."""
+        """Store one drawn rectangle.
+
+        Args:
+            eclick (Any): Value specifying eclick for the operation.
+            erelease (Any): Value specifying erelease for the operation.
+
+        Example:
+            >>> on_select(eclick=..., erelease=...)
+        """
         if eclick.xdata is None or eclick.ydata is None or erelease.xdata is None or erelease.ydata is None:
             return
         x0, x1 = sorted([int(round(eclick.xdata)), int(round(erelease.xdata))])
@@ -463,14 +830,41 @@ def _pick_multiple_rectangles_on_fft(fft_img: np.ndarray, title: str, cmap: str)
 
 
 def _collect_dataset_channel_info(dataset: str, zarrs: list[Path]) -> tuple[list[int], list[str]]:
-    """Return the channels that should be used for this dataset."""
+    """Return the channels that should be used for this dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+
+    Returns:
+        tuple[list[int], list[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _collect_dataset_channel_info(dataset="2d_time", zarrs=Path("path/to/resource"))
+    """
     if dataset == "2d_time":
         return [0], ["blue"]
     return [0, 1], ["blue", "green"]
 
 
 def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.ndarray:
-    """Extract one 2D display plane from the loaded image."""
+    """Extract one 2D display plane from the loaded image.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        channel_index (int): Zero-based index selecting channel.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _extract_display_plane(
+        ...     x=image_array,
+        ...     axes="axes",
+        ...     channel_index=1,
+        ... )
+    """
     if "c" in axes:
         plane = np.take(x, indices=channel_index, axis=axes.index("c"))
     else:
@@ -481,7 +875,18 @@ def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.n
 
 
 def _load_planes(in_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | None]:
-    """Load the main blue plane and optional green plane."""
+    """Load the main blue plane and optional green plane.
+
+    Args:
+        in_path (Path): Filesystem path associated with in.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _load_planes(in_path=Path("path/to/resource"), dataset="2d_time")
+    """
     arr, axes = load_ome_zarr(in_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -491,7 +896,21 @@ def _load_planes(in_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | 
 
 
 def _build_mask(shape: tuple[int, int], spec: MaskSpec) -> np.ndarray:
-    """Create the FFT-domain keep mask from the chosen settings."""
+    """Create the FFT-domain keep mask from the chosen settings.
+
+    Args:
+        shape (tuple[int, int]): Target or observed array shape.
+        spec (MaskSpec): Value specifying spec for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _build_mask(shape=1, spec=...)
+    """
     h, w = shape
     yy, xx = np.indices((h, w), dtype=np.float32)
     cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
@@ -540,7 +959,18 @@ def _build_mask(shape: tuple[int, int], spec: MaskSpec) -> np.ndarray:
 
 
 def _apply_frequency_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
-    """Apply one FFT mask to a single image plane."""
+    """Apply one FFT mask to a single image plane.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        mask_keep (np.ndarray): Array containing mask keep.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _apply_frequency_mask_one_plane(img2d=image_array, mask_keep=image_array)
+    """
     x = np.asarray(img2d, dtype=np.float32)
     mean_val = float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x - mean_val))
@@ -549,7 +979,23 @@ def _apply_frequency_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) ->
 
 
 def _pick_filter_channels(dataset: str, axes: str, x: np.ndarray) -> list[int]:
-    """Choose which channels should be filtered."""
+    """Choose which channels should be filtered.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _pick_filter_channels(
+        ...     dataset="2d_time",
+        ...     axes="axes",
+        ...     x=image_array,
+        ... )
+    """
     if "c" not in axes:
         return [0]
     if dataset == "2d_time":
@@ -558,7 +1004,26 @@ def _pick_filter_channels(dataset: str, axes: str, x: np.ndarray) -> list[int]:
 
 
 def _write_single_metrics_report(path: Path, dataset: str, stem: str, spec: MaskSpec, before: dict, after: dict) -> None:
-    """Save one text report with before and after metrics."""
+    """Save one text report with before and after metrics.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        stem (str): Text value specifying stem.
+        spec (MaskSpec): Value specifying spec for the operation.
+        before (dict): Value specifying before for the operation.
+        after (dict): Value specifying after for the operation.
+
+    Example:
+        >>> _write_single_metrics_report(
+        ...     path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     stem="stem",
+        ...     spec=...,
+        ...     before={},
+        ...     after={},
+        ... )
+    """
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"dataset: {dataset}\nimage: {stem}\nmask: {spec.human_title}\n")
         write_metrics_block(f, "before", before)
@@ -566,7 +1031,25 @@ def _write_single_metrics_report(path: Path, dataset: str, stem: str, spec: Mask
 
 
 def _rows_for_batch(stem: str, spec: MaskSpec, before: dict, after: dict) -> list[dict]:
-    """Convert one image result into batch summary rows."""
+    """Convert one image result into batch summary rows.
+
+    Args:
+        stem (str): Text value specifying stem.
+        spec (MaskSpec): Value specifying spec for the operation.
+        before (dict): Value specifying before for the operation.
+        after (dict): Value specifying after for the operation.
+
+    Returns:
+        list[dict]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _rows_for_batch(
+        ...     stem="stem",
+        ...     spec=...,
+        ...     before={},
+        ...     after={},
+        ... )
+    """
     rows = []
     for ch_name in before:
         row = {"image": stem, "channel": ch_name, "mask": spec.label}
@@ -579,7 +1062,22 @@ def _rows_for_batch(stem: str, spec: MaskSpec, before: dict, after: dict) -> lis
 
 
 def _write_batch_summary_txt(path: Path, rows: list[dict], dataset: str, spec: MaskSpec) -> None:
-    """Write a batch summary table into a text file."""
+    """Write a batch summary table into a text file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict]): Value specifying rows for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        spec (MaskSpec): Value specifying spec for the operation.
+
+    Example:
+        >>> _write_batch_summary_txt(
+        ...     path=Path("path/to/resource"),
+        ...     rows=[],
+        ...     dataset="2d_time",
+        ...     spec=...,
+        ... )
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"dataset: {dataset}\nmask: {spec.human_title}\n\n")
@@ -593,7 +1091,21 @@ def _write_batch_summary_txt(path: Path, rows: list[dict], dataset: str, spec: M
 
 
 def _path_to_index(zarrs: list[Path], target: Path) -> int:
-    """Find the index of one image path in the loaded list."""
+    """Find the index of one image path in the loaded list.
+
+    Args:
+        zarrs (list[Path]): Filesystem path used for zarrs.
+        target (Path): Filesystem path used for target.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _path_to_index(zarrs=Path("path/to/resource"), target=Path("path/to/resource"))
+    """
     for i, p in enumerate(zarrs):
         if p == target:
             return i
@@ -608,7 +1120,26 @@ def _save_mean_and_example_fft_overlays(
     dataset: str,
     fft_size: int,
 ):
-    """Save FFT overlays for the tuned mask and one example image."""
+    """Save FFT overlays for the tuned mask and one example image.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        mean_ffts (Dict[str, np.ndarray]): Array containing mean ffts.
+        spec (MaskSpec): Value specifying spec for the operation.
+        example_path (Path): Filesystem path associated with example.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        fft_size (int): Size parameter controlling Fourier-transform result.
+
+    Example:
+        >>> _save_mean_and_example_fft_overlays(
+        ...     out_dir=Path("path/to/resource"),
+        ...     mean_ffts=image_array,
+        ...     spec=...,
+        ...     example_path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     fft_size=1,
+        ... )
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, fft_img in mean_ffts.items():
         _save_fft_with_mask_overlay(
@@ -646,7 +1177,18 @@ def _save_mean_and_example_fft_overlays(
 
 
 def _mirror_rect_on_fft(rect: tuple[int, int, int, int], shape: tuple[int, int]) -> tuple[int, int, int, int]:
-    """Return the mirrored FFT rectangle for the opposite side."""
+    """Return the mirrored FFT rectangle for the opposite side.
+
+    Args:
+        rect (tuple[int, int, int, int]): Numerical value controlling rect.
+        shape (tuple[int, int]): Target or observed array shape.
+
+    Returns:
+        tuple[int, int, int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _mirror_rect_on_fft(rect=1, shape=1)
+    """
     x0, y0, rw, rh = rect
     h, w = shape
     x1 = x0 + rw - 1
@@ -655,7 +1197,27 @@ def _mirror_rect_on_fft(rect: tuple[int, int, int, int], shape: tuple[int, int])
 
 
 def _save_fft_with_mask_overlay(fft_img, mask_keep, out_png: Path, title: str, cmap: str, spec: MaskSpec, linewidth: int = 3):
-    """Save an FFT view with the chosen mask drawn on top."""
+    """Save an FFT view with the chosen mask drawn on top.
+
+    Args:
+        fft_img (Any): Value specifying Fourier-transform result img for the operation.
+        mask_keep (Any): Value specifying mask keep for the operation.
+        out_png (Path): Filesystem path used for out PNG image.
+        title (str): Title displayed on the generated figure or report section.
+        cmap (str): Matplotlib colormap used to display scalar image intensities.
+        spec (MaskSpec): Value specifying spec for the operation.
+        linewidth (int): Numerical value controlling linewidth. Defaults to ``3``.
+
+    Example:
+        >>> _save_fft_with_mask_overlay(
+        ...     fft_img=...,
+        ...     mask_keep=...,
+        ...     out_png=Path("path/to/resource"),
+        ...     title="title",
+        ...     cmap="cmap",
+        ...     spec=...,
+        ... )
+    """
     h, w = fft_img.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
     fig, ax = plt.subplots()
@@ -705,7 +1267,19 @@ def _save_fft_with_mask_overlay(fft_img, mask_keep, out_png: Path, title: str, c
 
 
 def _prompt_mask_spec_interactive(default_radius: int = 72, default_feather: int = 15, allow_fft_rect_delete: bool = True) -> MaskSpec:
-    """Ask the user to choose the FFT mask type and its settings."""
+    """Ask the user to choose the FFT mask type and its settings.
+
+    Args:
+        default_radius (int): Numerical value controlling default radius. Defaults to ``72``.
+        default_feather (int): Numerical value controlling default feather. Defaults to ``15``.
+        allow_fft_rect_delete (bool): Boolean flag controlling whether to Fourier-transform result rect delete. Defaults to ``True``.
+
+    Returns:
+        MaskSpec: Result produced by the operation.
+
+    Example:
+        >>> result = _prompt_mask_spec_interactive()
+    """
     print("Mask type:")
     print("  1) circle")
     print("  2) soft")
@@ -739,7 +1313,20 @@ def _prompt_mask_spec_for_selected_radius(
     default_band_halfwidth: int = 8,
     default_depth: float = 0.7,
 ) -> MaskSpec:
-    """Ask for the final mask style after a radius was selected."""
+    """Ask for the final mask style after a radius was selected.
+
+    Args:
+        radius (int): Radius of the local neighborhood or morphological structuring element.
+        default_feather (int): Numerical value controlling default feather. Defaults to ``15``.
+        default_band_halfwidth (int): Numerical value controlling default band halfwidth. Defaults to ``8``.
+        default_depth (float): Numerical value controlling default depth. Defaults to ``0.7``.
+
+    Returns:
+        MaskSpec: Result produced by the operation.
+
+    Example:
+        >>> result = _prompt_mask_spec_for_selected_radius(radius=1)
+    """
     print("Mask type for selected radius:")
     print("  1) circle")
     print("  2) soft")
@@ -760,7 +1347,30 @@ def _prompt_mask_spec_for_selected_radius(
 
 
 def _process_one_image(dataset: str, idx: int, zarrs: list[Path], spec: MaskSpec, fft_size: int) -> tuple[Path, dict, dict]:
-    """Apply one FFT filter configuration to a single image."""
+    """Apply one FFT filter configuration to a single image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        idx (int): Numerical value controlling idx.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+        spec (MaskSpec): Value specifying spec for the operation.
+        fft_size (int): Size parameter controlling Fourier-transform result.
+
+    Returns:
+        tuple[Path, dict, dict]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _process_one_image(
+        ...     dataset="2d_time",
+        ...     idx=1,
+        ...     zarrs=Path("path/to/resource"),
+        ...     spec=...,
+        ...     fft_size=1,
+        ... )
+    """
     in_path = zarrs[idx]
     stem = in_path.parent.name
 
@@ -816,7 +1426,27 @@ def _process_one_image(dataset: str, idx: int, zarrs: list[Path], spec: MaskSpec
 
 
 def _process_one_image_fft_rect_delete(dataset: str, idx: int, zarrs: list[Path]) -> tuple[Path, dict, dict]:
-    """Apply FFT rectangle deletion to one selected image."""
+    """Apply FFT rectangle deletion to one selected image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        idx (int): Numerical value controlling idx.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+
+    Returns:
+        tuple[Path, dict, dict]: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _process_one_image_fft_rect_delete(
+        ...     dataset="2d_time",
+        ...     idx=1,
+        ...     zarrs=Path("path/to/resource"),
+        ... )
+    """
     in_path = zarrs[idx]
     stem = in_path.parent.name
 
@@ -903,7 +1533,27 @@ def _process_one_image_fft_rect_delete(dataset: str, idx: int, zarrs: list[Path]
 
 
 def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list[Path], spec: MaskSpec, fft_size: int) -> Path:
-    """Run the selected FFT filtering on the curated subset."""
+    """Run the selected FFT filtering on the curated subset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+        curated_paths (list[Path]): Filesystem path used for curated paths.
+        spec (MaskSpec): Value specifying spec for the operation.
+        fft_size (int): Size parameter controlling Fourier-transform result.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _process_curated_subset(
+        ...     dataset="2d_time",
+        ...     zarrs=Path("path/to/resource"),
+        ...     curated_paths=Path("path/to/resource"),
+        ...     spec=...,
+        ...     fft_size=1,
+        ... )
+    """
     batch_rows: list[dict] = []
     for p in curated_paths:
         idx = _path_to_index(zarrs, p)
@@ -916,12 +1566,40 @@ def _process_curated_subset(dataset: str, zarrs: list[Path], curated_paths: list
 
 
 def _rolling_ball_subtract_one_plane(img2d: np.ndarray, radius: int) -> tuple[np.ndarray, np.ndarray]:
-    """Backward-compatible wrapper around the public rolling-ball function."""
+    """Backward-compatible wrapper around the public rolling-ball function.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        radius (int): Radius of the local neighborhood or morphological structuring element.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _rolling_ball_subtract_one_plane(img2d=image_array, radius=1)
+    """
     return apply_rolling_ball_2d(img2d, radius=radius)
 
 
 def _save_rolling_ball_preview(before: np.ndarray, background: np.ndarray, after: np.ndarray, title: str, out_png: Path) -> None:
-    """Save a preview of rolling-ball background subtraction."""
+    """Save a preview of rolling-ball background subtraction.
+
+    Args:
+        before (np.ndarray): Array containing before.
+        background (np.ndarray): Array containing background.
+        after (np.ndarray): Array containing after.
+        title (str): Title displayed on the generated figure or report section.
+        out_png (Path): Filesystem path used for out PNG image.
+
+    Example:
+        >>> _save_rolling_ball_preview(
+        ...     before=image_array,
+        ...     background=image_array,
+        ...     after=image_array,
+        ...     title="title",
+        ...     out_png=Path("path/to/resource"),
+        ... )
+    """
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 3, 1)
     ax2 = fig.add_subplot(1, 3, 2)
@@ -948,7 +1626,28 @@ def _save_rolling_ball_preview(before: np.ndarray, background: np.ndarray, after
 
 
 def _process_one_image_rolling_ball(dataset: str, idx: int, zarrs: list[Path], radius: int) -> tuple[Path, dict, dict]:
-    """Apply rolling-ball background subtraction to one image."""
+    """Apply rolling-ball background subtraction to one image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        idx (int): Numerical value controlling idx.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+        radius (int): Radius of the local neighborhood or morphological structuring element.
+
+    Returns:
+        tuple[Path, dict, dict]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _process_one_image_rolling_ball(
+        ...     dataset="2d_time",
+        ...     idx=1,
+        ...     zarrs=Path("path/to/resource"),
+        ...     radius=1,
+        ... )
+    """
     in_path = zarrs[idx]
     stem = in_path.parent.name
 
@@ -1031,7 +1730,25 @@ def _process_one_image_rolling_ball(dataset: str, idx: int, zarrs: list[Path], r
 
 
 def _process_curated_subset_rolling_ball(dataset: str, zarrs: list[Path], curated_paths: list[Path], radius: int) -> Path:
-    """Run rolling-ball background subtraction on the curated subset."""
+    """Run rolling-ball background subtraction on the curated subset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+        curated_paths (list[Path]): Filesystem path used for curated paths.
+        radius (int): Radius of the local neighborhood or morphological structuring element.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _process_curated_subset_rolling_ball(
+        ...     dataset="2d_time",
+        ...     zarrs=Path("path/to/resource"),
+        ...     curated_paths=Path("path/to/resource"),
+        ...     radius=1,
+        ... )
+    """
     batch_rows: list[dict] = []
     for p in curated_paths:
         idx = _path_to_index(zarrs, p)
@@ -1050,7 +1767,14 @@ def _process_curated_subset_rolling_ball(dataset: str, zarrs: list[Path], curate
 
 
 def _choose_processing_family_interactive() -> str:
-    """Let the user choose the processing family."""
+    """Let the user choose the processing family.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_processing_family_interactive()
+    """
     print("Choose processing family:")
     print("  1) FFT mask filtering")
     print("  2) Rolling-ball background subtraction")
@@ -1062,7 +1786,14 @@ def _choose_processing_family_interactive() -> str:
 
 
 def main():
-    """Run the interactive workflow for thresholded filtering and tuning."""
+    """Run the interactive workflow for thresholded filtering and tuning.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=False, choices=["2d_time", "2d_wga_dapi", "2d_dpa_wagi"])
     ap.add_argument("--fft_size", type=int, default=512)

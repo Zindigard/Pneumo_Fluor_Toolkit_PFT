@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for omnipose run two-dimensional data wga dapi core."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +18,17 @@ FAMILY = "omnipose"
 
 
 def _default_model(project_root: Path) -> Path | None:
+    """Return default model for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_model(project_root=Path("path/to/resource"))
+    """
     root = model_root(project_root, FAMILY, DATASET)
     candidates = [p for p in sorted(root.glob("**/*"), key=lambda x: x.stat().st_mtime if x.is_file() else 0, reverse=True) if p.is_file()]
     for p in candidates:
@@ -25,6 +38,17 @@ def _default_model(project_root: Path) -> Path | None:
 
 
 def _build_model(cfg: "OmniposeRunConfig"):
+    """Build model from the supplied inputs.
+
+    Args:
+        cfg ("OmniposeRunConfig"): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _build_model(cfg=config)
+    """
     try:
         from cellpose_omni import models
     except Exception:
@@ -42,6 +66,23 @@ def _build_model(cfg: "OmniposeRunConfig"):
 
 
 def _eval_2d(model, img: np.ndarray, cfg: "OmniposeRunConfig") -> np.ndarray:
+    """Return eval two-dimensional data for the supplied inputs.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        img (np.ndarray): Array containing img.
+        cfg ("OmniposeRunConfig"): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _eval_2d(
+        ...     model="model_name",
+        ...     img=image_array,
+        ...     cfg=config,
+        ... )
+    """
     res = model.eval(
         img,
         channels=cfg.cellpose_channels,
@@ -56,6 +97,7 @@ def _eval_2d(model, img: np.ndarray, cfg: "OmniposeRunConfig") -> np.ndarray:
 
 @dataclass
 class OmniposeRunConfig:
+    """Store validated configuration or result data for omnipose run config."""
     project_root: Path
     model_path: Path | None = None
     model_type: str = "cyto2_omni"
@@ -69,12 +111,29 @@ class OmniposeRunConfig:
     channels: tuple[int, ...] | None = None
 
     def __post_init__(self):
+        """Return post init for the supplied inputs.
+
+        Example:
+            >>> instance = OmniposeRunConfig(...)
+            >>> instance.__post_init__()
+        """
         if self.channels is None:
             self.channels = (0, 1) if DATASET == "2d_wga_dapi" else (0,)
         self.nchan = len(self.channels)
 
 
 def run_omnipose_2d_wga_dapi(cfg: OmniposeRunConfig | None = None) -> list[Path]:
+    """Run omnipose two-dimensional data wga dapi using the supplied configuration.
+
+    Args:
+        cfg (OmniposeRunConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_omnipose_2d_wga_dapi()
+    """
     if cfg is None:
         cfg = OmniposeRunConfig(project_root=find_project_root())
     model, model_ref = _build_model(cfg)

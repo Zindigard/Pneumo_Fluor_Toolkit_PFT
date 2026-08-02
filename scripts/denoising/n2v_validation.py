@@ -63,7 +63,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def find_project_root() -> Path:
-    """Locate the repository root containing ``scripts`` and ``src/PFT``."""
+    """Locate the repository root containing ``scripts`` and ``src/PFT``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
 
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
@@ -119,7 +129,18 @@ class InferenceRecord:
 
 
 def choose_from_list(items: Sequence[str], prompt: str) -> int:
-    """Return the zero-based index selected from a numbered terminal list."""
+    """Return the zero-based index selected from a numbered terminal list.
+
+    Args:
+        items (Sequence[str]): Text value specifying items.
+        prompt (str): Text value specifying prompt.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = choose_from_list(items="items", prompt="prompt")
+    """
 
     print(prompt)
     for index, item in enumerate(items, start=1):
@@ -136,7 +157,21 @@ def choose_from_list(items: Sequence[str], prompt: str) -> int:
 
 
 def load_source_stack(sample_zarr: Path, spec: N2VModelSpec) -> np.ndarray:
-    """Load the model-specific original stack as raw-range ``N,Y,X,C`` data."""
+    """Load the model-specific original stack as raw-range ``N,Y,X,C`` data.
+
+    Args:
+        sample_zarr (Path): Filesystem path used for sample Zarr.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_source_stack(sample_zarr=Path("path/to/resource"), spec=...)
+    """
 
     channel_stacks: list[np.ndarray] = []
     for channel in spec.channels:
@@ -163,7 +198,20 @@ def load_source_stack(sample_zarr: Path, spec: N2VModelSpec) -> np.ndarray:
 
 
 def prediction_storage_layout(prediction_yxc: np.ndarray) -> tuple[np.ndarray, str]:
-    """Convert one YXC prediction to OME-NGFF ``yx`` or ``cyx`` storage order."""
+    """Convert one YXC prediction to OME-NGFF ``yx`` or ``cyx`` storage order.
+
+    Args:
+        prediction_yxc (np.ndarray): Array containing prediction yxc.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prediction_storage_layout(prediction_yxc=image_array)
+    """
 
     prediction = np.asarray(prediction_yxc, dtype=np.float32)
     if prediction.ndim != 3:
@@ -174,7 +222,19 @@ def prediction_storage_layout(prediction_yxc: np.ndarray) -> tuple[np.ndarray, s
 
 
 def percentile_display_limits(image: np.ndarray, low: float = 1.0, high: float = 99.8) -> tuple[float, float]:
-    """Return robust display limits without modifying numeric source data."""
+    """Return robust display limits without modifying numeric source data.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        low (float): Numerical value controlling low. Defaults to ``1.0``.
+        high (float): Numerical value controlling high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = percentile_display_limits(image=image_array)
+    """
 
     array = np.asarray(image, dtype=np.float32)
     minimum, maximum = np.percentile(array, (low, high))
@@ -187,14 +247,36 @@ def percentile_display_limits(image: np.ndarray, low: float = 1.0, high: float =
 
 
 def normalize_for_display(image: np.ndarray, limits: tuple[float, float]) -> np.ndarray:
-    """Create a clipped [0,1] display array using externally supplied limits."""
+    """Create a clipped [0,1] display array using externally supplied limits.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        limits (tuple[float, float]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = normalize_for_display(image=image_array, limits=0.5)
+    """
 
     low, high = limits
     return np.clip((np.asarray(image, dtype=np.float32) - low) / (high - low), 0.0, 1.0)
 
 
 def rgb_from_channels(image_yxc: np.ndarray, limits: Sequence[tuple[float, float]]) -> np.ndarray:
-    """Create a display-only RGB image with DAPI/HADA blue and WGA green."""
+    """Create a display-only RGB image with DAPI/HADA blue and WGA green.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        limits (Sequence[tuple[float, float]]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = rgb_from_channels(image_yxc=image_array, limits=0.5)
+    """
 
     image = np.asarray(image_yxc, dtype=np.float32)
     rgb = np.zeros((*image.shape[:2], 3), dtype=np.float32)
@@ -218,6 +300,20 @@ def save_comparison_outputs(
     Raw-derived display limits are also applied to the N2V image.  The absolute
     residual is calculated from unnormalized numeric arrays and saved as
     ``float32``.  These visualization files do not affect the OME-Zarr output.
+
+    Args:
+        raw_yxc (np.ndarray): Array containing raw yxc.
+        prediction_yxc (np.ndarray): Array containing prediction yxc.
+        output_directory (Path): Directory used for output.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> save_comparison_outputs(
+        ...     raw_yxc=image_array,
+        ...     prediction_yxc=image_array,
+        ...     output_directory=Path("path/to/resource"),
+        ...     title="title",
+        ... )
     """
 
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -265,7 +361,30 @@ def process_sample(
     overwrite: bool,
     save_comparison: bool,
 ) -> InferenceRecord:
-    """Denoise one sample frame, save OME-Zarr provenance, and return a report row."""
+    """Denoise one sample frame, save OME-Zarr provenance, and return a report row.
+
+    Args:
+        sample_zarr (Path): Filesystem path used for sample Zarr.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        frame_index (int): Zero-based index selecting frame.
+        overwrite (bool): Whether an existing output may be replaced.
+        save_comparison (bool): Boolean flag controlling save comparison.
+
+    Returns:
+        InferenceRecord: Result produced by the operation.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_sample(
+        ...     sample_zarr=Path("path/to/resource"),
+        ...     spec=...,
+        ...     frame_index=1,
+        ...     overwrite=True,
+        ...     save_comparison=True,
+        ... )
+    """
 
     sample = sample_name_from_zarr(sample_zarr)
     output_zarr = (
@@ -361,7 +480,18 @@ def process_sample(
 
 
 def save_run_report(records: Sequence[InferenceRecord], spec: N2VModelSpec) -> Path:
-    """Save CSV, JSON, and TXT summaries for one inference command."""
+    """Save CSV, JSON, and TXT summaries for one inference command.
+
+    Args:
+        records (Sequence[InferenceRecord]): Value specifying records for the operation.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_run_report(records=[], spec=...)
+    """
 
     report_dir = n2v_results_root(PROJECT_ROOT) / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -404,7 +534,14 @@ def save_run_report(records: Sequence[InferenceRecord], spec: N2VModelSpec) -> P
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser for one/all sample inference."""
+    """Create the command-line parser for one/all sample inference.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
 
     parser = argparse.ArgumentParser(
         description="Run one trained 2D N2V model on one or all original OME-Zarr images.",
@@ -422,7 +559,27 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_samples(
     *, spec: N2VModelSpec, scope: str | None, sample_name: str | None
 ) -> list[Path]:
-    """Resolve one or all source samples, using terminal menus when needed."""
+    """Resolve one or all source samples, using terminal menus when needed.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        scope (str | None): Text value specifying scope.
+        sample_name (str | None): Text value specifying sample name.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_samples(
+        ...     spec=...,
+        ...     scope="scope",
+        ...     sample_name="sample_name",
+        ... )
+    """
 
     samples = discover_original_samples(spec, PROJECT_ROOT)
     if not samples:
@@ -451,7 +608,17 @@ def resolve_samples(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run model selection, source selection, inference, and report generation."""
+    """Run model selection, source selection, inference, and report generation.
+
+    Args:
+        argv (list[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
 
     args = build_parser().parse_args(argv)
     model_key = args.model or choose_model_key_interactive("Choose the N2V model for inference")

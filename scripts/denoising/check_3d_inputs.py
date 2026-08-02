@@ -1,9 +1,24 @@
-"""Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
+r"""Validate 3D raw data and sparse 2.5D U-Net annotations before processing.
 
 Each source volume has one manually selected target slice defined in the shared
 3D target-slice map. The binary TIFF is stored as
 ``results/training_files/U-net/3d_25d/<experiment>/<sample>/zNNN_mask.tif``.
 Neighbouring Z-1 and Z+1 slices are read automatically during 2.5D training.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/check_3d_inputs.py --help
+
+Representative execution:
+
+    python scripts/denoising/check_3d_inputs.py \
+        --root results/img/3d_data \
+        --level 0 \
+        --mask-root results/training_files/U-net \
+        --check-masks \
+        --annotated-only
 """
 
 from __future__ import annotations
@@ -16,6 +31,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -34,12 +60,34 @@ from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
 
 
 def _find_zarrs(root: Path) -> list[Path]:
+    """Find zarrs in the available data or project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _find_zarrs(root=Path("path/to/resource"))
+    """
     if root.name.endswith(".ome.zarr") and root.is_dir():
         return [root]
     return sorted(path for path in root.rglob("image.ome.zarr") if path.is_dir())
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Check all 3D OME-Zarr and 2.5D U-Net annotation inputs.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

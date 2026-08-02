@@ -1,3 +1,19 @@
+r"""Provide command-line and programmatic utilities for normalize aligned cells.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/normalize_aligned_cells.py --help
+
+Representative execution:
+
+    python scripts/statistics/normalize_aligned_cells.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --example
+"""
+
 from __future__ import annotations
 
 """Normalize PCA-aligned cells for one dataset or all supported datasets.
@@ -26,6 +42,14 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _import_common():
+    """Return import common for the supplied inputs.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _import_common()
+    """
     local_dir = SCRIPT_FILE.parent
     if str(local_dir) not in sys.path:
         sys.path.insert(0, str(local_dir))
@@ -52,6 +76,17 @@ COMMON = _import_common()
 
 
 def import_display_helper(project_root: Path):
+    """Return import display helper for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = import_display_helper(project_root=Path("path/to/resource"))
+    """
     script_dir = project_root / "scripts" / "statistics"
     if str(script_dir) not in sys.path:
         sys.path.insert(0, str(script_dir))
@@ -67,6 +102,7 @@ def import_display_helper(project_root: Path):
 
 @dataclass(frozen=True)
 class NormalizationResult:
+    """Store validated configuration or result data for normalization result."""
     dataset: str
     source_mode: str
     run_mode: str
@@ -85,6 +121,21 @@ class NormalizationResult:
 
 
 def _tight_crop(mask: np.ndarray, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return tight crop for the supplied inputs.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _tight_crop(mask=image_array, image=image_array)
+    """
     yy, xx = np.nonzero(mask)
     if xx.size == 0:
         raise ValueError("PCA mask is empty")
@@ -94,6 +145,23 @@ def _tight_crop(mask: np.ndarray, image: np.ndarray) -> tuple[np.ndarray, np.nda
 
 
 def _resize_exact(array: np.ndarray, shape: tuple[int, int], order: int) -> np.ndarray:
+    """Resize exact to the requested shape.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        shape (tuple[int, int]): Target or observed array shape.
+        order (int): Numerical value controlling order.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _resize_exact(
+        ...     array=image_array,
+        ...     shape=1,
+        ...     order=1,
+        ... )
+    """
     source_h, source_w = array.shape[-2:]
     target_h, target_w = shape
     zoom = (target_h / max(source_h, 1), target_w / max(source_w, 1))
@@ -119,6 +187,30 @@ def spatial_standardize(
     target_length: int,
     margin: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Return spatial standardize for the supplied inputs.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        image (np.ndarray): Input image array to process.
+        target_width (int): Numerical value controlling target width.
+        target_length (int): Numerical value controlling target length.
+        margin (int): Numerical value controlling margin.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = spatial_standardize(
+        ...     mask=image_array,
+        ...     image=image_array,
+        ...     target_width=1,
+        ...     target_length=1,
+        ...     margin=1,
+        ... )
+    """
     mask_crop, image_crop = _tight_crop(mask.astype(bool), image.astype(np.float32))
     content_h = target_width - 2 * margin
     content_w = target_length - 2 * margin
@@ -150,6 +242,26 @@ def normalize_within_cell(
     mask: np.ndarray,
     method: str,
 ) -> tuple[np.ndarray, list[dict[str, float]]]:
+    """Normalize within cell using the configured procedure.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        method (str): Text value specifying method.
+
+    Returns:
+        tuple[np.ndarray, list[dict[str, float]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_within_cell(
+        ...     image=image_array,
+        ...     mask=image_array,
+        ...     method="method",
+        ... )
+    """
     output = np.zeros_like(image, dtype=np.float32)
     parameters: list[dict[str, float]] = []
     for channel_index, channel in enumerate(image):
@@ -186,11 +298,29 @@ def normalize_within_cell(
 
 
 def _save_cyx(path: Path, image: np.ndarray) -> None:
+    """Save cyx to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        image (np.ndarray): Input image array to process.
+
+    Example:
+        >>> _save_cyx(path=Path("path/to/resource"), image=image_array)
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tiff.imwrite(path, image.astype(np.float32), metadata={"axes": "CYX"})
 
 
 def _annotate_normalized_axis(axis, array_shape: tuple[int, int]) -> None:
+    """Return annotate normalized axis for the supplied inputs.
+
+    Args:
+        axis (Any): Array axis along which the operation is performed.
+        array_shape (tuple[int, int]): Numerical value controlling array shape.
+
+    Example:
+        >>> _annotate_normalized_axis(axis=..., array_shape=1)
+    """
     _height, width = array_shape
     mid_x = (width - 1) / 2.0
     axis.axvline(mid_x, color="yellow", linestyle="--", linewidth=1.0, alpha=0.9)
@@ -255,6 +385,30 @@ def save_normalization_figures(
     image_to_rgb,
     title: str,
 ) -> None:
+    """Save normalization figures to persistent storage.
+
+    Args:
+        output_dir (Path): Directory where generated resources are written.
+        image_pca (np.ndarray): Array containing image principal-component analysis result.
+        mask_pca (np.ndarray): Array containing mask principal-component analysis result.
+        image_standardized (np.ndarray): Array containing image standardized.
+        mask_standardized (np.ndarray): Array containing mask standardized.
+        image_normalized (np.ndarray): Array containing image normalized.
+        image_to_rgb (Any): Value specifying image to RGB representation for the operation.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> save_normalization_figures(
+        ...     output_dir=Path("path/to/resource"),
+        ...     image_pca=image_array,
+        ...     mask_pca=image_array,
+        ...     image_standardized=image_array,
+        ...     mask_standardized=image_array,
+        ...     image_normalized=image_array,
+        ...     image_to_rgb=...,
+        ...     title="title",
+        ... )
+    """
     spatial_figure, spatial_axes = plt.subplots(
         2, 2, figsize=(9, 7), constrained_layout=True
     )
@@ -305,6 +459,24 @@ def save_annotation_map(
     image_to_rgb,
     title: str,
 ) -> None:
+    """Save annotation map to persistent storage.
+
+    Args:
+        output_path (Path): Filesystem path where the generated result is written.
+        weighted_sum (np.ndarray): Array containing weighted sum.
+        weight (np.ndarray): Array containing weight.
+        image_to_rgb (Any): Value specifying image to RGB representation for the operation.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> save_annotation_map(
+        ...     output_path=Path("path/to/resource"),
+        ...     weighted_sum=image_array,
+        ...     weight=image_array,
+        ...     image_to_rgb=...,
+        ...     title="title",
+        ... )
+    """
     if weighted_sum.size == 0 or not np.any(weight > 0):
         return
     average = weighted_sum / np.maximum(weight[None, ...], np.finfo(np.float32).eps)
@@ -319,6 +491,15 @@ def save_annotation_map(
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -335,6 +516,18 @@ def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def _prepare_output(output_root: Path, overwrite: bool) -> None:
+    """Prepare output for downstream processing.
+
+    Args:
+        output_root (Path): Directory used for output.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _prepare_output(output_root=Path("path/to/resource"), overwrite=True)
+    """
     if output_root.exists() and any(output_root.iterdir()):
         if not overwrite:
             raise FileExistsError(f"Output folder is not empty: {output_root}. Use --overwrite.")
@@ -356,6 +549,43 @@ def process_pca_root(
     intensity_normalization: str,
     overwrite: bool,
 ) -> dict[str, object]:
+    """Process principal-component analysis result root using the configured workflow.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        run_mode (str): Text value specifying run mode.
+        pca_root (Path): Directory used for principal-component analysis result.
+        output_root (Path): Directory used for output.
+        target_length (int): Numerical value controlling target length.
+        target_width (int): Numerical value controlling target width.
+        margin (int): Numerical value controlling margin.
+        intensity_normalization (str): Text value specifying intensity normalization.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_pca_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     run_mode="run_mode",
+        ...     pca_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     target_length=1,
+        ...     target_width=1,
+        ...     margin=1,
+        ...     intensity_normalization="intensity_normalization",
+        ...     overwrite=True,
+        ... )
+    """
     if not pca_root.exists():
         raise FileNotFoundError(f"PCA root does not exist: {pca_root}")
     _prepare_output(output_root, overwrite)
@@ -503,6 +733,14 @@ def process_pca_root(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Normalize PCA-aligned cells for one dataset or all datasets. "
@@ -533,6 +771,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     project_root = COMMON["find_project_root"](SCRIPT_FILE, args.project_root)
     if args.target_length < 3 or args.target_width < 3:

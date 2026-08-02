@@ -88,7 +88,20 @@ class UNet25DRunOutput:
 
 
 def load_25d_model(model_path: Path) -> tf.keras.Model:
-    """Load the merged-RGB 2.5D U-Net with custom objects."""
+    """Load the merged-RGB 2.5D U-Net with custom objects.
+
+    Args:
+        model_path (Path): Filesystem path associated with model.
+
+    Returns:
+        tf.keras.Model: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_25d_model(model_path=Path("path/to/resource"))
+    """
     if not model_path.is_file():
         raise FileNotFoundError(f"2.5D model not found: {model_path}")
     return tf.keras.models.load_model(
@@ -103,7 +116,21 @@ def load_25d_model(model_path: Path) -> tf.keras.Model:
 
 
 def _validate_model_contract(model_path: Path) -> Path:
-    """Require a model trained with the current per-volume target map."""
+    """Require a model trained with the current per-volume target map.
+
+    Args:
+        model_path (Path): Filesystem path associated with model.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_model_contract(model_path=Path("path/to/resource"))
+    """
     summary_path = model_path.parent / "u_net_3d_25d_training_summary.json"
     if not summary_path.is_file():
         raise FileNotFoundError(
@@ -132,6 +159,21 @@ def _validate_model_contract(model_path: Path) -> Path:
 
 
 def _zyx_scale(input_zarr: Path, level: int) -> list[float]:
+    """Return zyx scale for the supplied inputs.
+
+    Args:
+        input_zarr (Path): Filesystem path used for input Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _zyx_scale(input_zarr=Path("path/to/resource"), level=1)
+    """
     full_scale = coordinate_scale_for_level(input_zarr, level=level)
     if len(full_scale) != 4:
         raise ValueError(f"Expected CZYX coordinate scale, got {full_scale}")
@@ -140,12 +182,38 @@ def _zyx_scale(input_zarr: Path, level: int) -> list[float]:
 
 
 def _yx_scale(input_zarr: Path, level: int) -> list[float]:
+    """Return yx scale for the supplied inputs.
+
+    Args:
+        input_zarr (Path): Filesystem path used for input Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _yx_scale(input_zarr=Path("path/to/resource"), level=1)
+    """
     return _zyx_scale(input_zarr, level)[1:]
 
 
 
 def _validate_target_slice(slice_number: int, z_count: int) -> int:
-    """Validate that the mapped target has complete Z-1/Z/Z+1 context."""
+    """Validate that the mapped target has complete Z-1/Z/Z+1 context.
+
+    Args:
+        slice_number (int): Numerical value controlling slice number.
+        z_count (int): Number of z used by the operation.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_target_slice(slice_number=1, z_count=1)
+    """
     slice_number = int(slice_number)
     if slice_number < 2 or slice_number > z_count - 1:
         raise ValueError(
@@ -160,7 +228,19 @@ def _binary_metrics(
     prediction: np.ndarray,
     epsilon: float = 1e-12,
 ) -> dict[str, float]:
-    """Calculate binary overlap metrics when a manual reference mask exists."""
+    """Calculate binary overlap metrics when a manual reference mask exists.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _binary_metrics(reference=image_array, prediction=image_array)
+    """
     reference_bool = reference.astype(bool)
     prediction_bool = prediction.astype(bool)
     intersection = float(np.count_nonzero(reference_bool & prediction_bool))
@@ -184,7 +264,25 @@ def _load_optional_reference_mask(
     expected_yx: tuple[int, int],
     sample: str,
 ) -> tuple[Path | None, np.ndarray | None, str]:
-    """Load a reference mask if present; otherwise warn and skip metrics."""
+    """Load a reference mask if present; otherwise warn and skip metrics.
+
+    Args:
+        manual_mask_dir (Path | None): Directory used for manual mask.
+        slice_number (int): Numerical value controlling slice number.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        tuple[Path | None, np.ndarray | None, str]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _load_optional_reference_mask(
+        ...     manual_mask_dir=Path("path/to/resource"),
+        ...     slice_number=1,
+        ...     expected_yx=1,
+        ...     sample="sample",
+        ... )
+    """
     if manual_mask_dir is None:
         warnings.warn(
             f"{sample}: no manual-mask root was provided; reference metrics are skipped.",
@@ -215,7 +313,25 @@ def _save_source_slice_products(
     probability: np.ndarray,
     mask: np.ndarray,
 ) -> Path:
-    """Save the target-slice probability map and strict binary mask."""
+    """Save the target-slice probability map and strict binary mask.
+
+    Args:
+        source_slice_dir (Path): Directory used for source slice.
+        slice_number (int): Numerical value controlling slice number.
+        probability (np.ndarray): Array containing probability.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_source_slice_products(
+        ...     source_slice_dir=Path("path/to/resource"),
+        ...     slice_number=1,
+        ...     probability=image_array,
+        ...     mask=image_array,
+        ... )
+    """
     source_slice_dir.mkdir(parents=True, exist_ok=True)
     tiff.imwrite(
         source_slice_dir / f"z{slice_number:03d}_foreground_probability.tif",
@@ -240,7 +356,37 @@ def _save_source_mask_preview(
     reference: np.ndarray | None,
     reference_metrics: dict[str, float] | None,
 ) -> list[Path]:
-    """Save the configured target-slice prediction quality-control figure."""
+    """Save the configured target-slice prediction quality-control figure.
+
+    Args:
+        image_czyx (Any): Value specifying image czyx for the operation.
+        training_cfg (UNet25DTrainConfig): Value specifying training cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+        slice_number (int): Numerical value controlling slice number.
+        probability (np.ndarray): Array containing probability.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        sample (str): Text value specifying sample.
+        output_dir (Path): Directory where generated resources are written.
+        reference (np.ndarray | None): Array containing reference.
+        reference_metrics (dict[str, float] | None): Text value specifying reference metrics.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_source_mask_preview(
+        ...     image_czyx=...,
+        ...     training_cfg=...,
+        ...     rgb_source_channels=1,
+        ...     slice_number=1,
+        ...     probability=image_array,
+        ...     mask=image_array,
+        ...     sample="sample",
+        ...     output_dir=Path("path/to/resource"),
+        ...     reference=image_array,
+        ...     reference_metrics=0.5,
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     normalization_cache: dict[tuple[int, int], tuple[float, float]] = {}
     context = make_merged_rgb_context_slice(
@@ -291,7 +437,20 @@ def _save_source_mask_preview(
 
 
 def run_3d_25d_unet_masks(cfg: UNet25DRunConfig) -> UNet25DRunOutput:
-    """Infer the configured target and broadcast its mask to the full Z-stack."""
+    """Infer the configured target and broadcast its mask to the full Z-stack.
+
+    Args:
+        cfg (UNet25DRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        UNet25DRunOutput: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_3d_25d_unet_masks(cfg=config)
+    """
     if cfg.input_zarr is None:
         raise ValueError("input_zarr is required")
     input_zarr = Path(cfg.input_zarr).resolve()

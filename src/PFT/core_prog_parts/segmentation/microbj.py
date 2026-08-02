@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for microbj."""
+
 from __future__ import annotations
 
 import os
@@ -18,6 +20,7 @@ Core logic for running MicrobeJ on TIFF images from Python.
 
 @dataclass(frozen=True)
 class MicrobeJRunResult:
+    """Store validated configuration or result data for microbe jrun result."""
     image_path: Path
     output_dir: Path
     experiment_name: str
@@ -28,12 +31,23 @@ class MicrobeJRunResult:
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """
-    Lightweight fallback project-root finder.
+    """Lightweight fallback project-root finder.
 
     If your existing project already has PFT.core_prog_parts.denoising.fuji_managment.find_project_root,
     this function will try to use it first. Otherwise it walks upward until it finds a folder
     that looks like Pneumo_Fluor_Toolkit_PFT.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
     """
     try:
         from PFT.core_prog_parts.denoising.fuji_managment import find_project_root as _find_project_root
@@ -59,10 +73,19 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 def ensure_fiji_dir(project_root: Path) -> Path:
-    """
-    Find Fiji in the project using your existing helper when available.
-    Expected common location:
-        <project_root>/Fiji.app
+    """Find Fiji in the project using your existing helper when available. Expected common location: <project_root>/Fiji.app.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = ensure_fiji_dir(project_root=Path("path/to/resource"))
     """
     try:
         from PFT.core_prog_parts.denoising.fuji_managment import ensure_fiji_in_project
@@ -87,7 +110,20 @@ def ensure_fiji_dir(project_root: Path) -> Path:
 
 
 def find_fiji_executable(fiji_dir: Path) -> Path:
-    """Find Fiji/ImageJ executable on Windows/Linux/macOS."""
+    """Find Fiji/ImageJ executable on Windows/Linux/macOS.
+
+    Args:
+        fiji_dir (Path): Directory used for fiji.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_fiji_executable(fiji_dir=Path("path/to/resource"))
+    """
     candidates = [
         fiji_dir / "ImageJ-win64.exe",
         fiji_dir / "ImageJ-win32.exe",
@@ -104,13 +140,25 @@ def find_fiji_executable(fiji_dir: Path) -> Path:
 
 
 def find_microbej_jar(project_root: Path, explicit_jar: Path | None = None) -> Path:
-    """
-    Locate MicrobeJ_.jar.
+    """Locate MicrobeJ_.jar.
 
     Best project location:
         <project_root>/tools/microbej/MicrobeJ_.jar
 
     It can also already be in Fiji.app/plugins.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        explicit_jar (Path | None): Filesystem path used for explicit jar. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_microbej_jar(project_root=Path("path/to/resource"))
     """
     if explicit_jar is not None:
         explicit_jar = Path(explicit_jar)
@@ -145,8 +193,19 @@ def install_microbej_into_fiji(
     microbej_jar: Path | None = None,
     overwrite: bool = False,
 ) -> Path:
-    """
-    Copy MicrobeJ_.jar into Fiji.app/plugins so Fiji can see the plugin.
+    """Copy MicrobeJ_.jar into Fiji.app/plugins so Fiji can see the plugin.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        fiji_dir (Path): Directory used for fiji.
+        microbej_jar (Path | None): Filesystem path used for microbej jar. ``None`` selects the function's default behavior.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``False``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = install_microbej_into_fiji(project_root=Path("path/to/resource"), fiji_dir=Path("path/to/resource"))
     """
     src = find_microbej_jar(project_root, microbej_jar)
     plugins_dir = fiji_dir / "plugins"
@@ -161,9 +220,19 @@ def install_microbej_into_fiji(
 
 
 def _safe_macro_arg_value(path_or_text: str | Path) -> str:
-    """
-    MicrobeJ_m internally splits options by spaces, so paths with spaces can break.
-    This function fails early with a clear message instead of silently producing wrong results.
+    """MicrobeJ_m internally splits options by spaces, so paths with spaces can break. This function fails early with a clear message instead of silently producing wrong results.
+
+    Args:
+        path_or_text (str | Path): Filesystem path used for path or text.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _safe_macro_arg_value(path_or_text="path_or_text")
     """
     s = str(path_or_text)
     if " " in s:
@@ -182,7 +251,26 @@ def make_microbej_macro(
     experiment_name: str,
     debug: bool = False,
 ) -> str:
-    """Create the ImageJ macro text that calls MicrobeJ_m once."""
+    """Create the ImageJ macro text that calls MicrobeJ_m once.
+
+    Args:
+        image_path (Path): Filesystem path associated with image.
+        settings_path (Path | None): Filesystem path associated with settings.
+        output_dir (Path): Directory where generated resources are written.
+        experiment_name (str): Text value specifying experiment name.
+        debug (bool): Boolean flag controlling debug. Defaults to ``False``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = make_microbej_macro(
+        ...     image_path=Path("path/to/resource"),
+        ...     settings_path=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     experiment_name="experiment_name",
+        ... )
+    """
     image = _safe_macro_arg_value(image_path)
     output = _safe_macro_arg_value(output_dir)
     name = _safe_macro_arg_value(experiment_name)
@@ -207,18 +295,33 @@ def run_microbej_on_tiff(
     timeout_s: int | None = None,
     overwrite_plugin: bool = False,
 ) -> MicrobeJRunResult:
-    """
-    Run MicrobeJ_m on one TIFF image.
+    """Run MicrobeJ_m on one TIFF image.
 
-    Parameters
-    ----------
-    image_path:
-        Input .tif/.tiff image.
-    output_dir:
-        Folder where MicrobeJ should save CSV/template outputs.
-    settings_path:
-        MicrobeJ .xml or .ini settings file. You should export/save this from MicrobeJ GUI first.
-        If None, MicrobeJ tries to use its default internal INI path.
+    Args:
+        image_path (Path): Input .tif/.tiff image.
+        output_dir (Path): Folder where MicrobeJ should save CSV/template outputs.
+        settings_path (Path | None): MicrobeJ .xml or .ini settings file. You should export/save this from MicrobeJ GUI first. If None, MicrobeJ tries to use its default internal INI path.
+        project_root (Path | None): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+        microbej_jar (Path | None): Filesystem path used for microbej jar. ``None`` selects the function's default behavior.
+        experiment_name (str | None): Text value specifying experiment name. ``None`` selects the function's default behavior.
+        debug (bool): Boolean flag controlling debug. Defaults to ``False``.
+        timeout_s (int | None): Numerical value controlling timeout s. ``None`` selects the function's default behavior.
+        overwrite_plugin (bool): Boolean flag controlling overwrite plugin. Defaults to ``False``.
+
+    Returns:
+        MicrobeJRunResult: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_microbej_on_tiff(
+        ...     image_path=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     settings_path=Path("path/to/resource"),
+        ... )
     """
     t0 = time.time()
     image_path = Path(image_path).resolve()
@@ -301,7 +404,22 @@ def run_microbej_on_tiff(
 
 
 def collect_tiff_images(path: Path, recursive: bool = False) -> list[Path]:
-    """Collect TIFF images from a single file or folder."""
+    """Collect TIFF images from a single file or folder.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        recursive (bool): Boolean flag controlling recursive. Defaults to ``False``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = collect_tiff_images(path=Path("path/to/resource"))
+    """
     path = Path(path)
     if path.is_file():
         if path.suffix.lower() not in {".tif", ".tiff"}:
@@ -334,7 +452,28 @@ def run_microbej_batch(
     timeout_s: int | None = None,
     continue_on_error: bool = True,
 ) -> tuple[list[MicrobeJRunResult], list[tuple[Path, str]]]:
-    """Run MicrobeJ over many TIFF images."""
+    """Run MicrobeJ over many TIFF images.
+
+    Args:
+        images (list[Path]): Sequence or batch of input image arrays to process.
+        output_root (Path): Directory used for output.
+        settings_path (Path | None): Filesystem path associated with settings.
+        project_root (Path | None): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+        microbej_jar (Path | None): Filesystem path used for microbej jar. ``None`` selects the function's default behavior.
+        debug (bool): Boolean flag controlling debug. Defaults to ``False``.
+        timeout_s (int | None): Numerical value controlling timeout s. ``None`` selects the function's default behavior.
+        continue_on_error (bool): Boolean flag controlling continue on error. Defaults to ``True``.
+
+    Returns:
+        tuple[list[MicrobeJRunResult], list[tuple[Path, str]]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_microbej_batch(
+        ...     images=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     settings_path=Path("path/to/resource"),
+        ... )
+    """
     results: list[MicrobeJRunResult] = []
     errors: list[tuple[Path, str]] = []
 

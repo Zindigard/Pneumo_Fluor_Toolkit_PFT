@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for stardist run two-dimensional data wga dapi core."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +18,18 @@ FAMILY = "stardist"
 
 
 def _load_model(project_root: Path, model_dir: Path | None = None):
+    """Load model from persistent storage.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        model_dir (Path | None): Directory used for model. ``None`` selects the function's default behavior.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _load_model(project_root=Path("path/to/resource"))
+    """
     from stardist.models import StarDist2D
     if model_dir is None:
         root = model_root(project_root, FAMILY, DATASET)
@@ -26,6 +40,7 @@ def _load_model(project_root: Path, model_dir: Path | None = None):
 
 @dataclass
 class StarDistRunConfig:
+    """Store validated configuration or result data for star dist run config."""
     project_root: Path
     model_dir: Path | None = None
     prob_thresh: float | None = None
@@ -33,11 +48,28 @@ class StarDistRunConfig:
     channels: tuple[int, ...] | None = None
 
     def __post_init__(self):
+        """Return post init for the supplied inputs.
+
+        Example:
+            >>> instance = StarDistRunConfig(...)
+            >>> instance.__post_init__()
+        """
         if self.channels is None:
             self.channels = (0, 1) if DATASET == "2d_wga_dapi" else (0,)
 
 
 def run_stardist_2d_wga_dapi(cfg: StarDistRunConfig | None = None) -> list[Path]:
+    """Run stardist two-dimensional data wga dapi using the supplied configuration.
+
+    Args:
+        cfg (StarDistRunConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_stardist_2d_wga_dapi()
+    """
     if cfg is None:
         cfg = StarDistRunConfig(project_root=find_project_root())
     model, model_dir = _load_model(cfg.project_root, cfg.model_dir)

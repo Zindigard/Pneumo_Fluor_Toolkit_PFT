@@ -3,6 +3,29 @@ r"""Export source 3D OME-Zarr Z-planes as normalized merged-RGB PNGs.
 Each source volume has one configured target slice. The interactive menu and
 batch summary display that target, while all 40 planes are exported for visual
 inspection. Normalization is independent per slice and channel using P1-P99.8.
+
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/export_3d_slices_png.py --help
+
+Export every Z-plane from one configured 3D stack:
+
+    python scripts/denoising/export_3d_slices_png.py \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --level 0 \
+        --expected-slices 40 \
+        --low-percentile 1.0 \
+        --high-percentile 99.8
+
+Export every configured 3D stack:
+
+    python scripts/denoising/export_3d_slices_png.py \
+        --all \
+        --search-root results/img/3d_data \
+        --level 0
 """
 
 from __future__ import annotations
@@ -29,6 +52,17 @@ WAVELENGTH_TO_RGB: tuple[tuple[float, int, str], ...] = (
 
 
 def find_project_root() -> Path:
+    """Find project root in the available data or project structure.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     for candidate in (SCRIPT_PATH.parent, *SCRIPT_PATH.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -48,11 +82,36 @@ from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
 
 
 def resolve_path(path: Path) -> Path:
+    """Resolve path from the supplied configuration.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = resolve_path(path=Path("path/to/resource"))
+    """
     expanded = path.expanduser()
     return expanded.resolve() if expanded.is_absolute() else (Path.cwd() / expanded).resolve()
 
 
 def discover_zarrs(search_root: Path) -> list[Path]:
+    """Discover zarrs in the configured project structure.
+
+    Args:
+        search_root (Path): Directory used for search.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = discover_zarrs(search_root=Path("path/to/resource"))
+    """
     root = resolve_path(search_root)
     if not root.is_dir():
         raise FileNotFoundError(f"Search root does not exist: {root}")
@@ -63,6 +122,21 @@ def discover_zarrs(search_root: Path) -> list[Path]:
 
 
 def choose_zarr_interactively(stores: Sequence[Path], image_root: Path) -> Path:
+    """Choose Zarr interactively according to the configured criteria.
+
+    Args:
+        stores (Sequence[Path]): Filesystem path used for stores.
+        image_root (Path): Directory used for image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_zarr_interactively(stores=Path("path/to/resource"), image_root=Path("path/to/resource"))
+    """
     print("\nChoose a 3D OME-Zarr image")
     print("  [0] Exit")
     for index, path in enumerate(stores, start=1):
@@ -83,6 +157,20 @@ def choose_zarr_interactively(stores: Sequence[Path], image_root: Path) -> Path:
 
 
 def rgb_assignment(wavelength_nm: float) -> tuple[int, str]:
+    """Return RGB representation assignment for the supplied inputs.
+
+    Args:
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+
+    Returns:
+        tuple[int, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = rgb_assignment(wavelength_nm=0.5)
+    """
     reference_nm, rgb_index, colour = min(
         WAVELENGTH_TO_RGB,
         key=lambda item: abs(float(wavelength_nm) - item[0]),
@@ -98,6 +186,26 @@ def normalize_plane(
     low_percentile: float,
     high_percentile: float,
 ) -> tuple[np.ndarray, float, float]:
+    """Normalize plane using the configured procedure.
+
+    Args:
+        plane (np.ndarray): Array containing plane.
+        low_percentile (float): Numerical value controlling low percentile.
+        high_percentile (float): Numerical value controlling high percentile.
+
+    Returns:
+        tuple[np.ndarray, float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_plane(
+        ...     plane=image_array,
+        ...     low_percentile=0.5,
+        ...     high_percentile=0.5,
+        ... )
+    """
     values = np.asarray(plane, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -111,6 +219,18 @@ def normalize_plane(
 
 
 def validate_channels(optics: Sequence[ChannelOptics], channel_count: int) -> None:
+    """Validate channels against the required constraints.
+
+    Args:
+        optics (Sequence[ChannelOptics]): Value specifying optics for the operation.
+        channel_count (int): Number of channel used by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_channels(optics=[], channel_count=1)
+    """
     if len(optics) != channel_count:
         raise ValueError(f"Channel metadata count {len(optics)} differs from C={channel_count}")
     assignments = [rgb_assignment(channel.wavelength_nm)[0] for channel in optics]
@@ -119,10 +239,30 @@ def validate_channels(optics: Sequence[ChannelOptics], channel_count: int) -> No
 
 
 def default_output_dir(zarr_path: Path, level: int) -> Path:
+    """Return default output dir for the supplied inputs.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_output_dir(zarr_path=Path("path/to/resource"), level=1)
+    """
     return zarr_path.parent / f"image_normalized_png_slices_L{level}"
 
 
 def clean_previous_outputs(output_dir: Path) -> None:
+    """Clean previous outputs before downstream processing.
+
+    Args:
+        output_dir (Path): Directory where generated resources are written.
+
+    Example:
+        >>> clean_previous_outputs(output_dir=Path("path/to/resource"))
+    """
     if not output_dir.exists():
         return
     for pattern in ("z*_normalized_rgb.png", "normalization_values.csv", "export_record.txt"):
@@ -141,6 +281,34 @@ def export_slices(
     low_percentile: float,
     high_percentile: float,
 ) -> dict[str, str]:
+    """Export slices to the requested output format.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        image_root (Path): Directory used for image.
+        level (int): Numerical value controlling level.
+        output_dir (Path): Directory where generated resources are written.
+        expected_slices (int): Numerical value controlling expected slices.
+        low_percentile (float): Numerical value controlling low percentile.
+        high_percentile (float): Numerical value controlling high percentile.
+
+    Returns:
+        dict[str, str]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = export_slices(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     image_root=Path("path/to/resource"),
+        ...     level=1,
+        ...     output_dir=Path("path/to/resource"),
+        ...     expected_slices=1,
+        ...     low_percentile=0.5,
+        ...     high_percentile=0.5,
+        ... )
+    """
     target = target_slice_for_volume(zarr_path, image_root)
     meta = extract_ome_zarr_meta_for_compare(zarr_path, level=level)
     axes = str(meta.get("axes") or "").lower()
@@ -225,6 +393,14 @@ def export_slices(
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Export normalized merged-RGB PNGs for one or all mapped source 3D stacks.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

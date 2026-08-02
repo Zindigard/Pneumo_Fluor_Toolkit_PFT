@@ -139,7 +139,22 @@ def _roi_snr_components(
     foreground_mask: np.ndarray,
     epsilon: float = 1e-12,
 ) -> tuple[int, int, float, float, float, float]:
-    """Use the current PFT ROI-SNR formula without modifying stored intensities."""
+    """Use the current PFT ROI-SNR formula without modifying stored intensities.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        foreground_mask (np.ndarray): Array containing foreground mask.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        tuple[int, int, float, float, float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _roi_snr_components(image=image_array, foreground_mask=image_array)
+    """
     values = np.asarray(image, dtype=np.float64)
     mask = np.asarray(foreground_mask, dtype=bool)
     if values.ndim != 2 or mask.ndim != 2 or values.shape != mask.shape:
@@ -177,7 +192,21 @@ RGB_REFERENCE_WAVELENGTHS_NM: dict[str, float] = {
 
 
 def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[int, int, int]:
-    """Resolve source channels in red, green, blue order from wavelength metadata."""
+    """Resolve source channels in red, green, blue order from wavelength metadata.
+
+    Args:
+        image_zarr (Path): Filesystem path used for image Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_rgb_source_channels(image_zarr=Path("path/to/resource"))
+    """
     assignments: dict[str, int] = {}
     for item in resolve_channel_optics(image_zarr, level=level):
         colour, reference_nm = min(
@@ -199,6 +228,20 @@ def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[in
 
 
 def _require_mode(mode: str) -> MIPMode:
+    """Return require mode for the supplied inputs.
+
+    Args:
+        mode (str): Text value specifying mode.
+
+    Returns:
+        MIPMode: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _require_mode(mode="mode")
+    """
     if mode not in MODE_DIRECTORY_NAMES:
         raise ValueError(
             f"Unknown MIP mode {mode!r}; expected one of {tuple(MODE_DIRECTORY_NAMES)}"
@@ -207,7 +250,23 @@ def _require_mode(mode: str) -> MIPMode:
 
 
 def _open_level_array(zarr_path: Path, level: int) -> tuple[Any, str, dict[str, Any]]:
-    """Open one OME-Zarr level lazily and return its array, axes, and metadata."""
+    """Open one OME-Zarr level lazily and return its array, axes, and metadata.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        tuple[Any, str, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _open_level_array(zarr_path=Path("path/to/resource"), level=1)
+    """
     try:
         import zarr
     except Exception as exc:  # pragma: no cover - depends on runtime environment
@@ -235,6 +294,15 @@ class _RemovedSingletonAxisView:
     """Read-only array view that removes one singleton axis without loading it."""
 
     def __init__(self, base: Any, removed_axis: int) -> None:
+        """Initialize a ``_RemovedSingletonAxisView`` instance.
+
+        Args:
+            base (Any): Value specifying base for the operation.
+            removed_axis (int): Numerical value controlling removed axis.
+
+        Example:
+            >>> instance = _RemovedSingletonAxisView(base=..., removed_axis=1)
+        """
         self._base = base
         self._removed_axis = int(removed_axis)
         self.shape = tuple(
@@ -246,6 +314,21 @@ class _RemovedSingletonAxisView:
         self.dtype = np.dtype(base.dtype)
 
     def __getitem__(self, key: Any) -> Any:
+        """Return the item associated with the supplied key or index.
+
+        Args:
+            key (Any): Key used to access or identify an entry in a mapping.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Raises:
+            IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = _RemovedSingletonAxisView(...)
+            >>> result = instance.__getitem__(key=...)
+        """
         if not isinstance(key, tuple):
             key = (key,)
         key_items = list(key)
@@ -268,7 +351,26 @@ class _RemovedSingletonAxisView:
 
 
 def _canonicalize_czyx_view(array: Any, axes: str, source: Path) -> tuple[Any, str]:
-    """Return a lazy CZYX view and remove a singleton time axis when present."""
+    """Return a lazy CZYX view and remove a singleton time axis when present.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        source (Path): Filesystem path used for source.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _canonicalize_czyx_view(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     source=Path("path/to/resource"),
+        ... )
+    """
     current_axes = str(axes).lower()
     if "t" in current_axes:
         time_axis = current_axes.index("t")
@@ -290,7 +392,25 @@ def _canonicalize_czyx_view(array: Any, axes: str, source: Path) -> tuple[Any, s
 
 
 def _require_czyx(array: Any, axes: str, source: Path, expected_z_count: int) -> None:
-    """Validate the thesis 3D source representation without loading the volume."""
+    """Validate the thesis 3D source representation without loading the volume.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        source (Path): Filesystem path used for source.
+        expected_z_count (int): Number of expected z used by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _require_czyx(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     source=Path("path/to/resource"),
+        ...     expected_z_count=1,
+        ... )
+    """
     if axes != "czyx":
         raise ValueError(f"Expected CZYX OME-Zarr, received axes={axes!r}: {source}")
     if int(array.shape[0]) != 3:
@@ -304,7 +424,20 @@ def _require_czyx(array: Any, axes: str, source: Path, expected_z_count: int) ->
 
 
 def maximum_intensity_projection_cyx(array_czyx: Any) -> np.ndarray:
-    """Calculate a C×Y×X maximum projection while loading only one Z plane at a time."""
+    """Calculate a C×Y×X maximum projection while loading only one Z plane at a time.
+
+    Args:
+        array_czyx (Any): Value specifying array czyx for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = maximum_intensity_projection_cyx(array_czyx=...)
+    """
     if getattr(array_czyx, "ndim", None) != 4:
         raise ValueError(f"Expected a four-dimensional CZYX array, got {array_czyx.shape}")
     c_count, z_count, y_count, x_count = (int(value) for value in array_czyx.shape)
@@ -328,7 +461,22 @@ def maximum_intensity_projection_cyx(array_czyx: Any) -> np.ndarray:
 
 
 def _read_cyx_slice(array_czyx: Any, slice_1based: int) -> np.ndarray:
-    """Read one target slice from a CZYX array without changing its stored scale."""
+    """Read one target slice from a CZYX array without changing its stored scale.
+
+    Args:
+        array_czyx (Any): Value specifying array czyx for the operation.
+        slice_1based (int): Numerical value controlling slice 1based.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _read_cyx_slice(array_czyx=..., slice_1based=1)
+    """
     z_index = int(slice_1based) - 1
     if not 0 <= z_index < int(array_czyx.shape[1]):
         raise IndexError(
@@ -341,6 +489,21 @@ def _read_cyx_slice(array_czyx: Any, slice_1based: int) -> np.ndarray:
 
 
 def _validate_iteration_count(value: int, name: str) -> int:
+    """Validate iteration count against the required constraints.
+
+    Args:
+        value (int): Value to validate, transform, store, or forward.
+        name (str): Name used to identify the current object, resource, or output.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_iteration_count(value=1, name="name")
+    """
     result = int(value)
     if result < 1:
         raise ValueError(f"{name} must be at least 1, got {value}")
@@ -348,7 +511,23 @@ def _validate_iteration_count(value: int, name: str) -> int:
 
 
 def deconvolution_iteration_tag(blue: int, green: int, red: int) -> str:
-    """Return the folder tag used by the 3D deconvolution workflow."""
+    """Return the folder tag used by the 3D deconvolution workflow.
+
+    Args:
+        blue (int): Numerical value controlling blue.
+        green (int): Numerical value controlling green.
+        red (int): Numerical value controlling red.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = deconvolution_iteration_tag(
+        ...     blue=1,
+        ...     green=1,
+        ...     red=1,
+        ... )
+    """
     blue = _validate_iteration_count(blue, "blue iterations")
     green = _validate_iteration_count(green, "green iterations")
     red = _validate_iteration_count(red, "red iterations")
@@ -363,7 +542,24 @@ def resolve_deconvolved_zarr(
     iters_green: int = DECONV_DEFAULT_ITERS_GREEN,
     iters_red: int = DECONV_DEFAULT_ITERS_RED,
 ) -> Path:
-    """Resolve one exact BW Richardson-Lucy result for a configured raw volume."""
+    """Resolve one exact BW Richardson-Lucy result for a configured raw volume.
+
+    Args:
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+        deconv_root (Path): Directory used for deconv.
+        iters_blue (int): Numerical value controlling iters blue. Defaults to ``DECONV_DEFAULT_ITERS_BLUE``.
+        iters_green (int): Numerical value controlling iters green. Defaults to ``DECONV_DEFAULT_ITERS_GREEN``.
+        iters_red (int): Numerical value controlling iters red. Defaults to ``DECONV_DEFAULT_ITERS_RED``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_deconvolved_zarr(raw_zarr=Path("path/to/resource"), deconv_root=Path("path/to/resource"))
+    """
     relative = relative_volume_path(raw_zarr)
     sample = relative.name
     iteration_tag = deconvolution_iteration_tag(
@@ -386,7 +582,18 @@ def resolve_deconvolved_zarr(
 
 
 def resolve_deconvolved_332_zarr(raw_zarr: Path, deconv_root: Path) -> Path:
-    """Backward-compatible resolver for the original fixed 3/3/2 product."""
+    """Backward-compatible resolver for the original fixed 3/3/2 product.
+
+    Args:
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+        deconv_root (Path): Directory used for deconv.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = resolve_deconvolved_332_zarr(raw_zarr=Path("path/to/resource"), deconv_root=Path("path/to/resource"))
+    """
     return resolve_deconvolved_zarr(
         raw_zarr,
         deconv_root,
@@ -397,7 +604,21 @@ def resolve_deconvolved_332_zarr(raw_zarr: Path, deconv_root: Path) -> Path:
 
 
 def resolve_predicted_mask_zarr(raw_zarr: Path, mask_root: Path) -> Path:
-    """Resolve the existing per-volume 2.5D U-Net mask for one raw source."""
+    """Resolve the existing per-volume 2.5D U-Net mask for one raw source.
+
+    Args:
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+        mask_root (Path): Directory used for mask.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_predicted_mask_zarr(raw_zarr=Path("path/to/resource"), mask_root=Path("path/to/resource"))
+    """
     result = Path(mask_root) / relative_volume_path(raw_zarr) / "pred_mask.ome.zarr"
     if not result.is_dir():
         raise FileNotFoundError(
@@ -413,7 +634,27 @@ def _load_target_mask_yx(
     target_slice_1based: int,
     expected_yx: tuple[int, int],
 ) -> np.ndarray:
-    """Read the target plane from a YX or broadcast ZYX binary mask OME-Zarr."""
+    """Read the target plane from a YX or broadcast ZYX binary mask OME-Zarr.
+
+    Args:
+        mask_zarr (Path): Filesystem path used for mask Zarr.
+        target_slice_1based (int): Numerical value controlling target slice 1based.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_target_mask_yx(
+        ...     mask_zarr=Path("path/to/resource"),
+        ...     target_slice_1based=1,
+        ...     expected_yx=1,
+        ... )
+    """
     array, axes, _metadata = _open_level_array(mask_zarr, level=0)
     if axes == "yx":
         mask = np.asarray(array)
@@ -447,6 +688,24 @@ def apply_background_suppression_mask(
 
     ``suppression_percent=99.8`` retains 0.2% of each outside-mask value.
     ``suppression_percent=100`` sets the outside-mask values exactly to zero.
+
+    Args:
+        mip_cyx (np.ndarray): Array containing maximum-intensity projection cyx.
+        mask_yx (np.ndarray): Array containing mask yx.
+        suppression_percent (float): Numerical value controlling suppression percent.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_background_suppression_mask(
+        ...     mip_cyx=image_array,
+        ...     mask_yx=image_array,
+        ...     suppression_percent=0.5,
+        ... )
     """
     if mip_cyx.ndim != 3:
         raise ValueError(f"Expected CYX MIP, got shape={mip_cyx.shape}")
@@ -484,14 +743,39 @@ def apply_background_suppression_mask(
 
 
 def apply_zero_background_mask(mip_cyx: np.ndarray, mask_yx: np.ndarray) -> np.ndarray:
-    """Backward-compatible exact-zero mask application."""
+    """Backward-compatible exact-zero mask application.
+
+    Args:
+        mip_cyx (np.ndarray): Array containing maximum-intensity projection cyx.
+        mask_yx (np.ndarray): Array containing mask yx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = apply_zero_background_mask(mip_cyx=image_array, mask_yx=image_array)
+    """
     return apply_background_suppression_mask(
         mip_cyx, mask_yx, suppression_percent=100.0
     )
 
 
 def _cyx_coordinate_scale(source_zarr: Path, *, level: int) -> list[float]:
-    """Drop the projected Z scale while preserving C, Y, and X sampling."""
+    """Drop the projected Z scale while preserving C, Y, and X sampling.
+
+    Args:
+        source_zarr (Path): Filesystem path used for source Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _cyx_coordinate_scale(source_zarr=Path("path/to/resource"), level=1)
+    """
     metadata = extract_ome_zarr_meta_for_compare(source_zarr, level=level)
     axes = str(metadata.get("axes") or "").lower()
     scale = coordinate_scale_for_level(source_zarr, level=level)
@@ -503,7 +787,21 @@ def _cyx_coordinate_scale(source_zarr: Path, *, level: int) -> list[float]:
 
 
 def _to_rgb_hwc(cyx: np.ndarray, rgb_source_channels: Sequence[int]) -> np.ndarray:
-    """Map source channels to red/green/blue display order without normalization."""
+    """Map source channels to red/green/blue display order without normalization.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+        rgb_source_channels (Sequence[int]): Numerical value controlling RGB representation source channels.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _to_rgb_hwc(cyx=image_array, rgb_source_channels=1)
+    """
     if len(rgb_source_channels) != 3:
         raise ValueError(f"Expected three RGB source indices, got {rgb_source_channels}")
     return np.stack(
@@ -517,7 +815,23 @@ def _raw_scale_rgb(
     rgb_source_channels: Sequence[int],
     percentile_high: float,
 ) -> list[np.ndarray]:
-    """Create merged RGB views using one shared zero-based scale per colour."""
+    """Create merged RGB views using one shared zero-based scale per colour.
+
+    Args:
+        cyx_images (Sequence[np.ndarray]): Array containing cyx images.
+        rgb_source_channels (Sequence[int]): Numerical value controlling RGB representation source channels.
+        percentile_high (float): Numerical value controlling percentile high.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _raw_scale_rgb(
+        ...     cyx_images=image_array,
+        ...     rgb_source_channels=1,
+        ...     percentile_high=0.5,
+        ... )
+    """
     rgb_images = [_to_rgb_hwc(image, rgb_source_channels) for image in cyx_images]
     high_limits: list[float] = []
     for rgb_channel in range(3):
@@ -547,7 +861,25 @@ def _independently_normalized_rgb(
     percentile_low: float,
     percentile_high: float,
 ) -> np.ndarray:
-    """Percentile-normalize each colour independently for display only."""
+    """Percentile-normalize each colour independently for display only.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+        rgb_source_channels (Sequence[int]): Numerical value controlling RGB representation source channels.
+        percentile_low (float): Numerical value controlling percentile low.
+        percentile_high (float): Numerical value controlling percentile high.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _independently_normalized_rgb(
+        ...     cyx=image_array,
+        ...     rgb_source_channels=1,
+        ...     percentile_low=0.5,
+        ...     percentile_high=0.5,
+        ... )
+    """
     rgb = _to_rgb_hwc(cyx, rgb_source_channels)
     output = np.zeros_like(rgb, dtype=np.float32)
     for channel in range(3):
@@ -562,7 +894,21 @@ def _independently_normalized_rgb(
 def _downsample_cyx_for_qc(
     cyx: np.ndarray, max_dimension: int
 ) -> tuple[np.ndarray, int]:
-    """Return a display-only CYX array and its integer spatial stride."""
+    """Return a display-only CYX array and its integer spatial stride.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+        max_dimension (int): Maximum permitted value of dimension.
+
+    Returns:
+        tuple[np.ndarray, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _downsample_cyx_for_qc(cyx=image_array, max_dimension=1)
+    """
     if max_dimension < 256:
         raise ValueError("qc_max_dimension must be at least 256 pixels")
     largest = max(int(cyx.shape[-2]), int(cyx.shape[-1]))
@@ -571,7 +917,21 @@ def _downsample_cyx_for_qc(
 
 
 def _x_pixel_size_um(source_zarr: Path, *, level: int) -> float:
-    """Read the physical X sampling in micrometres from OME-Zarr metadata."""
+    """Read the physical X sampling in micrometres from OME-Zarr metadata.
+
+    Args:
+        source_zarr (Path): Filesystem path used for source Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _x_pixel_size_um(source_zarr=Path("path/to/resource"), level=1)
+    """
     metadata = extract_ome_zarr_meta_for_compare(source_zarr, level=level)
     axes = str(metadata.get("axes") or "").lower()
     voxel_size_um = metadata.get("voxel_size_um")
@@ -597,7 +957,27 @@ def _add_scale_bar(
     display_stride: int,
     length_um: float,
 ) -> None:
-    """Draw a physically calibrated scale bar in the lower-right corner."""
+    """Draw a physically calibrated scale bar in the lower-right corner.
+
+    Args:
+        axis (Any): Array axis along which the operation is performed.
+        image_shape_yx (tuple[int, int]): Numerical value controlling image shape yx.
+        x_pixel_size_um (float): Numerical value controlling x pixel size um.
+        display_stride (int): Numerical value controlling display stride.
+        length_um (float): Numerical value controlling length um.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _add_scale_bar(
+        ...     axis=...,
+        ...     image_shape_yx=1,
+        ...     x_pixel_size_um=0.5,
+        ...     display_stride=1,
+        ...     length_um=0.5,
+        ... )
+    """
     if not np.isfinite(length_um) or length_um <= 0:
         raise ValueError(f"scale-bar length must be positive, got {length_um}")
     if display_stride < 1:
@@ -643,7 +1023,45 @@ def _save_merged_qc(
     x_pixel_size_um: float,
     scale_bar_um: float,
 ) -> Path:
-    """Save merged-only raw-scale and normalized MIP comparisons."""
+    """Save merged-only raw-scale and normalized MIP comparisons.
+
+    Args:
+        raw_target_cyx (np.ndarray): Array containing raw target cyx.
+        mip_before_cyx (np.ndarray): Array containing maximum-intensity projection before cyx.
+        mip_output_cyx (np.ndarray): Array containing maximum-intensity projection output cyx.
+        rgb_source_channels (Sequence[int]): Numerical value controlling RGB representation source channels.
+        target_slice_1based (int): Numerical value controlling target slice 1based.
+        sample (str): Text value specifying sample.
+        mode (MIPMode): Value specifying mode for the operation.
+        output_png (Path): Filesystem path used for output PNG image.
+        outside_suppression_percent (float): Numerical value controlling outside suppression percent.
+        percentile_low (float): Numerical value controlling percentile low.
+        percentile_high (float): Numerical value controlling percentile high.
+        max_dimension (int): Maximum permitted value of dimension.
+        x_pixel_size_um (float): Numerical value controlling x pixel size um.
+        scale_bar_um (float): Numerical value controlling scale bar um.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_merged_qc(
+        ...     raw_target_cyx=image_array,
+        ...     mip_before_cyx=image_array,
+        ...     mip_output_cyx=image_array,
+        ...     rgb_source_channels=1,
+        ...     target_slice_1based=1,
+        ...     sample="sample",
+        ...     mode=...,
+        ...     output_png=Path("path/to/resource"),
+        ...     outside_suppression_percent=0.5,
+        ...     percentile_low=0.5,
+        ...     percentile_high=0.5,
+        ...     max_dimension=1,
+        ...     x_pixel_size_um=0.5,
+        ...     scale_bar_um=0.5,
+        ... )
+    """
     output_png.parent.mkdir(parents=True, exist_ok=True)
     downsampled = [
         _downsample_cyx_for_qc(image, max_dimension)
@@ -733,6 +1151,18 @@ def _merged_rss_intensity(cyx: np.ndarray) -> np.ndarray:
     ``sqrt(sum_c I_c**2)``. This avoids arbitrary RGB luminance weights and
     retains the original numerical intensity scale, although channels with
     larger amplitudes contribute more strongly to the merged metric.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _merged_rss_intensity(cyx=image_array)
     """
     values = np.asarray(cyx, dtype=np.float64)
     if values.ndim != 3 or values.shape[0] < 1:
@@ -751,7 +1181,36 @@ def _calculate_mip_snr_rows(
     channel_names: Sequence[str],
     epsilon: float,
 ) -> list[MIPSNRRow]:
-    """Compare raw-target and MIP ROI SNR with the current thesis formula."""
+    """Compare raw-target and MIP ROI SNR with the current thesis formula.
+
+    Args:
+        sample (str): Text value specifying sample.
+        target_slice_1based (int): Numerical value controlling target slice 1based.
+        raw_target_cyx (np.ndarray): Array containing raw target cyx.
+        mip_before_cyx (np.ndarray): Array containing maximum-intensity projection before cyx.
+        mip_output_cyx (np.ndarray): Array containing maximum-intensity projection output cyx.
+        mask_yx (np.ndarray): Array containing mask yx.
+        channel_names (Sequence[str]): Text value specifying channel names.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        list[MIPSNRRow]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _calculate_mip_snr_rows(
+        ...     sample="sample",
+        ...     target_slice_1based=1,
+        ...     raw_target_cyx=image_array,
+        ...     mip_before_cyx=image_array,
+        ...     mip_output_cyx=image_array,
+        ...     mask_yx=image_array,
+        ...     channel_names="channel_names",
+        ...     epsilon=0.5,
+        ... )
+    """
     if raw_target_cyx.shape != mip_before_cyx.shape or mip_before_cyx.shape != mip_output_cyx.shape:
         raise ValueError(
             f"SNR arrays must have identical CYX geometry: raw={raw_target_cyx.shape}, "
@@ -849,7 +1308,28 @@ def _save_mip_snr(
     formula: str,
     outside_suppression_percent: float,
 ) -> tuple[Path, Path]:
-    """Save per-channel plus merged-RSS SNR as compact CSV and JSON files."""
+    """Save per-channel plus merged-RSS SNR as compact CSV and JSON files.
+
+    Args:
+        rows (Sequence[MIPSNRRow]): Value specifying rows for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        formula (str): Text value specifying formula.
+        outside_suppression_percent (float): Numerical value controlling outside suppression percent.
+
+    Returns:
+        tuple[Path, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _save_mip_snr(
+        ...     rows=[],
+        ...     output_dir=Path("path/to/resource"),
+        ...     formula="formula",
+        ...     outside_suppression_percent=0.5,
+        ... )
+    """
     import csv
 
     if not rows:
@@ -928,12 +1408,33 @@ def _save_mip_snr(
 
 
 def _safe_percent_tag(value: float) -> str:
+    """Return safe percent tag for the supplied inputs.
+
+    Args:
+        value (float): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_percent_tag(value=0.5)
+    """
     rounded = f"{float(value):g}"
     return rounded.replace("-", "m").replace(".", "p")
 
 
 def mode_output_directory_name(cfg: MIP3DConfig) -> str:
-    """Return a collision-safe output directory for the selected product."""
+    """Return a collision-safe output directory for the selected product.
+
+    Args:
+        cfg (MIP3DConfig): Value specifying cfg for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = mode_output_directory_name(cfg=config)
+    """
     mode = _require_mode(cfg.mode)
     if mode in ("raw_unmasked", "raw_masked"):
         if mode == "raw_unmasked":
@@ -961,6 +1462,18 @@ def mode_output_directory_name(cfg: MIP3DConfig) -> str:
 
 
 def _output_sample_dir(cfg: MIP3DConfig, raw_zarr: Path) -> Path:
+    """Return output sample dir for the supplied inputs.
+
+    Args:
+        cfg (MIP3DConfig): Value specifying cfg for the operation.
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _output_sample_dir(cfg=config, raw_zarr=Path("path/to/resource"))
+    """
     project_root = Path(cfg.project_root or find_project_root(Path(__file__).resolve())).resolve()
     output_root = resolve_project_path(
         cfg.output_root or Path("results") / "mip_2d",
@@ -970,7 +1483,21 @@ def _output_sample_dir(cfg: MIP3DConfig, raw_zarr: Path) -> Path:
 
 
 def create_mip_for_volume(cfg: MIP3DConfig) -> MIP3DOutput:
-    """Create and save one selected 2D MIP product for one configured raw volume."""
+    """Create and save one selected 2D MIP product for one configured raw volume.
+
+    Args:
+        cfg (MIP3DConfig): Value specifying cfg for the operation.
+
+    Returns:
+        MIP3DOutput: Result produced by the operation.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = create_mip_for_volume(cfg=config)
+    """
     if cfg.raw_zarr is None:
         raise ValueError("raw_zarr is required")
     if int(cfg.level) != 0:

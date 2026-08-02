@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for decoder OME-Zarr."""
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Any, Tuple, Optional, Sequence
@@ -5,7 +7,17 @@ import numpy as np
 "Loads and interprets OME-Zarr image data into arrays and metadata dictionaries. Used when we are working with networks."
 
 def infer_axes_from_ndim(ndim: int | None) -> str:
-    """Fallback axes inference if multiscales axes are missing."""
+    """Fallback axes inference if multiscales axes are missing.
+
+    Args:
+        ndim (int | None): Numerical value controlling ndim.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = infer_axes_from_ndim(ndim=1)
+    """
     if ndim == 2:
         return "yx"
     if ndim == 3:
@@ -18,14 +30,35 @@ def infer_axes_from_ndim(ndim: int | None) -> str:
 
 
 def normalize_axes(axes: str) -> str:
-    """Normalize axes string to lowercase."""
+    """Normalize axes string to lowercase.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = normalize_axes(axes="axes")
+    """
     return axes.strip().lower()
 
 
 
 
 def _valid_axes_contract(axes: object, ndim: int) -> str | None:
-    """Return a normalized axes contract when it is structurally valid."""
+    """Return a normalized axes contract when it is structurally valid.
+
+    Args:
+        axes (object): Axis specification describing the dimensional order of the image data.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = _valid_axes_contract(axes=..., ndim=1)
+    """
     if not isinstance(axes, str):
         return None
     normalized = normalize_axes(axes)
@@ -40,8 +73,28 @@ def _valid_axes_contract(axes: object, ndim: int) -> str | None:
     return normalized
 
 def select_index_along_axis(arr: Any, axes: str, letter: str, idx: int) -> tuple[Any, str]:
-    """
-    Select a single index along `letter` axis and remove that axis from axes string.
+    """Select a single index along `letter` axis and remove that axis from axes string.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        letter (str): Text value specifying letter.
+        idx (int): Numerical value controlling idx.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = select_index_along_axis(
+        ...     arr=...,
+        ...     axes="axes",
+        ...     letter="letter",
+        ...     idx=1,
+        ... )
     """
     axes = normalize_axes(axes)
     letter = letter.lower()
@@ -69,8 +122,17 @@ def select_index_along_axis(arr: Any, axes: str, letter: str, idx: int) -> tuple
 
 
 def move_yx_to_last(arr: Any, axes: str) -> tuple[Any, str]:
-    """
-    Ensure y and x are the last axes (… y x).
+    """Ensure y and x are the last axes (… y x).
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = move_yx_to_last(arr=..., axes="axes")
     """
     axes = normalize_axes(axes)
     if axes == "yx":
@@ -92,8 +154,24 @@ def move_yx_to_last(arr: Any, axes: str) -> tuple[Any, str]:
 
 
 def _move_axis(arr: Any, axes: str, letter: str, dest: int) -> tuple[Any, str]:
-    """
-    Move an axis identified by letter to a specific position (dest index).
+    """Move an axis identified by letter to a specific position (dest index).
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        letter (str): Text value specifying letter.
+        dest (int): Numerical value controlling dest.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _move_axis(
+        ...     arr=...,
+        ...     axes="axes",
+        ...     letter="letter",
+        ...     dest=1,
+        ... )
     """
     axes = normalize_axes(axes)
     letter = letter.lower()
@@ -114,9 +192,20 @@ def _move_axis(arr: Any, axes: str, letter: str, dest: int) -> tuple[Any, str]:
 
 
 def ensure_czyx(arr: Any, axes: str) -> tuple[Any, str]:
-    """
-    Return data in axis order 'czyx' (channel, z, y, x).
-    Adds missing C/Z as singleton dims if absent.
+    """Return data in axis order 'czyx' (channel, z, y, x). Adds missing C/Z as singleton dims if absent.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = ensure_czyx(arr=..., axes="axes")
     """
     axes = normalize_axes(axes)
     if axes == "unknown":
@@ -146,8 +235,20 @@ def ensure_czyx(arr: Any, axes: str) -> tuple[Any, str]:
 
 
 def to_n2v_stack(arr_np: np.ndarray, axes: str) -> np.ndarray:
-    """
-    Convert array with axes ending in yx to stack (N, Y, X).
+    """Convert array with axes ending in yx to stack (N, Y, X).
+
+    Args:
+        arr_np (np.ndarray): Array containing arr np.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = to_n2v_stack(arr_np=image_array, axes="axes")
     """
     axes = normalize_axes(axes)
 
@@ -163,9 +264,18 @@ def to_n2v_stack(arr_np: np.ndarray, axes: str) -> np.ndarray:
 
 
 def percentile_normalize_stack01(stack: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
-    """
-    Percentile normalize each frame to [0,1] float32.
-    Input stack: (N, Y, X)
+    """Percentile normalize each frame to [0,1] float32. Input stack: (N, Y, X).
+
+    Args:
+        stack (np.ndarray): Image stack containing multiple slices, channels, or time points.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = percentile_normalize_stack01(stack=image_array)
     """
     stack = stack.astype(np.float32, copy=False)
     out = np.empty_like(stack, dtype=np.float32)
@@ -188,10 +298,22 @@ def load_ome_zarr(
     level: int = 0,
     as_numpy: bool = False,
 ) -> Tuple[Any, str]:
-    """
-    Load OME-Zarr and return (array, axes).
-    - array can be dask-like unless as_numpy=True.
-    - axes is a string like 'tczyx', 'czyx', 'cyx', ...
+    """Load OME-Zarr and return (array, axes). - array can be dask-like unless as_numpy=True. - axes is a string like 'tczyx', 'czyx', 'cyx', ...
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        as_numpy (bool): Boolean flag controlling as numpy. Defaults to ``False``.
+
+    Returns:
+        Tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_ome_zarr(zarr_dir=Path("path/to/resource"))
     """
     zarr_dir = Path(zarr_dir)
 
@@ -260,6 +382,24 @@ def load_ome_zarr_direct(
     Direct access is required because some valid PFT deconvolution stores were
     observed to return a correctly shaped but zero-filled lazy array through
     the high-level reader, while direct Zarr access returned the stored values.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        as_numpy (bool): Boolean flag controlling as numpy. Defaults to ``False``.
+
+    Returns:
+        Tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_ome_zarr_direct(zarr_dir=Path("path/to/resource"))
     """
     zarr_dir = Path(zarr_dir).expanduser().resolve()
     if not zarr_dir.is_dir():
@@ -350,7 +490,22 @@ def load_ome_zarr_direct(
 
 
 def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -> dict[str, object]:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = extract_ome_zarr_meta_for_compare(zarr_dir=Path("path/to/resource"))
+    """
     zarr_dir = Path(zarr_dir)
 
     try:
@@ -451,7 +606,17 @@ def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -
     pft_meta = root.attrs.get("pft_meta")
 
     def _pft_get(key: str):
-        """Internal helper used by this module."""
+        """Internal helper used by this module.
+
+        Args:
+            key (str): Key used to access or identify an entry in a mapping.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = _pft_get(key="key")
+        """
         if isinstance(pft_meta, dict):
             return pft_meta.get(key)
         return None
@@ -488,8 +653,20 @@ def extract_ome_zarr_meta_for_compare(zarr_dir: str | Path, *, level: int = 0) -
     return out
 
 def _permute_to_match_shape(arr: Any, target_shape: tuple[int, ...]) -> Any:
-    """
-    If arr.shape is a permutation of target_shape, transpose arr to match target_shape.
+    """If arr.shape is a permutation of target_shape, transpose arr to match target_shape.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        target_shape (tuple[int, ...]): Numerical value controlling target shape.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _permute_to_match_shape(arr=..., target_shape=1)
     """
     src_shape = tuple(getattr(arr, "shape", ()))
     if len(src_shape) != len(target_shape):
@@ -509,8 +686,22 @@ def _permute_to_match_shape(arr: Any, target_shape: tuple[int, ...]) -> Any:
 
 
 def _align_loaded_array_to_metadata(arr: Any, axes: str, meta: dict) -> tuple[Any, str]:
-    """
-    Force loaded arr to match OME-Zarr metadata (axes + stored shape) if it's just permuted.
+    """Force loaded arr to match OME-Zarr metadata (axes + stored shape) if it's just permuted.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        meta (dict): Value specifying meta for the operation.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _align_loaded_array_to_metadata(
+        ...     arr=...,
+        ...     axes="axes",
+        ...     meta={},
+        ... )
     """
     expected_axes = meta.get("axes")
     expected_shape = meta.get("shape")
@@ -539,10 +730,26 @@ def load_ome_zarr_3d_czyx(
     channels: Sequence[int] | None = None,
     as_numpy: bool = True,
 ) -> tuple[np.ndarray, str]:
-    """
-    Load an OME-Zarr volume and return array in (C, Z, Y, X).
+    """Load an OME-Zarr volume and return array in (C, Z, Y, X).
 
     Robust: aligns loaded array to .zattrs/.zarray metadata if the reader returns a permuted layout.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        time (int | None): Numerical value controlling time. Defaults to ``0``.
+        channels (Sequence[int] | None): Channel indices or identifiers selected for processing. ``None`` selects the function's default behavior.
+        as_numpy (bool): Boolean flag controlling as numpy. Defaults to ``True``.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_ome_zarr_3d_czyx(zarr_dir=Path("path/to/resource"))
     """
     zarr_dir = Path(zarr_dir)
 
@@ -585,8 +792,21 @@ def load_ome_zarr_3d_czyx(
 
 
 def get_z_slice_cyx(vol_czyx: np.ndarray, z: int) -> np.ndarray:
-    """
-    Convenience: from volume (C,Z,Y,X) return slice (C,Y,X) at Z=z.
+    """Convenience: from volume (C,Z,Y,X) return slice (C,Y,X) at Z=z.
+
+    Args:
+        vol_czyx (np.ndarray): Array containing vol czyx.
+        z (int): Axial coordinate or numerical input value used by the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = get_z_slice_cyx(vol_czyx=image_array, z=1)
     """
     if vol_czyx.ndim != 4:
         raise ValueError(f"Expected vol_czyx.ndim==4 (C,Z,Y,X). Got shape={vol_czyx.shape}")
@@ -605,14 +825,43 @@ def load_ome_zarr_volume_csyx(
     prefer: tuple[str, str] = ("z", "t"),
     as_numpy: bool = True,
 ) -> tuple[np.ndarray, dict]:
-    """Load data and return the processed result."""
+    """Load data and return the processed result.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        time_if_both (int): Numerical value controlling time if both. Defaults to ``0``.
+        z_if_both (int): Numerical value controlling z if both. Defaults to ``0``.
+        channels (Sequence[int] | None): Channel indices or identifiers selected for processing. ``None`` selects the function's default behavior.
+        prefer (tuple[str, str]): Text value specifying prefer. Defaults to ``("z", "t")``.
+        as_numpy (bool): Boolean flag controlling as numpy. Defaults to ``True``.
+
+    Returns:
+        tuple[np.ndarray, dict]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_ome_zarr_volume_csyx(zarr_dir=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(zarr_dir, level=level, as_numpy=False)
     axes = normalize_axes(axes)
     if axes == "unknown":
         raise ValueError(f"Axes could not be inferred for: {zarr_dir}")
 
     def _ax_size(letter: str) -> int:
-        """Internal helper used by this module."""
+        """Internal helper used by this module.
+
+        Args:
+            letter (str): Text value specifying letter.
+
+        Returns:
+            int: Computed numerical result.
+
+        Example:
+            >>> result = _ax_size(letter="letter")
+        """
         if letter not in axes:
             return 1
         return int(getattr(arr, "shape")[axes.index(letter)])
@@ -704,7 +953,24 @@ def ome_zarr_to_n2v_2d_stack(
     z: int | None = None,
     normalize: str | None = None,
 ) -> np.ndarray:
-    """Convert OME-Zarr into a NumPy stack shaped (N, Y, X, 1) for 2D N2V."""
+    """Convert OME-Zarr into a NumPy stack shaped (N, Y, X, 1) for 2D N2V.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        channel (int): Channel index or channel identifier selected for processing. Defaults to ``0``.
+        time (int | None): Numerical value controlling time. ``None`` selects the function's default behavior.
+        z (int | None): Axial coordinate or numerical input value used by the operation. ``None`` selects the function's default behavior.
+        normalize (str | None): Text value specifying normalize. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = ome_zarr_to_n2v_2d_stack(zarr_dir=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(zarr_dir, as_numpy=False)
 
     axes = normalize_axes(axes)
@@ -739,15 +1005,24 @@ def decode_omezarr_volume(
     as_float32: bool = False,
     print_info: bool = True,
 ) -> tuple[np.ndarray, dict]:
-    """
-    Canonical OME-Zarr decoder for 3D volumes.
+    """Canonical OME-Zarr decoder for 3D volumes.
 
-    Returns
-    -------
-    vol_czyx : np.ndarray
-        Array with shape (C, Z, Y, X).
-    meta : dict
-        Metadata from OME-Zarr attrs + level array info.
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        time (int | None): Numerical value controlling time. Defaults to ``0``.
+        channels (Sequence[int] | None): Channel indices or identifiers selected for processing. ``None`` selects the function's default behavior.
+        as_float32 (bool): Boolean flag controlling as float32. Defaults to ``False``.
+        print_info (bool): Boolean flag controlling print info. Defaults to ``True``.
+
+    Returns:
+        tuple[np.ndarray, dict]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = decode_omezarr_volume(zarr_dir=Path("path/to/resource"))
     """
     zarr_dir = Path(zarr_dir)
 
@@ -798,7 +1073,17 @@ def decode_omezarr_volume(
     return vol, meta_out
 
 def parse_psfgenerator_config(path: str | Path) -> dict[str, str]:
-    """Parse input text or metadata into a structured form."""
+    """Parse input text or metadata into a structured form.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[str, str]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = parse_psfgenerator_config(path="path")
+    """
     path = Path(path)
     out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -811,12 +1096,29 @@ def parse_psfgenerator_config(path: str | Path) -> dict[str, str]:
 
 
 def psfgenerator_required_keys() -> list[str]:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = psfgenerator_required_keys()
+    """
     return ["Lambda", "NA", "NX", "NY", "NZ", "ResAxial", "ResLateral", "Type"]
 
 
 def check_config_has_required(cfg: dict[str, str]) -> tuple[bool, list[str]]:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        cfg (dict[str, str]): Text value specifying cfg.
+
+    Returns:
+        tuple[bool, list[str]]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = check_config_has_required(cfg=config)
+    """
     req = psfgenerator_required_keys()
     missing = [k for k in req if k not in cfg]
     return (len(missing) == 0), missing

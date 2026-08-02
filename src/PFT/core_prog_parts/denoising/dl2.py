@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for dl2."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,7 +26,14 @@ from PFT.core_prog_parts.decoder_omezar import (
 "Logic of running DeconvolutionLab2 RL deconvolution on OME-Zarr data, with checks and reporting"
 
 def _try_import_psutil():
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _try_import_psutil()
+    """
     try:
         import psutil  # type: ignore
         return psutil
@@ -40,9 +49,41 @@ def mem_box(
     peak_rss: Optional[int],
     py_peak_bytes: Optional[int],
 ) -> str:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        t0 (float): Numerical value controlling t0.
+        rss0 (Optional[int]): Numerical value controlling rss0.
+        rss1 (Optional[int]): Numerical value controlling rss1.
+        peak_rss (Optional[int]): Numerical value controlling peak rss.
+        py_peak_bytes (Optional[int]): Numerical value controlling py peak bytes.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = mem_box(
+        ...     title="title",
+        ...     t0=0.5,
+        ...     rss0=1,
+        ...     rss1=1,
+        ...     peak_rss=1,
+        ...     py_peak_bytes=1,
+        ... )
+    """
     def fmt_mb(x: Optional[int]) -> str:
-        """Helper function used by this module."""
+        """Helper function used by this module.
+
+        Args:
+            x (Optional[int]): Horizontal coordinate or numerical input value used by the operation.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> result = fmt_mb(x=1)
+        """
         return "n/a" if x is None else f"{x / (1024**2):.1f} MB"
 
     dt = time.time() - t0
@@ -59,8 +100,16 @@ def mem_box(
 
 
 def _infer_lambda_nm_from_channel_name(name: Optional[str]) -> Optional[int]:
-    """
-      T1 -> 405 nm, T2 -> 488 nm, T3 -> 561 nm
+    """T1 -> 405 nm, T2 -> 488 nm, T3 -> 561 nm.
+
+    Args:
+        name (Optional[str]): Name used to identify the current object, resource, or output.
+
+    Returns:
+        Optional[int]: Computed numerical result.
+
+    Example:
+        >>> result = _infer_lambda_nm_from_channel_name(name="name")
     """
     if not name:
         return None
@@ -89,7 +138,34 @@ def _select_psf_path(
     level: Optional[int] = None,
 ) -> Path:
     
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        psf_mode (PSFMode): Value specifying point-spread function mode for the operation.
+        psf_tif (Optional[Path]): Filesystem path used for point-spread function TIFF data.
+        psf_dir (Optional[Path]): Directory used for point-spread function.
+        psf_model (Optional[str]): Text value specifying point-spread function model.
+        channel_name (Optional[str]): Text value specifying channel name.
+        lambda_nm (Optional[int]): Numerical value controlling lambda nm.
+        level (Optional[int]): Numerical value controlling level. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_psf_path(
+        ...     psf_mode=...,
+        ...     psf_tif=Path("path/to/resource"),
+        ...     psf_dir=Path("path/to/resource"),
+        ...     psf_model="psf_model",
+        ...     channel_name="channel_name",
+        ...     lambda_nm=1,
+        ... )
+    """
     if psf_mode == "file":
         if psf_tif is None:
             raise ValueError("--psf_mode file requires --psf_tif")
@@ -139,7 +215,23 @@ def load_omezarr_channel_zyx(
     time: Optional[int] = 0,
 ) -> tuple[np.ndarray, Optional[str]]:
    
-    """Load data and return the processed result."""
+    """Load data and return the processed result.
+
+    Args:
+        image_omezarr_dir (Path): Directory used for image OME-Zarr.
+        channel_index (int): Zero-based index selecting channel. Defaults to ``0``.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        time (Optional[int]): Numerical value controlling time. Defaults to ``0``.
+
+    Returns:
+        tuple[np.ndarray, Optional[str]]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_omezarr_channel_zyx(image_omezarr_dir=Path("path/to/resource"))
+    """
     image_omezarr_dir = Path(image_omezarr_dir)
 
     meta = extract_ome_zarr_meta_for_compare(image_omezarr_dir, level=level)
@@ -162,7 +254,18 @@ def load_omezarr_channel_zyx(
 
 
 def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        image_zyx (np.ndarray): Array containing image zyx.
+        psf (np.ndarray): Array containing point-spread function.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> basic_validity_checks(image_zyx=image_array, psf=image_array)
+    """
     if image_zyx.ndim != 3:
         raise ValueError(f"Image must be 3D (Z,Y,X). Got shape={image_zyx.shape}")
     if psf.ndim != 3:
@@ -184,7 +287,16 @@ def basic_validity_checks(image_zyx: np.ndarray, psf: np.ndarray) -> None:
 
 def write_imagej_tiff_stack(arr: np.ndarray, out_path: Path, axes: str = "ZYX") -> None:
    
-    """Write the requested report or metadata file."""
+    """Write the requested report or metadata file.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        out_path (Path): Filesystem path associated with out.
+        axes (str): Axis specification describing the dimensional order of the image data. Defaults to ``"ZYX"``.
+
+    Example:
+        >>> write_imagej_tiff_stack(arr=image_array, out_path=Path("path/to/resource"))
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arr = np.ascontiguousarray(arr)
     tiff.imwrite(
@@ -207,7 +319,34 @@ def run_dl2_cli(
     background: float = 0.0,
 ) -> Path:
     
-    """Run the main processing step for this workflow."""
+    """Run the main processing step for this workflow.
+
+    Args:
+        java (Path): Filesystem path used for java.
+        dl2_jar (Path): Filesystem path used for dl2 jar.
+        image_tif (Path): Filesystem path used for image TIFF data.
+        psf_tif (Path): Filesystem path used for point-spread function TIFF data.
+        out_dir (Path): Directory used for out.
+        iterations (int): Numerical value controlling iterations. Defaults to ``1``.
+        background (float): Numerical value controlling background. Defaults to ``0.0``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_dl2_cli(
+        ...     java=Path("path/to/resource"),
+        ...     dl2_jar=Path("path/to/resource"),
+        ...     image_tif=Path("path/to/resource"),
+        ...     psf_tif=Path("path/to/resource"),
+        ...     out_dir=Path("path/to/resource"),
+        ... )
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img = tiff.imread(str(image_tif))
@@ -268,7 +407,14 @@ def run_dl2_cli(
 
 
 def main() -> int:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     ap = argparse.ArgumentParser(description="Run DeconvolutionLab2 Richardson–Lucy on ONE channel of an OME-Zarr.")
     ap.add_argument(
         "--omezarr_dir",

@@ -1,11 +1,11 @@
 PNEUMO-FLUOR TOOLKIT (PFT)
 ================================================================================
-Document version: 2026-07-27
+Document version: 2026-08-02
 
 PURPOSE
 --------------------------------------------------------------------------------
 This document identifies the responsibility of the current command-line scripts
-and reusable core modules in the Pneumo-Fluor Toolkit.
+and reusable core modules in the Pneumo-Fluor Toolkit. U can skip it, but it says what each function is doing 
 
 ARCHITECTURE RULE
 --------------------------------------------------------------------------------
@@ -26,6 +26,29 @@ ARCHITECTURE RULE
    when they are executed directly.
 
 
+ENVIRONMENT RULE
+--------------------------------------------------------------------------------
+PFT uses three isolated environments because the supported segmentation
+frameworks have different tested dependency stacks.
+
+1. pft
+   Main project environment. Cellpose 3 is installed as a normal dependency
+   through pyproject.toml. This environment is responsible for the core
+   microscopy pipeline, Cellpose, statistics, visualization, and optional U-Net.
+
+2. pft_stardist
+   Dedicated TensorFlow 2.10.1 and StarDist 0.9.2 environment.
+
+3. pft_omni
+   Dedicated Omnipose 1.1.4, CUDA-enabled PyTorch, and CUDA NVRTC environment.
+
+The specialized environments install the local PFT package in editable mode
+with --no-deps after their tested framework packages have been installed. This
+prevents the main Cellpose dependency set from replacing the specialized pins.
+
+Complete commands are maintained in PFT_environment_setup.txt.
+
+
 LABELS
 --------------------------------------------------------------------------------
 [PRIMARY] Main supported workflow entry point.
@@ -41,9 +64,22 @@ A. PROJECT CONFIGURATION AND IMPORT VALIDATION
 ================================================================================
 
 pyproject.toml
-  [SUPPORT] Defines the PFT package, Python-version requirement, dependencies,
-  optional deep-learning environments, console commands, setuptools package
-  discovery, test settings, and formatting/linting configuration.
+  [SUPPORT] Defines the PFT package, Python 3.10 requirement, standard pipeline
+  dependencies, and Cellpose 3 as the primary segmentation dependency. It also
+  records optional U-Net, Noise2Void, StarDist, Omnipose, BM3D, YOLO, napari,
+  and development dependency groups. StarDist and Omnipose are still installed
+  in isolated environments according to PFT_environment_setup.txt.
+
+
+PFT_environment_setup.txt
+  [PRIMARY] Reproducible PowerShell instructions for creating the pft,
+  pft_stardist, and pft_omni environments. Documents tested package versions,
+  CUDA requirements, direct-interpreter execution, environment validation,
+  activation, switching, PyCharm interpreter selection, and environment export.
+
+PFT_responsibilities.txt
+  [PRIMARY] This file. Maps the user-facing scripts, reusable core modules,
+  environment responsibilities, and principal output locations.
 
 scripts/check_project_imports.py
   [PRIMARY] Checks that scripts/ and src/PFT/core_prog_parts/ belong to the same
@@ -360,6 +396,31 @@ scripts/segmentation/run_stardist_terminal.py
 scripts/segmentation/train_stardist_terminal.py
   [RUN] Fine-tunes StarDist models for the three supported dataset classes.
 
+
+scripts/segmentation/screen_pretrained_segmentation.py
+  [CORE] Shared command implementation for reproducible pretrained-model and
+  parameter screening. Selects manually annotated images, executes parameter
+  combinations, calculates semantic and instance metrics, ranks configurations,
+  and writes CSV, JSON, HTML, comparison images, and optional predicted labels.
+
+scripts/segmentation/screen_stardist_terminal.py
+  [RUN] StarDist-specific screening wrapper. Uses manual integer instance masks,
+  reproducible sample selection, probability/NMS parameter grids, and the shared
+  pretrained-screening implementation.
+
+scripts/segmentation/screen_omnipose_terminal.py
+  [RUN] Omnipose-specific screening wrapper. Uses manual integer instance masks,
+  reproducible sample selection, diameter/flow/mask/minimum-size parameter
+  grids, and the shared pretrained-screening implementation.
+
+scripts/segmentation/validate_stardist_terminal.py
+  [RUN] Validates a saved StarDist model on the selected held-out/manual split
+  and writes quantitative and visual comparison outputs.
+
+scripts/segmentation/validate_omnipose_terminal.py
+  [RUN] Validates a saved Omnipose model on the selected held-out/manual split
+  using the configured inference parameters.
+
 scripts/segmentation/run_unet_terminal.py
   [RUN] Runs the current U-Net inference core for 2D time, 2D WGA-DAPI, and 3D
   2.5D workflows with user-selected model, channels, and target images.
@@ -412,6 +473,17 @@ src/PFT/core_prog_parts/segmentation/microbj.py
   [CORE] Fiji/MicrobeJ integration. Finds Fiji and the plugin JAR, installs the
   plugin when needed, generates safe macros, collects TIFF inputs, and runs
   single or batch MicrobeJ jobs.
+
+src/PFT/core_prog_parts/segmentation/instance_segmentation_core.py
+  [CORE] Shared instance-segmentation implementation used by current terminal
+  workflows. Handles model construction, framework compatibility, prepared
+  channel layouts, Cellpose/Omnipose prediction, saved-model loading, training
+  calls, deterministic execution settings, and label-output normalization.
+
+scripts/segmentation/stardist_input_adapter.py
+  [SUPPORT] StarDist-specific image adapter. Keeps 2d_time as a single HADA
+  channel and converts 2d_wga_dapi into the defined merged single-channel input
+  without changing the stored OME-Zarr data or other segmentation frameworks.
 
 CELLPOSE
 --------------------------------------------------------------------------------
@@ -671,11 +743,18 @@ results/training_files/
 results/filters/
   Filtered or denoised datasets and related method outputs.
 
-results/models/ or models/
-  Trained model files, depending on the specific model core and configuration.
+models/segmentation/
+  Trained and fine-tuned segmentation models, organized by method, dataset,
+  source mode, and run name. Validation reports may be retained inside the
+  corresponding model directory.
 
-results/predictions/ or method-specific prediction directories
-  Segmentation masks, labels, overlays, and method metadata.
+results/segmentation_predictions/
+  Final segmentation masks, integer labels, overlays, per-sample metadata, and
+  copied final metrics, organized by method, dataset, source mode, and model.
+
+results/segmentation_screening/
+  Pretrained-model baselines, threshold/parameter screens, CSV metrics, JSON
+  summaries, HTML reports, comparison images, and optional predicted labels.
 
 results/final_values/
   Quantitative per-cell/per-sample tables used by graph and statistics modules.

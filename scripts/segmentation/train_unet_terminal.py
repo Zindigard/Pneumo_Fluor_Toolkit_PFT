@@ -1,4 +1,25 @@
-"""Train the thesis-aligned 2D U-Net from terminal prompts or argparse."""
+r"""Train the thesis-aligned 2D U-Net from terminal prompts or argparse.
+
+Examples
+--------
+Interactive configuration:
+
+    python scripts/segmentation/train_unet_terminal.py
+
+Train the 2D U-Net for 50 epochs:
+
+    python scripts/segmentation/train_unet_terminal.py \
+        --dataset 2d_time \
+        --level 0 \
+        --patch 256 \
+        --batch 4 \
+        --epochs 50 \
+        --steps-per-epoch 150 \
+        --val-steps 30 \
+        --learning-rate 0.001 \
+        --seed 1337 \
+        --non-interactive
+"""
 
 from __future__ import annotations
 
@@ -11,6 +32,17 @@ _SCRIPT = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (_SCRIPT.parent, *_SCRIPT.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -34,6 +66,14 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_wga_dapi_core import (  # no
 
 
 def _choose_dataset() -> str:
+    """Choose dataset according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_dataset()
+    """
     print("\nChoose 2D U-Net training dataset:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
@@ -42,6 +82,14 @@ def _choose_dataset() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Train the 2D bacterial foreground/background U-Net."
     )
@@ -121,6 +169,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     if args.dataset is None:
         if args.non_interactive:

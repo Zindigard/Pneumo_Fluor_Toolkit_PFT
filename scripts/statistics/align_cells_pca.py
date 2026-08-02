@@ -1,3 +1,21 @@
+r"""Provide command-line and programmatic utilities for align cells principal-component analysis result.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/align_cells_pca.py --help
+
+Representative execution:
+
+    python scripts/statistics/align_cells_pca.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --sample WT_HADA_NHS_40min_ROI1_SIM \
+        --manifest results/statistics/manifest.csv \
+        --example
+"""
+
 from __future__ import annotations
 
 """PCA-align cells for one dataset or all supported datasets.
@@ -30,6 +48,14 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _import_common():
+    """Return import common for the supplied inputs.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _import_common()
+    """
     local_dir = SCRIPT_FILE.parent
     if str(local_dir) not in sys.path:
         sys.path.insert(0, str(local_dir))
@@ -64,6 +90,17 @@ COMMON = _import_common()
 
 
 def import_check_helpers(project_root: Path):
+    """Return import check helpers for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = import_check_helpers(project_root=Path("path/to/resource"))
+    """
     script_dir = project_root / "scripts" / "statistics"
     if str(script_dir) not in sys.path:
         sys.path.insert(0, str(script_dir))
@@ -79,6 +116,7 @@ def import_check_helpers(project_root: Path):
 
 @dataclass(frozen=True)
 class PCAResult:
+    """Store validated configuration or result data for pcaresult."""
     dataset: str
     source_mode: str
     run_mode: str
@@ -101,10 +139,36 @@ class PCAResult:
 
 
 def _safe_relative(annotation_id: str) -> Path:
+    """Return safe relative for the supplied inputs.
+
+    Args:
+        annotation_id (str): Text value specifying annotation id.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _safe_relative(annotation_id="annotation_id")
+    """
     return Path(*[part for part in annotation_id.replace("\\", "/").split("/") if part])
 
 
 def _tight_bounds(binary: np.ndarray, padding: int) -> tuple[int, int, int, int]:
+    """Return tight bounds for the supplied inputs.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+        padding (int): Numerical value controlling padding.
+
+    Returns:
+        tuple[int, int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _tight_bounds(binary=image_array, padding=1)
+    """
     yy, xx = np.nonzero(binary)
     if xx.size == 0:
         raise ValueError("Cannot crop an empty cell mask")
@@ -120,11 +184,39 @@ def _crop_to_mask(
     image_cyx: np.ndarray,
     padding: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Crop to mask to the requested region.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        image_cyx (np.ndarray): Array containing image cyx.
+        padding (int): Numerical value controlling padding.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _crop_to_mask(
+        ...     mask=image_array,
+        ...     image_cyx=image_array,
+        ...     padding=1,
+        ... )
+    """
     y0, y1, x0, x1 = _tight_bounds(mask, padding=padding)
     return mask[y0:y1, x0:x1], image_cyx[:, y0:y1, x0:x1]
 
 
 def _pca(binary: np.ndarray) -> dict[str, float | bool]:
+    """Return principal-component analysis result for the supplied inputs.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+
+    Returns:
+        dict[str, float | bool]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _pca(binary=image_array)
+    """
     yy, xx = np.nonzero(binary)
     area = int(xx.size)
     if area < 3:
@@ -170,6 +262,25 @@ def _rotate_cell(
     angle_deg: float,
     output_padding: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Return rotate cell for the supplied inputs.
+
+    Args:
+        mask_crop (np.ndarray): Array containing mask crop.
+        image_crop (np.ndarray): Array containing image crop.
+        angle_deg (float): Numerical value controlling angle deg.
+        output_padding (int): Numerical value controlling output padding.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _rotate_cell(
+        ...     mask_crop=image_array,
+        ...     image_crop=image_array,
+        ...     angle_deg=0.5,
+        ...     output_padding=1,
+        ... )
+    """
     rotated_mask = ndi.rotate(
         mask_crop.astype(np.uint8),
         angle=float(angle_deg),
@@ -196,6 +307,17 @@ def _rotate_cell(
 
 
 def _touches_border(binary: np.ndarray) -> bool:
+    """Return touches border for the supplied inputs.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _touches_border(binary=image_array)
+    """
     yy, xx = np.nonzero(binary)
     if xx.size == 0:
         return False
@@ -209,11 +331,34 @@ def _touches_border(binary: np.ndarray) -> bool:
 
 
 def _save_tiff_cyx(path: Path, image: np.ndarray) -> None:
+    """Save TIFF data cyx to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        image (np.ndarray): Input image array to process.
+
+    Example:
+        >>> _save_tiff_cyx(path=Path("path/to/resource"), image=image_array)
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tiff.imwrite(path, image.astype(np.float32), metadata={"axes": "CYX"})
 
 
 def _draw_pca_axis(axis, mask: np.ndarray, angle_deg: float) -> None:
+    """Draw principal-component analysis result axis on the target visualization.
+
+    Args:
+        axis (Any): Array axis along which the operation is performed.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        angle_deg (float): Numerical value controlling angle deg.
+
+    Example:
+        >>> _draw_pca_axis(
+        ...     axis=...,
+        ...     mask=image_array,
+        ...     angle_deg=0.5,
+        ... )
+    """
     yy, xx = np.nonzero(mask)
     if xx.size == 0:
         return
@@ -235,6 +380,30 @@ def save_before_after_figure(
     title: str,
     image_to_rgb,
 ) -> None:
+    """Save before after figure to persistent storage.
+
+    Args:
+        output_path (Path): Filesystem path where the generated result is written.
+        mask_before (np.ndarray): Array containing mask before.
+        image_before (np.ndarray): Array containing image before.
+        mask_after (np.ndarray): Array containing mask after.
+        image_after (np.ndarray): Array containing image after.
+        angle_deg (float): Numerical value controlling angle deg.
+        title (str): Title displayed on the generated figure or report section.
+        image_to_rgb (Any): Value specifying image to RGB representation for the operation.
+
+    Example:
+        >>> save_before_after_figure(
+        ...     output_path=Path("path/to/resource"),
+        ...     mask_before=image_array,
+        ...     image_before=image_array,
+        ...     mask_after=image_array,
+        ...     image_after=image_array,
+        ...     angle_deg=0.5,
+        ...     title="title",
+        ...     image_to_rgb=...,
+        ... )
+    """
     figure, axes = plt.subplots(2, 2, figsize=(9, 7), constrained_layout=True)
     axes[0, 0].imshow(mask_before, cmap="gray", interpolation="nearest")
     _draw_pca_axis(axes[0, 0], mask_before, angle_deg)
@@ -260,6 +429,24 @@ def save_overview(
     max_cells: int,
     title: str,
 ) -> None:
+    """Save overview to persistent storage.
+
+    Args:
+        output_path (Path): Filesystem path where the generated result is written.
+        entries (list[tuple[int, np.ndarray, np.ndarray]]): Array containing entries.
+        image_to_rgb (Any): Value specifying image to RGB representation for the operation.
+        max_cells (int): Maximum permitted value of cells.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> save_overview(
+        ...     output_path=Path("path/to/resource"),
+        ...     entries=image_array,
+        ...     image_to_rgb=...,
+        ...     max_cells=1,
+        ...     title="title",
+        ... )
+    """
     selected = entries[:max_cells]
     if not selected:
         return
@@ -284,6 +471,18 @@ def save_overview(
 
 
 def _prepare_output(output_root: Path, overwrite: bool) -> None:
+    """Prepare output for downstream processing.
+
+    Args:
+        output_root (Path): Directory used for output.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _prepare_output(output_root=Path("path/to/resource"), overwrite=True)
+    """
     if output_root.exists() and any(output_root.iterdir()):
         if not overwrite:
             raise FileExistsError(f"Output folder is not empty: {output_root}. Use --overwrite.")
@@ -308,6 +507,48 @@ def process_manifest(
     max_overview_cells: int,
     overwrite: bool,
 ) -> dict[str, object]:
+    """Process manifest using the configured workflow.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        run_mode (str): Text value specifying run mode.
+        manifest_rows (list[dict[str, object]]): Text value specifying manifest rows.
+        output_root (Path): Directory used for output.
+        min_object_pixels (int): Minimum permitted value of object pixels.
+        min_anisotropy (float): Minimum permitted value of anisotropy.
+        input_padding (int): Numerical value controlling input padding.
+        output_padding (int): Numerical value controlling output padding.
+        exclude_border (bool): Boolean flag controlling exclude border.
+        include_failed_pairs (bool): Boolean flag controlling whether to failed pairs.
+        max_overview_cells (int): Maximum permitted value of overview cells.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_manifest(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     run_mode="run_mode",
+        ...     manifest_rows="manifest_rows",
+        ...     output_root=Path("path/to/resource"),
+        ...     min_object_pixels=1,
+        ...     min_anisotropy=0.5,
+        ...     input_padding=1,
+        ...     output_padding=1,
+        ...     exclude_border=True,
+        ...     include_failed_pairs=True,
+        ...     max_overview_cells=1,
+        ...     overwrite=True,
+        ... )
+    """
     _prepare_output(output_root, overwrite)
     COMMON["write_csv"](output_root / "input_manifest_used.csv", manifest_rows)
 
@@ -488,6 +729,14 @@ def process_manifest(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "PCA-align validated cells for one dataset or all datasets. "
@@ -535,6 +784,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     project_root = COMMON["find_project_root"](SCRIPT_FILE, args.project_root)
     if args.min_object_pixels < 1:

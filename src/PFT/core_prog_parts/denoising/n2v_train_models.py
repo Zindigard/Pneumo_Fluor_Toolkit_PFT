@@ -143,7 +143,17 @@ class TrainingResult:
 
 
 def validate_training_parameters(parameters: N2VTrainingParameters) -> None:
-    """Raise a clear error when a training parameter is outside its valid range."""
+    """Raise a clear error when a training parameter is outside its valid range.
+
+    Args:
+        parameters (N2VTrainingParameters): Value specifying parameters for the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_training_parameters(parameters=...)
+    """
 
     py, px = parameters.patch_shape
     if py <= 0 or px <= 0:
@@ -174,6 +184,25 @@ def split_samples(
     At least one validation image is retained when two or more images are
     available.  A single-image dataset cannot provide an independent validation
     set and is rejected because its loss curve would be misleading.
+
+    Args:
+        samples (Sequence[Path]): Filesystem path used for samples.
+        validation_fraction (float): Fraction of annotated samples reserved for validation.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+
+    Returns:
+        SampleSplit: Result produced by the operation.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = split_samples(
+        ...     samples=Path("path/to/resource"),
+        ...     validation_fraction=0.5,
+        ...     seed=1,
+        ... )
     """
 
     resolved = tuple(sorted((Path(path).resolve() for path in samples), key=lambda item: str(item).lower()))
@@ -196,7 +225,20 @@ def split_samples(
 
 
 def _ensure_nyxc(stack: np.ndarray) -> np.ndarray:
-    """Convert an N2V stack to the required ``N,Y,X,C`` layout."""
+    """Convert an N2V stack to the required ``N,Y,X,C`` layout.
+
+    Args:
+        stack (np.ndarray): Image stack containing multiple slices, channels, or time points.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _ensure_nyxc(stack=image_array)
+    """
 
     array = np.asarray(stack)
     if array.ndim == 2:
@@ -213,6 +255,19 @@ def load_model_frames(samples: Sequence[Path], spec: N2VModelSpec) -> list[np.nd
 
     Single-channel models return ``Y,X`` frames.  The joint model returns
     ``Y,X,2`` frames with channels ordered as DAPI then WGA.
+
+    Args:
+        samples (Sequence[Path]): Filesystem path used for samples.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_model_frames(samples=Path("path/to/resource"), spec=...)
     """
 
     frames: list[np.ndarray] = []
@@ -261,6 +316,19 @@ def frames_to_syxc(frames: Sequence[np.ndarray]) -> tuple[np.ndarray, int, tuple
 
     The most common YX size is selected.  Frames with another size are skipped
     and reported because N2V patch generation requires one rectangular array.
+
+    Args:
+        frames (Sequence[np.ndarray]): Array containing frames.
+
+    Returns:
+        tuple[np.ndarray, int, tuple[int, int]]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = frames_to_syxc(frames=image_array)
     """
 
     if not frames:
@@ -286,7 +354,22 @@ def frames_to_syxc(frames: Sequence[np.ndarray]) -> tuple[np.ndarray, int, tuple
 def generate_patches(
     frames: Sequence[np.ndarray], *, parameters: N2VTrainingParameters
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Generate N2V patches from one image partition and return a data summary."""
+    """Generate N2V patches from one image partition and return a data summary.
+
+    Args:
+        frames (Sequence[np.ndarray]): Array containing frames.
+        parameters (N2VTrainingParameters): Value specifying parameters for the operation.
+
+    Returns:
+        tuple[np.ndarray, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = generate_patches(frames=image_array, parameters=...)
+    """
 
     syxc, skipped, target_size = frames_to_syxc(frames)
     py, px = parameters.patch_shape
@@ -331,7 +414,18 @@ def generate_patches(
 def build_n2v_config(
     train_patches: np.ndarray, parameters: N2VTrainingParameters
 ) -> tuple[N2VConfig, int]:
-    """Create an N2V configuration and return the effective steps per epoch."""
+    """Create an N2V configuration and return the effective steps per epoch.
+
+    Args:
+        train_patches (np.ndarray): Array containing train patches.
+        parameters (N2VTrainingParameters): Value specifying parameters for the operation.
+
+    Returns:
+        tuple[N2VConfig, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = build_n2v_config(train_patches=image_array, parameters=...)
+    """
 
     steps = parameters.steps_per_epoch
     if steps is None:
@@ -356,7 +450,15 @@ def build_n2v_config(
 
 
 def _write_json(path: Path, value: Any) -> None:
-    """Write an indented UTF-8 JSON file, creating its parent directory."""
+    """Write an indented UTF-8 JSON file, creating its parent directory.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        value (Any): Value to validate, transform, store, or forward.
+
+    Example:
+        >>> _write_json(path=Path("path/to/resource"), value=...)
+    """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -365,7 +467,22 @@ def _write_json(path: Path, value: Any) -> None:
 def save_sample_split(
     split: SampleSplit, *, artifact_dir: Path, repo_root: Path, spec: N2VModelSpec
 ) -> None:
-    """Save image-level train/validation membership as CSV and JSON."""
+    """Save image-level train/validation membership as CSV and JSON.
+
+    Args:
+        split (SampleSplit): Value specifying split for the operation.
+        artifact_dir (Path): Directory used for artifact.
+        repo_root (Path): Directory used for repo.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Example:
+        >>> save_sample_split(
+        ...     split=...,
+        ...     artifact_dir=Path("path/to/resource"),
+        ...     repo_root=Path("path/to/resource"),
+        ...     spec=...,
+        ... )
+    """
 
     records: list[dict[str, Any]] = []
     for partition, paths in (("train", split.train), ("validation", split.validation)):
@@ -403,7 +520,22 @@ def save_sample_split(
 def save_patch_previews(
     patches: np.ndarray, *, artifact_dir: Path, seed: int, prefix: str
 ) -> None:
-    """Save two raw-range patch previews without changing training values."""
+    """Save two raw-range patch previews without changing training values.
+
+    Args:
+        patches (np.ndarray): Array containing patches.
+        artifact_dir (Path): Directory used for artifact.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+        prefix (str): Text value specifying prefix.
+
+    Example:
+        >>> save_patch_previews(
+        ...     patches=image_array,
+        ...     artifact_dir=Path("path/to/resource"),
+        ...     seed=1,
+        ...     prefix="prefix",
+        ... )
+    """
 
     preview_dir = artifact_dir / "patch_previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
@@ -424,7 +556,20 @@ def save_patch_previews(
 
 
 def history_dictionary(history: Any) -> dict[str, list[float]]:
-    """Convert a Keras/N2V history object to serializable float lists."""
+    """Convert a Keras/N2V history object to serializable float lists.
+
+    Args:
+        history (Any): Value specifying history for the operation.
+
+    Returns:
+        dict[str, list[float]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = history_dictionary(history=...)
+    """
 
     raw = getattr(history, "history", history)
     if not isinstance(raw, dict):
@@ -440,6 +585,16 @@ def save_training_history(history: Any, artifact_dir: Path) -> tuple[int | None,
 
     The best epoch is selected by minimum ``val_loss`` when available, otherwise
     by minimum training ``loss``.
+
+    Args:
+        history (Any): Value specifying history for the operation.
+        artifact_dir (Path): Directory used for artifact.
+
+    Returns:
+        tuple[int | None, float | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = save_training_history(history=..., artifact_dir=Path("path/to/resource"))
     """
 
     history_data = history_dictionary(history)
@@ -487,7 +642,18 @@ def save_training_history(history: Any, artifact_dir: Path) -> tuple[int | None,
 
 
 def _parameter_payload(parameters: N2VTrainingParameters, effective_steps: int) -> dict[str, Any]:
-    """Create a parameter file containing values and scientific interpretation."""
+    """Create a parameter file containing values and scientific interpretation.
+
+    Args:
+        parameters (N2VTrainingParameters): Value specifying parameters for the operation.
+        effective_steps (int): Numerical value controlling effective steps.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parameter_payload(parameters=..., effective_steps=1)
+    """
 
     values = asdict(parameters)
     values["patch_shape"] = list(parameters.patch_shape)
@@ -508,7 +674,24 @@ def train_model(
     repo_root: Path | None = None,
     overwrite_model: bool = False,
 ) -> TrainingResult:
-    """Train one selected N2V model and save complete reproducibility artifacts."""
+    """Train one selected N2V model and save complete reproducibility artifacts.
+
+    Args:
+        model_key (str): Text value specifying model key.
+        parameters (N2VTrainingParameters | None): Value specifying parameters for the operation. ``None`` selects the function's default behavior.
+        repo_root (Path | None): Directory used for repo. ``None`` selects the function's default behavior.
+        overwrite_model (bool): Boolean flag controlling overwrite model. Defaults to ``False``.
+
+    Returns:
+        TrainingResult: Result produced by the operation.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = train_model(model_key="model_key")
+    """
 
     params = parameters or N2VTrainingParameters()
     validate_training_parameters(params)

@@ -36,7 +36,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def find_project_root() -> Path:
-    """Locate the repository root containing both ``scripts`` and ``src/PFT``."""
+    """Locate the repository root containing both ``scripts`` and ``src/PFT``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
 
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
@@ -60,7 +70,14 @@ from PFT.core_prog_parts.denoising.n2v_workflow import (  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser with scientifically explicit help text."""
+    """Create the command-line parser with scientifically explicit help text.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
 
     parser = argparse.ArgumentParser(
         description=(
@@ -114,7 +131,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, optionally ask for a model, and execute one training run."""
+    """Parse arguments, optionally ask for a model, and execute one training run.
+
+    Args:
+        argv (list[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
 
     args = build_parser().parse_args(argv)
     model_key = args.model or choose_model_key_interactive("Choose the model to train")

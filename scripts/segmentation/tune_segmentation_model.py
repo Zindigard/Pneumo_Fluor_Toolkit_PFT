@@ -1,4 +1,4 @@
-"""Tune inference parameters after fine-tuning using manual validation masks.
+r"""Tune inference parameters after fine-tuning using manual validation masks.
 
 Only binary semantic Dice and IoU are calculated. Instance F1 and split/merge
 metrics are not part of this thesis workflow.
@@ -6,6 +6,24 @@ metrics are not part of this thesis workflow.
 By default, the script evaluates only crop annotations stored under
 ``crops/validation``. Each parameter/sample pair receives a comparison PNG and
 predicted-label TIFF.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/tune_segmentation_model.py --help
+
+Representative execution:
+
+    python scripts/segmentation/tune_segmentation_model.py \
+        --dataset 2d_time \
+        --family omnipose \
+        --source-mode filtered_unet \
+        --annotation-source all \
+        --annotation-split validation \
+        --sample WT_HADA_NHS_40min_ROI1_SIM \
+        --model models/example_model \
+        --model-name example_model
 """
 
 from __future__ import annotations
@@ -20,6 +38,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -45,6 +74,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -55,6 +99,17 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _diameters(values: list[str]) -> tuple[float | None, ...]:
+    """Return diameters for the supplied inputs.
+
+    Args:
+        values (list[str]): Text value specifying values.
+
+    Returns:
+        tuple[float | None, ...]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _diameters(values="values")
+    """
     return tuple(
         None if value.lower() in {"none", "auto"} else float(value)
         for value in values
@@ -62,6 +117,14 @@ def _diameters(values: list[str]) -> tuple[float | None, ...]:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Tune model inference parameters using manual validation masks.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

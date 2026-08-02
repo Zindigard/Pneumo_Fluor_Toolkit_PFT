@@ -106,13 +106,33 @@ MODEL_SPECS: dict[str, N2VModelSpec] = {
 
 
 def utc_now_iso() -> str:
-    """Return the current UTC time in ISO 8601 format."""
+    """Return the current UTC time in ISO 8601 format.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = utc_now_iso()
+    """
 
     return datetime.now(timezone.utc).isoformat()
 
 
 def get_model_spec(model_key: str) -> N2VModelSpec:
-    """Return a model specification and reject unsupported model keys."""
+    """Return a model specification and reject unsupported model keys.
+
+    Args:
+        model_key (str): Text value specifying model key.
+
+    Returns:
+        N2VModelSpec: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = get_model_spec(model_key="model_key")
+    """
 
     key = str(model_key).strip().lower()
     try:
@@ -123,7 +143,21 @@ def get_model_spec(model_key: str) -> N2VModelSpec:
 
 
 def model_key_from_dataset_and_loader_key(dataset: str, loader_key: str) -> str:
-    """Map legacy toolkit loader keys to the authoritative model registry."""
+    """Map legacy toolkit loader keys to the authoritative model registry.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        loader_key (str): Text value specifying loader key.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = model_key_from_dataset_and_loader_key(dataset="2d_time", loader_key="loader_key")
+    """
 
     normalized = (str(dataset).strip().lower(), str(loader_key).strip())
     mapping = {
@@ -143,32 +177,83 @@ def model_key_from_dataset_and_loader_key(dataset: str, loader_key: str) -> str:
 
 
 def project_root(start: Path | None = None) -> Path:
-    """Return the PFT repository root independently of the working directory."""
+    """Return the PFT repository root independently of the working directory.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = project_root()
+    """
 
     return find_project_root(start or Path(__file__))
 
 
 def original_dataset_root(spec: N2VModelSpec, root: Path | None = None) -> Path:
-    """Return ``results/img/<dataset>`` for a model specification."""
+    """Return ``results/img/<dataset>`` for a model specification.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        root (Path | None): Root directory used to resolve relative project paths. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = original_dataset_root(spec=...)
+    """
 
     repo = root or project_root()
     return repo / "results" / "img" / spec.dataset
 
 
 def models_root(root: Path | None = None) -> Path:
-    """Return the repository model directory."""
+    """Return the repository model directory.
+
+    Args:
+        root (Path | None): Root directory used to resolve relative project paths. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = models_root()
+    """
 
     return (root or project_root()) / "models"
 
 
 def n2v_results_root(root: Path | None = None) -> Path:
-    """Return the root directory for N2V outputs and reports."""
+    """Return the root directory for N2V outputs and reports.
+
+    Args:
+        root (Path | None): Root directory used to resolve relative project paths. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = n2v_results_root()
+    """
 
     return (root or project_root()) / "results" / "N2V"
 
 
 def is_ome_zarr_store(path: Path) -> bool:
-    """Return ``True`` when a directory appears to be an OME-Zarr store."""
+    """Return ``True`` when a directory appears to be an OME-Zarr store.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_ome_zarr_store(path=Path("path/to/resource"))
+    """
 
     return path.is_dir() and (
         path.name.lower().endswith(".ome.zarr")
@@ -184,6 +269,16 @@ def discover_original_samples(spec: N2VModelSpec, root: Path | None = None) -> l
     Only files named ``image.ome.zarr`` are accepted.  This intentionally
     excludes normalized TIFFs, RGB exports, previews, masks, and previous N2V
     outputs from the training and inference input set.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        root (Path | None): Root directory used to resolve relative project paths. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_original_samples(spec=...)
     """
 
     dataset_root = original_dataset_root(spec, root)
@@ -197,7 +292,17 @@ def discover_original_samples(spec: N2VModelSpec, root: Path | None = None) -> l
 
 
 def sample_name_from_zarr(path: Path) -> str:
-    """Return the biological sample directory name for an OME-Zarr path."""
+    """Return the biological sample directory name for an OME-Zarr path.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = sample_name_from_zarr(path=Path("path/to/resource"))
+    """
 
     resolved = Path(path)
     if resolved.name.lower().endswith(".ome.zarr"):
@@ -206,7 +311,17 @@ def sample_name_from_zarr(path: Path) -> str:
 
 
 def choose_model_key_interactive(prompt: str = "Choose the N2V model") -> str:
-    """Ask the user to select one supported model from a numbered terminal menu."""
+    """Ask the user to select one supported model from a numbered terminal menu.
+
+    Args:
+        prompt (str): Text value specifying prompt. Defaults to ``"Choose the N2V model"``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_model_key_interactive()
+    """
 
     keys = list(MODEL_SPECS)
     print(prompt + ":")
@@ -227,7 +342,17 @@ def choose_model_key_interactive(prompt: str = "Choose the N2V model") -> str:
 
 
 def _json_safe(value: Any) -> Any:
-    """Convert nested metadata values to stable JSON-compatible objects."""
+    """Convert nested metadata values to stable JSON-compatible objects.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _json_safe(value=...)
+    """
 
     if isinstance(value, Mapping):
         return {str(key): _json_safe(item) for key, item in value.items()}
@@ -243,19 +368,52 @@ def _json_safe(value: Any) -> Any:
 
 
 def canonical_json(value: Any) -> str:
-    """Serialize metadata deterministically for hashing and equality checks."""
+    """Serialize metadata deterministically for hashing and equality checks.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = canonical_json(value=...)
+    """
 
     return json.dumps(_json_safe(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def metadata_sha256(value: Any) -> str:
-    """Return a SHA-256 digest of canonical JSON metadata."""
+    """Return a SHA-256 digest of canonical JSON metadata.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = metadata_sha256(value=...)
+    """
 
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def root_attributes(zarr_path: Path) -> dict[str, Any]:
-    """Read all root attributes from an OME-Zarr store as a plain dictionary."""
+    """Read all root attributes from an OME-Zarr store as a plain dictionary.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = root_attributes(zarr_path=Path("path/to/resource"))
+    """
 
     try:
         import zarr
@@ -267,7 +425,18 @@ def root_attributes(zarr_path: Path) -> dict[str, Any]:
 
 
 def axes_from_attributes(attrs: Mapping[str, Any], ndim: int) -> str:
-    """Extract the level-0 axis string from OME-NGFF metadata."""
+    """Extract the level-0 axis string from OME-NGFF metadata.
+
+    Args:
+        attrs (Mapping[str, Any]): Attribute mapping read from or written to the associated data resource.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = axes_from_attributes(attrs="attrs", ndim=1)
+    """
 
     multiscales = attrs.get("multiscales")
     if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], Mapping):
@@ -288,7 +457,17 @@ def axes_from_attributes(attrs: Mapping[str, Any], ndim: int) -> str:
 
 
 def level_zero_path(attrs: Mapping[str, Any]) -> str:
-    """Return the level-0 array path declared by OME-NGFF metadata."""
+    """Return the level-0 array path declared by OME-NGFF metadata.
+
+    Args:
+        attrs (Mapping[str, Any]): Attribute mapping read from or written to the associated data resource.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = level_zero_path(attrs="attrs")
+    """
 
     multiscales = attrs.get("multiscales")
     if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], Mapping):
@@ -301,7 +480,20 @@ def level_zero_path(attrs: Mapping[str, Any]) -> str:
 
 
 def source_array_properties(zarr_path: Path) -> dict[str, Any]:
-    """Read level-0 shape, dtype, chunks, axes, attributes, and axis scales."""
+    """Read level-0 shape, dtype, chunks, axes, attributes, and axis scales.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = source_array_properties(zarr_path=Path("path/to/resource"))
+    """
 
     try:
         import zarr
@@ -336,6 +528,16 @@ def coordinate_scale_by_axis(attrs: Mapping[str, Any], axes: str) -> dict[str, f
     Missing non-spatial scales default to one.  Missing spatial scales are also
     represented as one so that the generated OME-Zarr remains valid, while the
     output checker reports any mismatch with the original metadata.
+
+    Args:
+        attrs (Mapping[str, Any]): Attribute mapping read from or written to the associated data resource.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = coordinate_scale_by_axis(attrs="attrs", axes="axes")
     """
 
     scale_by_axis = {axis: 1.0 for axis in axes}
@@ -363,7 +565,18 @@ def coordinate_scale_by_axis(attrs: Mapping[str, Any], axes: str) -> dict[str, f
 
 
 def selected_channel_names(source_properties: Mapping[str, Any], channels: Sequence[int]) -> list[str]:
-    """Return selected source channel labels with deterministic fallbacks."""
+    """Return selected source channel labels with deterministic fallbacks.
+
+    Args:
+        source_properties (Mapping[str, Any]): Text value specifying source properties.
+        channels (Sequence[int]): Channel indices or identifiers selected for processing.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = selected_channel_names(source_properties="source_properties", channels=1)
+    """
 
     names = source_properties.get("channel_names")
     if isinstance(names, list):
@@ -380,7 +593,18 @@ def selected_channel_names(source_properties: Mapping[str, Any], channels: Seque
 def source_scale_for_output_axes(
     source_properties: Mapping[str, Any], output_axes: str
 ) -> list[float]:
-    """Map original coordinate scales to an output axis string."""
+    """Map original coordinate scales to an output axis string.
+
+    Args:
+        source_properties (Mapping[str, Any]): Text value specifying source properties.
+        output_axes (str): Text value specifying output axes.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = source_scale_for_output_axes(source_properties="source_properties", output_axes="output_axes")
+    """
 
     scale_by_axis = source_properties.get("scale_by_axis")
     if not isinstance(scale_by_axis, Mapping):
@@ -402,6 +626,27 @@ def output_provenance_attributes(
     The output stores both a direct copy of source attributes and a hash of that
     copy.  It also records the selected frame and channels, model identity,
     input/output normalization state, and prediction data properties.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        source_properties (Mapping[str, Any]): Text value specifying source properties.
+        source_frame_index (int): Zero-based index selecting source frame.
+        output_axes (str): Text value specifying output axes.
+        output_shape (Sequence[int]): Numerical value controlling output shape.
+        output_dtype (str): Text value specifying output dtype.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = output_provenance_attributes(
+        ...     spec=...,
+        ...     source_properties="source_properties",
+        ...     source_frame_index=1,
+        ...     output_axes="output_axes",
+        ...     output_shape=1,
+        ...     output_dtype="output_dtype",
+        ... )
     """
 
     source_attrs = _json_safe(source_properties.get("attrs", {}))
@@ -455,13 +700,34 @@ def output_provenance_attributes(
 
 
 def model_spec_as_dict(spec: N2VModelSpec) -> dict[str, Any]:
-    """Return a JSON-compatible model specification dictionary."""
+    """Return a JSON-compatible model specification dictionary.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = model_spec_as_dict(spec=...)
+    """
 
     return _json_safe(asdict(spec))
 
 
 def relative_or_absolute(path: Path, root: Path) -> str:
-    """Represent a path relative to the repository when possible."""
+    """Represent a path relative to the repository when possible.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = relative_or_absolute(path=Path("path/to/resource"), root=Path("path/to/resource"))
+    """
 
     try:
         return str(Path(path).resolve().relative_to(Path(root).resolve()))
@@ -470,6 +736,16 @@ def relative_or_absolute(path: Path, root: Path) -> str:
 
 
 def ensure_unique_paths(paths: Iterable[Path]) -> list[Path]:
-    """Return resolved paths without duplicates while preserving sorted order."""
+    """Return resolved paths without duplicates while preserving sorted order.
+
+    Args:
+        paths (Iterable[Path]): Filesystem path used for paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = ensure_unique_paths(paths=Path("path/to/resource"))
+    """
 
     return sorted({Path(path).resolve() for path in paths}, key=lambda item: str(item).lower())

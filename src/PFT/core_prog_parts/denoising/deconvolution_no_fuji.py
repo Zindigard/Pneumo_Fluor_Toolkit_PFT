@@ -111,12 +111,38 @@ class SkimageDeconvRunInfo:
 
 
 def _dataset_path_for_level(zarr_dir: Path, level: int) -> str:
+    """Return dataset path for level for the supplied inputs.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _dataset_path_for_level(zarr_dir=Path("path/to/resource"), level=1)
+    """
     meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
     return str(meta["array_path"])
 
 
 def _prepare_image_for_rl(image_zyx: np.ndarray, background: float) -> np.ndarray:
-    """Convert to finite non-negative float32 values without normalization."""
+    """Convert to finite non-negative float32 values without normalization.
+
+    Args:
+        image_zyx (np.ndarray): Array containing image zyx.
+        background (float): Numerical value controlling background.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prepare_image_for_rl(image_zyx=image_array, background=0.5)
+    """
     image = np.asarray(image_zyx, dtype=np.float32)
     if image.ndim != 3:
         raise ValueError(f"Richardson-Lucy input must be ZYX, got {image.shape}")
@@ -127,7 +153,20 @@ def _prepare_image_for_rl(image_zyx: np.ndarray, background: float) -> np.ndarra
 
 
 def _load_normalized_psf(match: MasterPSFMatch) -> np.ndarray:
-    """Load one validated reusable master PSF for a wavelength-matched channel."""
+    """Load one validated reusable master PSF for a wavelength-matched channel.
+
+    Args:
+        match (MasterPSFMatch): Value specifying match for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_normalized_psf(match=...)
+    """
     validation = validate_master_psf_file(match.psf_path, normalize_if_needed=True)
     if not validation.suitable:
         raise ValueError(
@@ -151,6 +190,24 @@ def _resolve_channel_iterations(
     wavelength (for example ``405`` or ``405nm``), channel name, channel index
     (``0``), or indexed label (``c0``). Color keys are recommended because the
     master-PSF metadata already defines the wavelength-to-color convention.
+
+    Args:
+        matches (Sequence[MasterPSFMatch]): Value specifying matches for the operation.
+        default_iters (int): Numerical value controlling default iters.
+        overrides (Mapping[str, int] | None): Text value specifying overrides.
+
+    Returns:
+        dict[int, int]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _resolve_channel_iterations(
+        ...     matches=[],
+        ...     default_iters=1,
+        ...     overrides=1,
+        ... )
     """
     if int(default_iters) < 1:
         raise ValueError("default_iters must be at least 1")
@@ -198,7 +255,18 @@ def _iteration_tag(
     matches: Sequence[MasterPSFMatch],
     iterations_by_index: Mapping[int, int],
 ) -> str:
-    """Return a stable output-name tag such as ``iterB4_G5_R3``."""
+    """Return a stable output-name tag such as ``iterB4_G5_R3``.
+
+    Args:
+        matches (Sequence[MasterPSFMatch]): Value specifying matches for the operation.
+        iterations_by_index (Mapping[int, int]): Zero-based index selecting iterations by.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _iteration_tag(matches=[], iterations_by_index=1)
+    """
     by_color = {
         str(match.display_color).lower(): int(iterations_by_index[match.channel_index])
         for match in matches
@@ -210,6 +278,28 @@ def _iteration_tag(
 
 
 def _volume_stats(stage: str, channel_index: int, channel_name: str, array: np.ndarray) -> VolumeStats:
+    """Return volume stats for the supplied inputs.
+
+    Args:
+        stage (str): Text value specifying stage.
+        channel_index (int): Zero-based index selecting channel.
+        channel_name (str): Text value specifying channel name.
+        array (np.ndarray): Array containing array.
+
+    Returns:
+        VolumeStats: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _volume_stats(
+        ...     stage="stage",
+        ...     channel_index=1,
+        ...     channel_name="channel_name",
+        ...     array=image_array,
+        ... )
+    """
     values = np.asarray(array)
     finite = np.isfinite(values)
     finite_values = values[finite]
@@ -233,7 +323,21 @@ def _volume_stats(stage: str, channel_index: int, channel_name: str, array: np.n
 
 
 def _downsample_yx_mean(array_zyx: np.ndarray, factor: int = 2) -> np.ndarray:
-    """Mean-pool only Y and X while preserving all Z slices."""
+    """Mean-pool only Y and X while preserving all Z slices.
+
+    Args:
+        array_zyx (np.ndarray): Array containing array zyx.
+        factor (int): Numerical value controlling factor. Defaults to ``2``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _downsample_yx_mean(array_zyx=image_array)
+    """
     z_size, y_size, x_size = array_zyx.shape
     y_trim = y_size - y_size % factor
     x_trim = x_size - x_size % factor
@@ -244,6 +348,17 @@ def _downsample_yx_mean(array_zyx: np.ndarray, factor: int = 2) -> np.ndarray:
 
 
 def _axes_descriptors(axes: str) -> list[dict[str, str]]:
+    """Return axes descriptors for the supplied inputs.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _axes_descriptors(axes="axes")
+    """
     output: list[dict[str, str]] = []
     for axis in axes:
         item = {"name": axis, "type": "channel" if axis == "c" else "space"}
@@ -264,6 +379,15 @@ def _prepare_source_metadata_for_derived_store(
     The source values are retained together under
     ``pft_source_derived_root_metadata`` and all non-conflicting attributes keep
     their original keys.
+
+    Args:
+        source_attrs (Mapping[str, Any]): Text value specifying source attrs.
+
+    Returns:
+        tuple[dict[str, Any], dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _prepare_source_metadata_for_derived_store(source_attrs="source_attrs")
     """
     direct_attrs = dict(source_attrs)
     derived_snapshot: dict[str, Any] = {}
@@ -285,7 +409,18 @@ def _metadata_mismatches(
     *,
     direct_source_attrs: Mapping[str, Any],
 ) -> list[str]:
-    """Return source metadata fields not retained in the stored output."""
+    """Return source metadata fields not retained in the stored output.
+
+    Args:
+        root (zarr.Group): Root directory used to resolve relative project paths.
+        direct_source_attrs (Mapping[str, Any]): Text value specifying direct source attrs.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _metadata_mismatches(root=Path("path/to/resource"), direct_source_attrs="direct_source_attrs")
+    """
     mismatches: list[str] = []
     for key, expected_value in direct_source_attrs.items():
         actual_value = root.attrs.get(key)
@@ -304,6 +439,31 @@ def _create_output_store(
     source_attrs: Mapping[str, Any],
     processing: Mapping[str, Any],
 ) -> tuple[zarr.Group, list[zarr.Array]]:
+    """Create output store from the supplied inputs.
+
+    Args:
+        out_zarr (Path): Filesystem path used for out Zarr.
+        shape_czyx (tuple[int, int, int, int]): Numerical value controlling shape czyx.
+        chunks_czyx (tuple[int, int, int, int]): Numerical value controlling chunks czyx.
+        base_scale (Sequence[float]): Numerical value controlling base scale.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer.
+        source_attrs (Mapping[str, Any]): Text value specifying source attrs.
+        processing (Mapping[str, Any]): Text value specifying processing.
+
+    Returns:
+        tuple[zarr.Group, list[zarr.Array]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _create_output_store(
+        ...     out_zarr=Path("path/to/resource"),
+        ...     shape_czyx=1,
+        ...     chunks_czyx=1,
+        ...     base_scale=0.5,
+        ...     pyramid_max_layer=1,
+        ...     source_attrs="source_attrs",
+        ...     processing="processing",
+        ... )
+    """
     if out_zarr.exists():
         shutil.rmtree(out_zarr)
     out_zarr.parent.mkdir(parents=True, exist_ok=True)
@@ -349,6 +509,17 @@ def _create_output_store(
 
 
 def _robust_limits(reference: np.ndarray) -> tuple[float, float]:
+    """Return robust limits for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _robust_limits(reference=image_array)
+    """
     values = np.asarray(reference, dtype=np.float32)
     low, high = np.percentile(values[np.isfinite(values)], (1.0, 99.8))
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
@@ -359,7 +530,20 @@ def _robust_limits(reference: np.ndarray) -> tuple[float, float]:
 
 
 def _rgb_destination_for_wavelength(wavelength_nm: float) -> tuple[int, str]:
-    """Return RGB destination index and display name for one channel wavelength."""
+    """Return RGB destination index and display name for one channel wavelength.
+
+    Args:
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+
+    Returns:
+        tuple[int, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _rgb_destination_for_wavelength(wavelength_nm=0.5)
+    """
     references = ((405.0, 2, "blue"), (488.0, 1, "green"), (561.0, 0, "red"))
     reference, destination, color = min(
         references,
@@ -375,6 +559,26 @@ def _rgb_composite(
     limits: Sequence[tuple[float, float]],
     destinations: Sequence[int],
 ) -> np.ndarray:
+    """Return RGB representation composite for the supplied inputs.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+        limits (Sequence[tuple[float, float]]): Numerical value controlling limits.
+        destinations (Sequence[int]): Numerical value controlling destinations.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _rgb_composite(
+        ...     cyx=image_array,
+        ...     limits=0.5,
+        ...     destinations=1,
+        ... )
+    """
     c_size, y_size, x_size = cyx.shape
     output = np.zeros((y_size, x_size, 3), dtype=np.float32)
     if len(destinations) < c_size:
@@ -388,7 +592,21 @@ def _rgb_composite(
 
 
 def _exact_shared_limits(before: np.ndarray, after: np.ndarray) -> tuple[float, float]:
-    """Return exact common display limits without allocating a combined image."""
+    """Return exact common display limits without allocating a combined image.
+
+    Args:
+        before (np.ndarray): Array containing before.
+        after (np.ndarray): Array containing after.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _exact_shared_limits(before=image_array, after=image_array)
+    """
     before = np.asarray(before, dtype=np.float32)
     after = np.asarray(after, dtype=np.float32)
     if not np.isfinite(before).any() or not np.isfinite(after).any():
@@ -401,6 +619,18 @@ def _exact_shared_limits(before: np.ndarray, after: np.ndarray) -> tuple[float, 
 
 
 def _normalize_with_limits(image: np.ndarray, limits: tuple[float, float]) -> np.ndarray:
+    """Normalize with limits using the configured procedure.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        limits (tuple[float, float]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_with_limits(image=image_array, limits=0.5)
+    """
     low, high = limits
     return np.clip((np.asarray(image, dtype=np.float32) - low) / (high - low), 0.0, 1.0)
 
@@ -420,6 +650,28 @@ def save_selected_slice_qc(
     panel uses independent P1-P99.8 limits for each image and contains the merged
     RGB view plus all wavelength-mapped channels. Stored OME-Zarr values are not
     modified.
+
+    Args:
+        original_zarr (Path): Filesystem path used for original Zarr.
+        original_level (int): Numerical value controlling original level.
+        deconvolved_zarr (Path): Filesystem path used for deconvolved Zarr.
+        output_dir (Path): Directory where generated resources are written.
+        slices_1based (Sequence[int]): Numerical value controlling slices 1based.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = save_selected_slice_qc(
+        ...     original_zarr=Path("path/to/resource"),
+        ...     original_level=1,
+        ...     deconvolved_zarr=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     slices_1based=1,
+        ... )
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     raw_meta = extract_ome_zarr_meta_for_compare(original_zarr, level=original_level)
@@ -530,6 +782,26 @@ def _write_reports(
     stats: Sequence[VolumeStats],
     output_dir: Path,
 ) -> tuple[Path, Path, Path]:
+    """Write reports to persistent storage.
+
+    Args:
+        run_info (Mapping[str, Any]): Text value specifying run info.
+        stats (Sequence[VolumeStats]): Value specifying stats for the operation.
+        output_dir (Path): Directory where generated resources are written.
+
+    Returns:
+        tuple[Path, Path, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _write_reports(
+        ...     run_info="run_info",
+        ...     stats=[],
+        ...     output_dir=Path("path/to/resource"),
+        ... )
+    """
     stats_csv = output_dir / "deconvolution_channel_statistics.csv"
     with stats_csv.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(asdict(stats[0]).keys()))
@@ -634,6 +906,31 @@ def deconvolve_omezarr_3ch_to_omezarr_skimage(
     retained. Additional output levels are generated by lateral mean pooling.
     ``channel_iterations`` overrides the default ``iters`` value by channel color,
     wavelength, channel name, or channel index.
+
+    Args:
+        in_omezarr (Path): Filesystem path used for in OME-Zarr.
+        out_root (Path): Directory used for out.
+        model (PSFModel): Model identifier or filesystem path to the pretrained or fine-tuned model. Defaults to ``"BW"``.
+        iters (int): Numerical value controlling iters. Defaults to ``5``.
+        channel_iterations (Mapping[str, int] | None): Text value specifying channel iterations. ``None`` selects the function's default behavior.
+        background (float): Numerical value controlling background. Defaults to ``0.0``.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        channel_wavelength_nm (Mapping[str, float] | None): Text value specifying channel wavelength nm. ``None`` selects the function's default behavior.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+        clip (bool): Boolean flag controlling clip. Defaults to ``False``.
+        filter_epsilon (float | None): Numerical value controlling filter epsilon. ``None`` selects the function's default behavior.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        preview_slices_1based (Sequence[int] | None): Numerical value controlling preview slices 1based. ``None`` selects the function's default behavior.
+
+    Returns:
+        SkimageDeconvRunInfo: Result produced by the operation.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = deconvolve_omezarr_3ch_to_omezarr_skimage(in_omezarr=Path("path/to/resource"), out_root=Path("path/to/resource"))
     """
     in_omezarr = Path(in_omezarr).resolve()
     out_root = Path(out_root).resolve()

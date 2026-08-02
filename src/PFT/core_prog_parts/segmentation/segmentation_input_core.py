@@ -126,6 +126,21 @@ class PreparedSegmentationInput:
 
 
 def _validate_dataset_mode(dataset: str, source_mode: str) -> tuple[str, str]:
+    """Validate dataset mode against the required constraints.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        tuple[str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_dataset_mode(dataset="2d_time", source_mode="original")
+    """
     dataset = normalize_dataset_name(dataset)
     if dataset not in SUPPORTED_DATASETS:
         raise ValueError(f"Unsupported segmentation dataset: {dataset!r}")
@@ -142,7 +157,23 @@ def segmentation_input_root(
     dataset: str,
     source_mode: str,
 ) -> Path:
-    """Return and create the prepared-input root for one dataset and source."""
+    """Return and create the prepared-input root for one dataset and source.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = segmentation_input_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     dataset, source_mode = _validate_dataset_mode(dataset, source_mode)
     path = Path(project_root) / "results" / "segmentation_inputs" / dataset / source_mode
     path.mkdir(parents=True, exist_ok=True)
@@ -154,7 +185,23 @@ def segmentation_mask_root(
     dataset: str,
     source_mode: str,
 ) -> Path:
-    """Return and create the requested manual instance-mask root."""
+    """Return and create the requested manual instance-mask root.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = segmentation_mask_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     dataset, source_mode = _validate_dataset_mode(dataset, source_mode)
     path = (
         Path(project_root)
@@ -174,7 +221,25 @@ def segmentation_model_root(
     dataset: str,
     source_mode: str,
 ) -> Path:
-    """Return and create the canonical trained-model root."""
+    """Return and create the canonical trained-model root.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = segmentation_model_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     family="cellpose",
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     dataset, source_mode = _validate_dataset_mode(dataset, source_mode)
     path = (
         Path(project_root)
@@ -195,7 +260,27 @@ def segmentation_prediction_root(
     source_mode: str,
     model_name: str,
 ) -> Path:
-    """Return and create the canonical prediction root."""
+    """Return and create the canonical prediction root.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        model_name (str): Human-readable model name used in output paths and reports.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = segmentation_prediction_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     family="cellpose",
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     model_name="model_name",
+        ... )
+    """
     dataset, source_mode = _validate_dataset_mode(dataset, source_mode)
     path = (
         Path(project_root)
@@ -211,7 +296,17 @@ def segmentation_prediction_root(
 
 
 def _root_attrs(path: Path) -> dict[str, Any]:
-    """Read JSON-compatible root attributes from one OME-Zarr store."""
+    """Read JSON-compatible root attributes from one OME-Zarr store.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _root_attrs(path=Path("path/to/resource"))
+    """
     try:
         import zarr
 
@@ -222,7 +317,18 @@ def _root_attrs(path: Path) -> dict[str, Any]:
 
 
 def _coordinate_scale(path: Path, level: int = 0) -> list[float] | None:
-    """Read the OME-NGFF coordinate scale for one image level when available."""
+    """Read the OME-NGFF coordinate scale for one image level when available.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        list[float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _coordinate_scale(path=Path("path/to/resource"))
+    """
     attrs = _root_attrs(path)
     try:
         datasets = attrs["multiscales"][0]["datasets"]
@@ -236,13 +342,35 @@ def _coordinate_scale(path: Path, level: int = 0) -> list[float] | None:
 
 
 def _processing_attrs(path: Path) -> dict[str, Any]:
+    """Return processing attrs for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _processing_attrs(path=Path("path/to/resource"))
+    """
     attrs = _root_attrs(path)
     processing = attrs.get("pft_processing", {})
     return dict(processing) if isinstance(processing, dict) else {}
 
 
 def _rebase_recorded_path(value: str | Path, project_root: Path) -> Path:
-    """Resolve paths stored on another Windows workstation against this project."""
+    """Resolve paths stored on another Windows workstation against this project.
+
+    Args:
+        value (str | Path): Value to validate, transform, store, or forward.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _rebase_recorded_path(value="value", project_root=Path("path/to/resource"))
+    """
     candidate = Path(str(value)).expanduser()
     if candidate.exists():
         return candidate.resolve()
@@ -268,6 +396,21 @@ def _rebase_recorded_path(value: str | Path, project_root: Path) -> Path:
 
 
 def _latest_directory(candidates: Iterable[Path], preferred_name: str | None = None) -> Path:
+    """Return latest directory for the supplied inputs.
+
+    Args:
+        candidates (Iterable[Path]): Filesystem path used for candidates.
+        preferred_name (str | None): Text value specifying preferred name. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _latest_directory(candidates=Path("path/to/resource"))
+    """
     paths = [path for path in candidates if path.is_dir()]
     if not paths:
         raise FileNotFoundError("No matching processing directory was found")
@@ -284,7 +427,22 @@ def resolve_filter_root(
     dataset: str,
     explicit_root: Path | None = None,
 ) -> Path:
-    """Resolve the intensity-preserving local-threshold output root."""
+    """Resolve the intensity-preserving local-threshold output root.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        explicit_root (Path | None): Directory used for explicit. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_filter_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     dataset = normalize_dataset_name(dataset)
     if explicit_root is not None:
         root = resolve_project_path(explicit_root, project_root)
@@ -307,7 +465,22 @@ def resolve_unet_root(
     dataset: str,
     explicit_root: Path | None = None,
 ) -> Path:
-    """Resolve a U-Net inference root containing ``pred_mask.ome.zarr`` files."""
+    """Resolve a U-Net inference root containing ``pred_mask.ome.zarr`` files.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        explicit_root (Path | None): Directory used for explicit. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_unet_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     dataset = normalize_dataset_name(dataset)
     if explicit_root is not None:
         root = resolve_project_path(explicit_root, project_root)
@@ -324,6 +497,23 @@ def resolve_unet_root(
 
 
 def _raw_2d_reference(project_root: Path, dataset: str, sample_key: str) -> Path | None:
+    """Return raw two-dimensional data reference for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _raw_2d_reference(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample_key="sample_key",
+        ... )
+    """
     sample = Path(sample_key).name
     candidates = [
         Path(project_root) / "results" / "img" / dataset / sample / "image.ome.zarr",
@@ -344,7 +534,28 @@ def _resolve_processing_path(
     project_relative_key: str,
     local_relative_key: str | None = None,
 ) -> Path | None:
-    """Resolve one dependency recorded in MIP provenance metadata."""
+    """Resolve one dependency recorded in MIP provenance metadata.
+
+    Args:
+        processing (dict[str, Any]): Text value specifying processing.
+        source_zarr (Path): Filesystem path used for source Zarr.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        absolute_key (str): Text value specifying absolute key.
+        project_relative_key (str): Text value specifying project relative key.
+        local_relative_key (str | None): Text value specifying local relative key. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _resolve_processing_path(
+        ...     processing="processing",
+        ...     source_zarr=Path("path/to/resource"),
+        ...     project_root=Path("path/to/resource"),
+        ...     absolute_key="absolute_key",
+        ...     project_relative_key="project_relative_key",
+        ... )
+    """
     if local_relative_key:
         local_value = processing.get(local_relative_key)
         if local_value:
@@ -372,7 +583,25 @@ def _canonical_mip_dependencies(
     source_mode: str,
     processing: dict[str, Any],
 ) -> tuple[Path | None, Path | None]:
-    """Reconstruct canonical local dependencies for legacy MIP metadata."""
+    """Reconstruct canonical local dependencies for legacy MIP metadata.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        processing (dict[str, Any]): Text value specifying processing.
+
+    Returns:
+        tuple[Path | None, Path | None]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _canonical_mip_dependencies(
+        ...     project_root=Path("path/to/resource"),
+        ...     sample_key="sample_key",
+        ...     source_mode="original",
+        ...     processing="processing",
+        ... )
+    """
     relative_sample = Path(*Path(sample_key).parts)
     raw_zarr = (
         project_root
@@ -428,6 +657,21 @@ def _raw_3d_reference_from_processing(
     source_zarr: Path,
     project_root: Path,
 ) -> Path | None:
+    """Return raw three-dimensional data reference from processing for the supplied inputs.
+
+    Args:
+        source_zarr (Path): Filesystem path used for source Zarr.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _raw_3d_reference_from_processing(
+        ...     source_zarr=Path("path/to/resource"),
+        ...     project_root=Path("path/to/resource"),
+        ... )
+    """
     processing = _processing_attrs(source_zarr)
     path = _resolve_processing_path(
         processing=processing,
@@ -452,6 +696,27 @@ def discover_segmentation_sources(
 
     The returned list is deterministic and retains experiment subdirectories for
     3D MIP samples, preventing collisions between repeated sample names.
+
+    Args:
+        project_root (Path | None): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        filter_root (Path | None): Directory used for filter. ``None`` selects the function's default behavior.
+        unet_root (Path | None): Directory used for U-Net result. ``None`` selects the function's default behavior.
+        mip_root (Path | None): Directory used for maximum-intensity projection. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[SegmentationSource]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = discover_segmentation_sources(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
     """
     root = Path(project_root or find_project_root()).resolve()
     dataset, source_mode = _validate_dataset_mode(dataset, source_mode)
@@ -566,6 +831,24 @@ def select_dataset_channels(
 
     ``2d_wga_dapi`` retains its two numerical channels: DAPI at C=0 and WGA at
     C=1. MIP inputs are not modified by this helper.
+
+    Args:
+        image (Any): Input image array to process.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, str, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = select_dataset_channels(
+        ...     image=image_array,
+        ...     axes="axes",
+        ...     dataset="2d_time",
+        ... )
     """
     dataset = normalize_dataset_name(dataset)
     current_axes = str(axes).lower()
@@ -643,7 +926,23 @@ def _coordinate_scale_after_channel_selection(
     input_axes: str,
     output_axes: str,
 ) -> list[float] | None:
-    """Keep coordinate-scale metadata aligned after dropping a C axis."""
+    """Keep coordinate-scale metadata aligned after dropping a C axis.
+
+    Args:
+        scale (Sequence[float] | None): Multiplicative scale factor applied by the operation.
+        input_axes (str): Text value specifying input axes.
+        output_axes (str): Text value specifying output axes.
+
+    Returns:
+        list[float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _coordinate_scale_after_channel_selection(
+        ...     scale=0.5,
+        ...     input_axes="input_axes",
+        ...     output_axes="output_axes",
+        ... )
+    """
     if scale is None:
         return None
     values = [float(value) for value in scale]
@@ -657,7 +956,21 @@ def _coordinate_scale_after_channel_selection(
     return None
 
 def _normalization_slices(shape: Sequence[int], axes: str) -> Iterable[tuple[Any, ...]]:
-    """Yield one YX plane per frame and numerical channel."""
+    """Yield one YX plane per frame and numerical channel.
+
+    Args:
+        shape (Sequence[int]): Target or observed array shape.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        Iterable[tuple[Any, ...]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalization_slices(shape=1, axes="axes")
+    """
     axes = axes.lower()
     if len(shape) != len(axes):
         raise ValueError(f"Axes {axes!r} do not match shape {tuple(shape)}")
@@ -682,7 +995,24 @@ def normalize_complete_image_per_channel(
     p_low: float = 1.0,
     p_high: float = 99.8,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
-    """Normalize every complete YX channel plane independently to [0, 1]."""
+    """Normalize every complete YX channel plane independently to [0, 1].
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[np.ndarray, list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_complete_image_per_channel(image=image_array, axes="axes")
+    """
     if not 0.0 <= p_low < p_high <= 100.0:
         raise ValueError("Expected 0 <= p_low < p_high <= 100")
     source = np.asarray(image)
@@ -726,7 +1056,28 @@ def normalize_complete_image_per_channel(
 
 
 def _broadcast_mask(mask: np.ndarray, mask_axes: str, target_shape: Sequence[int], target_axes: str) -> np.ndarray:
-    """Align a binary mask to an image axis order and broadcast over channels."""
+    """Align a binary mask to an image axis order and broadcast over channels.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        mask_axes (str): Text value specifying mask axes.
+        target_shape (Sequence[int]): Numerical value controlling target shape.
+        target_axes (str): Text value specifying target axes.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _broadcast_mask(
+        ...     mask=image_array,
+        ...     mask_axes="mask_axes",
+        ...     target_shape=1,
+        ...     target_axes="target_axes",
+        ... )
+    """
     target_axes = target_axes.lower()
     mask_axes = mask_axes.lower()
     array = np.asarray(mask)
@@ -770,7 +1121,26 @@ def create_segmentation_input(
     p_low: float = 1.0,
     p_high: float = 99.8,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
-    """Create a validated float32 downstream segmentation input."""
+    """Create a validated float32 downstream segmentation input.
+
+    Args:
+        intensity_image (np.ndarray): Array containing intensity image.
+        intensity_axes (str): Text value specifying intensity axes.
+        predicted_mask (np.ndarray | None): Array containing predicted mask. ``None`` selects the function's default behavior.
+        mask_axes (str | None): Text value specifying mask axes. ``None`` selects the function's default behavior.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[np.ndarray, list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = create_segmentation_input(intensity_image=image_array, intensity_axes="intensity_axes")
+    """
     normalized, normalization_records = normalize_complete_image_per_channel(
         intensity_image,
         intensity_axes,
@@ -805,6 +1175,21 @@ def create_segmentation_input(
 
 
 def _load_array(path: Path, level: int = 0) -> tuple[np.ndarray, str]:
+    """Load array from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_array(path=Path("path/to/resource"))
+    """
     if not Path(path).is_dir():
         raise FileNotFoundError(path)
     array, axes = load_ome_zarr(Path(path), level=level, as_numpy=True)
@@ -818,6 +1203,15 @@ def _declared_channel_count(path: Path) -> int | None:
     three fluorescence channels were stored under the ``t`` axis while ``c``
     remained singleton. The metadata and the standard deconvolution directory
     tag provide independent evidence for repairing that representation.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = _declared_channel_count(path=Path("path/to/resource"))
     """
     candidates: list[int] = []
 
@@ -880,6 +1274,24 @@ def _normalize_legacy_projection_axes(
 
     Genuine multi-time-point data remain an error because a temporal selection
     policy is required before a two-dimensional MIP can be defined.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[Any, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_legacy_projection_axes(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     path=Path("path/to/resource"),
+        ... )
     """
     axes = str(axes).lower()
     if "t" not in axes:
@@ -942,6 +1354,19 @@ def _load_projection_mip(path: Path) -> tuple[np.ndarray, str, str]:
     legacy derived stores with a singleton time axis, legacy ``TCYX`` metadata
     over numerically CZYX arrays, and legacy ``CZTYX`` products in which the
     fluorescence channels were incorrectly represented by ``T``.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_projection_mip(path=Path("path/to/resource"))
     """
     from PFT.core_prog_parts.segmentation.mip_3d_core import (
         maximum_intensity_projection_cyx,
@@ -992,6 +1417,27 @@ def _load_mip_mask(
     target_slice_1based: int | None,
     expected_yx: tuple[int, int],
 ) -> tuple[np.ndarray, str]:
+    """Load maximum-intensity projection mask from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        target_slice_1based (int | None): Numerical value controlling target slice 1based.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_mip_mask(
+        ...     path=Path("path/to/resource"),
+        ...     target_slice_1based=1,
+        ...     expected_yx=1,
+        ... )
+    """
     mask, axes = _load_array(path)
     axes = axes.lower()
     if "c" in axes:
@@ -1026,7 +1472,17 @@ def _load_mip_mask(
 
 
 def _normalize_plane_for_preview(plane: np.ndarray) -> np.ndarray:
-    """Convert one 2D numerical plane to uint8 for visual inspection only."""
+    """Convert one 2D numerical plane to uint8 for visual inspection only.
+
+    Args:
+        plane (np.ndarray): Array containing plane.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_plane_for_preview(plane=image_array)
+    """
     array = np.asarray(plane, dtype=np.float32)
     finite = array[np.isfinite(array)]
     if finite.size == 0:
@@ -1050,7 +1506,17 @@ _RGB_DESTINATION_BY_NAME: dict[str, int] = {
 
 
 def _rgb_destination_from_hex(value: Any) -> int | None:
-    """Return the dominant RGB destination encoded by an OME color value."""
+    """Return the dominant RGB destination encoded by an OME color value.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = _rgb_destination_from_hex(value=...)
+    """
     text = str(value or "").strip().lstrip("#")
     if len(text) == 8:
         text = text[:6]
@@ -1079,6 +1545,16 @@ def _preview_rgb_destinations(
     each channel is placed in an RGB preview. The preferred source is the
     ``pft_processing.channel_display_colors`` record written during
     deconvolution. OME ``omero.channels[].color`` metadata is used as a fallback.
+
+    Args:
+        source_zarr (Path | None): Filesystem path used for source Zarr.
+        channel_count (int): Number of channel used by the operation.
+
+    Returns:
+        tuple[int, ...] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _preview_rgb_destinations(source_zarr=Path("path/to/resource"), channel_count=1)
     """
     if source_zarr is None or channel_count <= 0:
         return None
@@ -1133,7 +1609,23 @@ def _render_preview_rgb(
     dataset: str | None = None,
     rgb_destinations: Sequence[int] | None = None,
 ) -> np.ndarray:
-    """Render one numerical image to RGB without changing channel order."""
+    """Render one numerical image to RGB without changing channel order.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        dataset (str | None): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``. ``None`` selects the function's default behavior.
+        rgb_destinations (Sequence[int] | None): Numerical value controlling RGB representation destinations. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _render_preview_rgb(image=image_array, axes="axes")
+    """
     array = np.asarray(image)
     axes = str(axes).lower()
     if array.ndim == 2 or axes == "yx":
@@ -1198,7 +1690,33 @@ def _save_preview_pngs(
     dataset: str,
     display_source_zarr: Path | None = None,
 ) -> tuple[Path, Path, Path, tuple[int, ...] | None]:
-    """Save raw, normalized, and comparison previews with metadata colors."""
+    """Save raw, normalized, and comparison previews with metadata colors.
+
+    Args:
+        output_dir (Path): Directory where generated resources are written.
+        raw_image (np.ndarray): Array containing raw image.
+        raw_axes (str): Text value specifying raw axes.
+        normalized_image (np.ndarray): Array containing normalized image.
+        normalized_axes (str): Text value specifying normalized axes.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        display_source_zarr (Path | None): Filesystem path used for display source Zarr. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[Path, Path, Path, tuple[int, ...] | None]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _save_preview_pngs(
+        ...     output_dir=Path("path/to/resource"),
+        ...     raw_image=image_array,
+        ...     raw_axes="raw_axes",
+        ...     normalized_image=image_array,
+        ...     normalized_axes="normalized_axes",
+        ...     dataset="2d_time",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_array = np.asarray(raw_image)
@@ -1246,7 +1764,23 @@ def prepare_one_segmentation_input(
     p_low: float = 1.0,
     p_high: float = 99.8,
 ) -> PreparedSegmentationInput:
-    """Create and save one segmentation input from a resolved source record."""
+    """Create and save one segmentation input from a resolved source record.
+
+    Args:
+        record (SegmentationSource): Value specifying record for the operation.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        PreparedSegmentationInput: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prepare_one_segmentation_input(record=...)
+    """
     source_array, source_axes = _load_array(record.source_zarr)
     source_dtype = str(source_array.dtype)
     mask_array: np.ndarray | None = None
@@ -1440,7 +1974,33 @@ def prepare_dataset_segmentation_inputs(
     p_high: float = 99.8,
     selected_sample_keys: set[str] | None = None,
 ) -> list[PreparedSegmentationInput]:
-    """Prepare all or selected inputs for one independent dataset."""
+    """Prepare all or selected inputs for one independent dataset.
+
+    Args:
+        project_root (Path | None): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        filter_root (Path | None): Directory used for filter. ``None`` selects the function's default behavior.
+        unet_root (Path | None): Directory used for U-Net result. ``None`` selects the function's default behavior.
+        mip_root (Path | None): Directory used for maximum-intensity projection. ``None`` selects the function's default behavior.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+        selected_sample_keys (set[str] | None): Optional set of canonical sample identifiers restricting the workflow to selected samples. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[PreparedSegmentationInput]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prepare_dataset_segmentation_inputs(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     records = discover_segmentation_sources(
         project_root,
         dataset,

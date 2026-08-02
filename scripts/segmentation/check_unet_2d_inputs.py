@@ -1,4 +1,4 @@
-"""Validate all files required for thesis-aligned 2D U-Net training and SNR.
+r"""Validate all files required for thesis-aligned 2D U-Net training and SNR.
 
 The checker compares the canonical raw OME-Zarr stores, intensity-preserving
 local-threshold outputs, and hand-labelled masks converted to binary foreground.
@@ -11,6 +11,20 @@ tensor that will enter the U-Net.
 Exit code 0 means all selected datasets are ready for training. Exit code 1
 means at least one raw image, filtered image, or reference mask is missing or
 incompatible.
+
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/check_unet_2d_inputs.py --help
+
+Validate all canonical HADA inputs and verify 98% outside-mask depletion:
+
+    python scripts/segmentation/check_unet_2d_inputs.py \
+        --dataset 2d_time \
+        --preview-count 2 \
+        --expected-outside-mask-depletion 0.98
 """
 
 from __future__ import annotations
@@ -32,6 +46,17 @@ _SCRIPT = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (_SCRIPT.parent, *_SCRIPT.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -56,6 +81,7 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import (  # noqa: 
 
 @dataclass(frozen=True)
 class CheckRow:
+    """Store validated configuration or result data for check row."""
     dataset: str
     sample: str
     status: str
@@ -89,6 +115,17 @@ class CheckRow:
 
 
 def _discover(root: Path) -> dict[str, Path]:
+    """Discover the requested operation in the configured project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _discover(root=Path("path/to/resource"))
+    """
     if not root.is_dir():
         return {}
     return {
@@ -99,6 +136,17 @@ def _discover(root: Path) -> dict[str, Path]:
 
 
 def _read_array(path: Path) -> tuple[np.ndarray, str]:
+    """Read array from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _read_array(path=Path("path/to/resource"))
+    """
     array, axes = load_ome_zarr(path, level=0, as_numpy=True)
     return np.asarray(array), normalize_axes(axes)
 
@@ -111,7 +159,28 @@ def _broadcast_prediction_to_input(
     input_axes: str,
     input_shape: tuple[int, ...],
 ) -> np.ndarray:
-    """Broadcast a YX or TYX prediction to the complete input-array shape."""
+    """Broadcast a YX or TYX prediction to the complete input-array shape.
+
+    Args:
+        prediction (np.ndarray): Array containing prediction.
+        prediction_axes (str): Text value specifying prediction axes.
+        input_axes (str): Text value specifying input axes.
+        input_shape (tuple[int, ...]): Numerical value controlling input shape.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _broadcast_prediction_to_input(
+        ...     prediction=image_array,
+        ...     prediction_axes="prediction_axes",
+        ...     input_axes="input_axes",
+        ...     input_shape=1,
+        ... )
+    """
     prediction_axes = normalize_axes(prediction_axes)
     input_axes = normalize_axes(input_axes)
     if any(axis not in input_axes for axis in prediction_axes):
@@ -147,7 +216,30 @@ def _expected_background_suppressed_array(
     prediction_axes: str,
     depletion: float,
 ) -> np.ndarray:
-    """Reproduce the documented non-normalized post-processing operation."""
+    """Reproduce the documented non-normalized post-processing operation.
+
+    Args:
+        filtered (np.ndarray): Array containing filtered.
+        input_axes (str): Text value specifying input axes.
+        prediction (np.ndarray): Array containing prediction.
+        prediction_axes (str): Text value specifying prediction axes.
+        depletion (float): Numerical value controlling depletion.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _expected_background_suppressed_array(
+        ...     filtered=image_array,
+        ...     input_axes="input_axes",
+        ...     prediction=image_array,
+        ...     prediction_axes="prediction_axes",
+        ...     depletion=0.5,
+        ... )
+    """
     if not 0.0 <= depletion <= 1.0:
         raise ValueError("depletion must be in [0,1]")
     broadcast = _broadcast_prediction_to_input(
@@ -162,7 +254,23 @@ def _expected_background_suppressed_array(
 
 
 def _storage_normalization_state(raw: np.ndarray, filtered: np.ndarray, exact: bool) -> str:
-    """Describe whether normalization appears to have been applied before saving."""
+    """Describe whether normalization appears to have been applied before saving.
+
+    Args:
+        raw (np.ndarray): Array containing raw.
+        filtered (np.ndarray): Array containing filtered.
+        exact (bool): Boolean flag controlling exact.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _storage_normalization_state(
+        ...     raw=image_array,
+        ...     filtered=image_array,
+        ...     exact=True,
+        ... )
+    """
     if not exact:
         return "UNKNOWN: retained values differ from raw"
     if raw.dtype != filtered.dtype:
@@ -194,6 +302,20 @@ def _display(
     arrays are not modified. For ``2d_time``, the single HADA channel is shown
     with a black-to-blue fluorescence map. For ``2d_wga_dapi``, channel 0 is
     displayed as DAPI/blue and channel 1 as WGA/green.
+
+    Args:
+        hwc (np.ndarray): Array containing hwc.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        already_normalized (bool): Boolean flag controlling already normalized. Defaults to ``False``.
+
+    Returns:
+        tuple[np.ndarray, str | LinearSegmentedColormap | None]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _display(hwc=image_array, dataset="2d_time")
     """
     image = hwc if already_normalized else normalize_image01(hwc, "percentile")
 
@@ -222,6 +344,29 @@ def _save_preview(
     dataset: str,
     sample: str,
 ) -> Path:
+    """Save preview to persistent storage.
+
+    Args:
+        raw_frame (np.ndarray): Array containing raw frame.
+        filtered_frame (np.ndarray): Array containing filtered frame.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_preview(
+        ...     raw_frame=image_array,
+        ...     filtered_frame=image_array,
+        ...     mask=image_array,
+        ...     path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     normalized_input = normalize_image01(filtered_frame, "percentile")
     figure, axes = plt.subplots(1, 4, figsize=(16, 4.3), dpi=160)
 
@@ -267,6 +412,15 @@ def _save_preview(
 
 
 def _write_csv(path: Path, rows: list[CheckRow]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[CheckRow]): Value specifying rows for the operation.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows=[])
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(CheckRow.__dataclass_fields__))
@@ -276,6 +430,20 @@ def _write_csv(path: Path, rows: list[CheckRow]) -> None:
 
 
 def _write_html(path: Path, rows: list[CheckRow], roots: dict[str, dict[str, str]]) -> None:
+    """Write html to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[CheckRow]): Value specifying rows for the operation.
+        roots (dict[str, dict[str, str]]): Text value specifying roots.
+
+    Example:
+        >>> _write_html(
+        ...     path=Path("path/to/resource"),
+        ...     rows=[],
+        ...     roots="roots",
+        ... )
+    """
     failures = sum(row.status == "FAIL" for row in rows)
     status = "PASS" if failures == 0 else "FAIL"
     lines = [
@@ -343,6 +511,33 @@ def check_dataset(
     preview_count: int,
     expected_outside_mask_depletion: float,
 ) -> tuple[list[CheckRow], dict[str, str]]:
+    """Check dataset for validity and expected structure.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        raw_root (Path): Directory used for raw.
+        filtered_root (Path): Directory used for filtered.
+        mask_root (Path): Directory used for mask.
+        inference_root (Path): Directory used for inference.
+        output_root (Path): Directory used for output.
+        preview_count (int): Number of preview used by the operation.
+        expected_outside_mask_depletion (float): Numerical value controlling expected outside mask depletion.
+
+    Returns:
+        tuple[list[CheckRow], dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = check_dataset(
+        ...     dataset="2d_time",
+        ...     raw_root=Path("path/to/resource"),
+        ...     filtered_root=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ...     inference_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     preview_count=1,
+        ...     expected_outside_mask_depletion=0.5,
+        ... )
+    """
     raw = _discover(raw_root)
     filtered = _discover(filtered_root)
     mask_samples: dict[str, Path] = {}
@@ -653,6 +848,14 @@ def check_dataset(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Check 2D U-Net raw, local-threshold, mask, IoU, and SNR readiness."
     )
@@ -698,6 +901,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     if not 0.0 <= args.expected_outside_mask_depletion <= 1.0:
         raise SystemExit("--expected-outside-mask-depletion must be in [0,1]")

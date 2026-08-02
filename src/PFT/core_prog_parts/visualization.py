@@ -34,7 +34,17 @@ INTENSITY_RGB_CMAP = LinearSegmentedColormap.from_list(
 
 
 def max_project_to_2d(arr: np.ndarray) -> np.ndarray:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = max_project_to_2d(arr=image_array)
+    """
     if arr.ndim == 2:
         return arr
     reduce_axes = tuple(range(arr.ndim - 2))
@@ -42,7 +52,17 @@ def max_project_to_2d(arr: np.ndarray) -> np.ndarray:
 
 
 def find_channel_axis(arr: np.ndarray) -> int | None:
-    """Find and return the requested resource."""
+    """Find and return the requested resource.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = find_channel_axis(arr=image_array)
+    """
     if arr.ndim < 3:
         return None
     for ax in range(arr.ndim - 2):
@@ -52,7 +72,19 @@ def find_channel_axis(arr: np.ndarray) -> int | None:
 
 
 def get_channel_2d(arr: np.ndarray, ch_index: int, channel_axis: int | None = None) -> np.ndarray:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        ch_index (int): Zero-based index selecting ch.
+        channel_axis (int | None): Numerical value controlling channel axis. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = get_channel_2d(arr=image_array, ch_index=1)
+    """
     if channel_axis is None:
         channel_axis = find_channel_axis(arr)
     if channel_axis is not None and arr.shape[channel_axis] > 1:
@@ -62,13 +94,33 @@ def get_channel_2d(arr: np.ndarray, ch_index: int, channel_axis: int | None = No
 
 
 def make_black_figure(figsize: tuple[float, float] | None = None):
-    """Create and return the requested display or object."""
+    """Create and return the requested display or object.
+
+    Args:
+        figsize (tuple[float, float] | None): Figure width and height, in inches. ``None`` selects the function's default behavior.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_black_figure()
+    """
     fig = plt.figure(figsize=figsize, facecolor="black")
     return fig
 
 
 def make_black_axis(figsize: tuple[float, float] | None = None):
-    """Create and return a black Matplotlib axis."""
+    """Create and return a black Matplotlib axis.
+
+    Args:
+        figsize (tuple[float, float] | None): Figure width and height, in inches. ``None`` selects the function's default behavior.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_black_axis()
+    """
     from PFT.core_prog_parts.plot_utils import apply_axis_style
 
     fig = make_black_figure(figsize=figsize)
@@ -85,7 +137,23 @@ def save_rgb_preview_png(
     scalebar_um: float = 4.0,
     dpi: int = 200,
 ) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        rgb01 (np.ndarray): Array containing rgb01.
+        out_png (Path): Filesystem path used for out PNG image.
+        title (str): Title displayed on the generated figure or report section.
+        meta (CziMeta | None): Value specifying meta for the operation. ``None`` selects the function's default behavior.
+        scalebar_um (float): Numerical value controlling scalebar um. Defaults to ``4.0``.
+        dpi (int): Resolution of a generated figure in dots per inch. Defaults to ``200``.
+
+    Example:
+        >>> save_rgb_preview_png(
+        ...     rgb01=image_array,
+        ...     out_png=Path("path/to/resource"),
+        ...     title="title",
+        ... )
+    """
     from PFT.core_prog_parts.plot_utils import add_scalebar, finalize_figure
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -98,7 +166,17 @@ def save_rgb_preview_png(
 
 
 def preview_rgb(rgb01: np.ndarray, title: str, meta: CziMeta | None = None, scalebar_um: float = 4.0) -> None:
-    """Display an RGB preview, optionally with a scale bar."""
+    """Display an RGB preview, optionally with a scale bar.
+
+    Args:
+        rgb01 (np.ndarray): Array containing rgb01.
+        title (str): Title displayed on the generated figure or report section.
+        meta (CziMeta | None): Value specifying meta for the operation. ``None`` selects the function's default behavior.
+        scalebar_um (float): Numerical value controlling scalebar um. Defaults to ``4.0``.
+
+    Example:
+        >>> preview_rgb(rgb01=image_array, title="title")
+    """
     from PFT.core_prog_parts.plot_utils import add_scalebar
 
     fig, ax = make_black_axis()
@@ -117,15 +195,22 @@ def _normalize_preview_channel(
 ) -> np.ndarray:
     """Normalize one preview channel and optionally suppress weak values.
 
-    Parameters
-    ----------
-    image:
-        Input image or projected channel.
-    p_low, p_high:
-        Lower and upper percentiles used for clipping and normalization.
-    thr:
-        Optional threshold in the normalized ``[0, 1]`` range. Values below
-        the threshold are set to zero. A value of ``0`` disables thresholding.
+    Args:
+        image (np.ndarray): Input image or projected channel.
+        p_low (float): Lower and upper percentiles used for clipping and normalization.
+        p_high (float): Lower and upper percentiles used for clipping and normalization.
+        thr (float): Optional threshold in the normalized ``[0, 1]`` range. Values below the threshold are set to zero. A value of ``0`` disables thresholding.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_preview_channel(
+        ...     image=image_array,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ...     thr=0.5,
+        ... )
     """
     normalized = normalize01(image, p_lo=p_low, p_hi=p_high)
     if thr > 0.0:
@@ -141,7 +226,20 @@ def rgb_time_hada_blue(
     p_high: float = 99.8,
     thr: float = 0.0,
 ) -> np.ndarray:
-    """Create a blue RGB preview from a time-series or single-channel image."""
+    """Create a blue RGB preview from a time-series or single-channel image.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+        thr (float): Numerical value controlling thr. Defaults to ``0.0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = rgb_time_hada_blue(arr=image_array)
+    """
     img2d = max_project_to_2d(arr)
     b = _normalize_preview_channel(
         img2d, p_low=p_low, p_high=p_high, thr=thr
@@ -157,7 +255,22 @@ def rgb_wga_dapi(
     p_high: float = 99.8,
     thr: float = 0.0,
 ) -> np.ndarray:
-    """Create a green WGA and blue DAPI RGB preview from a multichannel image."""
+    """Create a green WGA and blue DAPI RGB preview from a multichannel image.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        wga_ch (int): Numerical value controlling wga ch. Defaults to ``0``.
+        dapi_ch (int): Numerical value controlling dapi ch. Defaults to ``1``.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+        thr (float): Numerical value controlling thr. Defaults to ``0.0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = rgb_wga_dapi(arr=image_array)
+    """
     ch_ax = find_channel_axis(arr)
     wga = _normalize_preview_channel(
         get_channel_2d(arr, wga_ch, ch_ax),
@@ -175,7 +288,14 @@ def rgb_wga_dapi(
 
 
 def make_crimson_cmap():
-    """Create and return the requested display or object."""
+    """Create and return the requested display or object.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_crimson_cmap()
+    """
     return LinearSegmentedColormap.from_list(
         "black_to_crimson",
         [
@@ -189,7 +309,17 @@ def make_crimson_cmap():
 
 
 def fft_log_magnitude(img2d: np.ndarray) -> np.ndarray:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = fft_log_magnitude(img2d=image_array)
+    """
     x = np.asarray(img2d, dtype=np.float32)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -203,7 +333,18 @@ def fft_log_magnitude(img2d: np.ndarray) -> np.ndarray:
 
 
 def imshow_percentile(ax, img: np.ndarray, cmap: str = "gray", p_low: float = 1.0, p_high: float = 99.7) -> None:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        img (np.ndarray): Array containing img.
+        cmap (str): Matplotlib colormap used to display scalar image intensities. Defaults to ``"gray"``.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.7``.
+
+    Example:
+        >>> imshow_percentile(ax=..., img=image_array)
+    """
     vmin = float(np.percentile(img, p_low))
     vmax = float(np.percentile(img, p_high))
     if vmax <= vmin:
@@ -221,6 +362,20 @@ def shared_display_limits(
 
     This function is intended for visualization. It does not modify the
     quantitative image and must not be used to rescale OME-Zarr output.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = shared_display_limits(reference=image_array)
     """
     if not (0.0 <= p_low < p_high <= 100.0):
         raise ValueError("Display percentiles must satisfy 0 <= p_low < p_high <= 100")
@@ -243,7 +398,21 @@ def normalize_display_with_limits(
     image: np.ndarray,
     limits: tuple[float, float],
 ) -> np.ndarray:
-    """Map an image to ``[0, 1]`` for display using fixed shared limits."""
+    """Map an image to ``[0, 1]`` for display using fixed shared limits.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        limits (tuple[float, float]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_display_with_limits(image=image_array, limits=0.5)
+    """
     low, high = (float(limits[0]), float(limits[1]))
     if high <= low:
         raise ValueError("Display upper limit must be larger than the lower limit")
@@ -264,6 +433,21 @@ def normalize_original_filtered_pair(
     The two inputs must have the same shape. Shared normalization ensures that
     apparent contrast changes reflect filtering rather than independent display
     stretching. The returned arrays are display products only.
+
+    Args:
+        original (np.ndarray): Array containing original.
+        filtered (np.ndarray): Array containing filtered.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, tuple[float, float]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_original_filtered_pair(original=image_array, filtered=image_array)
     """
     original_array = np.asarray(original)
     filtered_array = np.asarray(filtered)
@@ -300,6 +484,29 @@ def save_normalized_before_after_plot(
     a display-only product. Source and filtered quantitative arrays are not
     modified or saved by this function. The applied raw-intensity limits are
     returned for provenance.
+
+    Args:
+        original (np.ndarray): Array containing original.
+        filtered (np.ndarray): Array containing filtered.
+        out_png (Path): Filesystem path used for out PNG image.
+        title (str): Title displayed on the generated figure or report section. Defaults to ``"Original versus filtered"``.
+        original_label (str): Text value specifying original label. Defaults to ``"Original"``.
+        filtered_label (str): Text value specifying filtered label. Defaults to ``"Filtered"``.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+        cmap (str): Matplotlib colormap used to display scalar image intensities. Defaults to ``"gray"``.
+        dpi (int): Resolution of a generated figure in dots per inch. Defaults to ``200``.
+        footer (str | None): Text value specifying footer. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = save_normalized_before_after_plot(
+        ...     original=image_array,
+        ...     filtered=image_array,
+        ...     out_png=Path("path/to/resource"),
+        ... )
     """
     original_display, filtered_display, limits = normalize_original_filtered_pair(
         original,
@@ -326,7 +533,25 @@ def save_normalized_before_after_plot(
 
 
 def plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, out_png: Path, *, original_label: str = "Original", filtered_label: str = "Filtered", facecolor: str = "black") -> None:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        orig_rgb (np.ndarray): Array containing orig RGB representation.
+        filt_rgb (np.ndarray): Array containing filt RGB representation.
+        title (str): Title displayed on the generated figure or report section.
+        out_png (Path): Filesystem path used for out PNG image.
+        original_label (str): Text value specifying original label. Defaults to ``"Original"``.
+        filtered_label (str): Text value specifying filtered label. Defaults to ``"Filtered"``.
+        facecolor (str): Text value specifying facecolor. Defaults to ``"black"``.
+
+    Example:
+        >>> plot_rgb_comparison(
+        ...     orig_rgb=image_array,
+        ...     filt_rgb=image_array,
+        ...     title="title",
+        ...     out_png=Path("path/to/resource"),
+        ... )
+    """
     diff = np.abs(filt_rgb.astype(np.float32) - orig_rgb.astype(np.float32))
     diff_map = np.mean(diff, axis=-1)
     scale = float(np.percentile(diff_map, 99.7)) + EPS
@@ -351,7 +576,26 @@ def plot_rgb_comparison(orig_rgb: np.ndarray, filt_rgb: np.ndarray, title: str, 
 
 
 def save_fft_with_dc_overlay(fft_img: np.ndarray, r_dc: int, out_png: Path, title: str, cmap: str, linewidth: int = 3, overlay_alpha: float = 0.25) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        fft_img (np.ndarray): Array containing Fourier-transform result img.
+        r_dc (int): Numerical value controlling r dc.
+        out_png (Path): Filesystem path used for out PNG image.
+        title (str): Title displayed on the generated figure or report section.
+        cmap (str): Matplotlib colormap used to display scalar image intensities.
+        linewidth (int): Numerical value controlling linewidth. Defaults to ``3``.
+        overlay_alpha (float): Numerical value controlling overlay alpha. Defaults to ``0.25``.
+
+    Example:
+        >>> save_fft_with_dc_overlay(
+        ...     fft_img=image_array,
+        ...     r_dc=1,
+        ...     out_png=Path("path/to/resource"),
+        ...     title="title",
+        ...     cmap="cmap",
+        ... )
+    """
     h, w = fft_img.shape
     cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -375,7 +619,23 @@ def save_fft_with_dc_overlay(fft_img: np.ndarray, r_dc: int, out_png: Path, titl
 
 
 def save_single_channel_outputs(channel: np.ndarray, out_dir: Path, stem: str, channel_name: str, *, cmap=INTENSITY_RGB_CMAP) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        channel (np.ndarray): Channel index or channel identifier selected for processing.
+        out_dir (Path): Directory used for out.
+        stem (str): Text value specifying stem.
+        channel_name (str): Text value specifying channel name.
+        cmap (Any): Matplotlib colormap used to display scalar image intensities. Defaults to ``INTENSITY_RGB_CMAP``.
+
+    Example:
+        >>> save_single_channel_outputs(
+        ...     channel=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ...     channel_name="channel_name",
+        ... )
+    """
     intensity = normalize01(channel)
     fft_img = fft_log_magnitude(channel)
     plt.imsave(out_dir / f"{stem}_{channel_name}_intensity_map.png", intensity, cmap=cmap, vmin=0.0, vmax=1.0)
@@ -396,7 +656,21 @@ def save_single_channel_outputs(channel: np.ndarray, out_dir: Path, stem: str, c
 
 
 def save_rgb_overview(rgb: np.ndarray, out_dir: Path, stem: str, *, panel_title: str | None = None) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        rgb (np.ndarray): Array containing RGB representation.
+        out_dir (Path): Directory used for out.
+        stem (str): Text value specifying stem.
+        panel_title (str | None): Text value specifying panel title. ``None`` selects the function's default behavior.
+
+    Example:
+        >>> save_rgb_overview(
+        ...     rgb=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     plt.imsave(out_dir / f"{stem}_normalized_rgb.png", rgb)
     fig, ax = plt.subplots(figsize=(6, 6), facecolor="black")
     ax.set_facecolor("black")
@@ -409,7 +683,22 @@ def save_rgb_overview(rgb: np.ndarray, out_dir: Path, stem: str, *, panel_title:
 
 
 def save_comparison_figure_tiff(raw_rgb_uint8: np.ndarray, norm_rgb_float: np.ndarray, out_path: Path, title: str) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        raw_rgb_uint8 (np.ndarray): Array containing raw RGB representation uint8.
+        norm_rgb_float (np.ndarray): Array containing norm RGB representation float.
+        out_path (Path): Filesystem path associated with out.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> save_comparison_figure_tiff(
+        ...     raw_rgb_uint8=image_array,
+        ...     norm_rgb_float=image_array,
+        ...     out_path=Path("path/to/resource"),
+        ...     title="title",
+        ... )
+    """
     fig = plt.figure(figsize=(10, 5))
     ax1 = fig.add_subplot(1, 2, 1)
     ax1.imshow(raw_rgb_uint8)
@@ -427,7 +716,23 @@ def save_comparison_figure_tiff(raw_rgb_uint8: np.ndarray, norm_rgb_float: np.nd
 
 
 def save_image_and_fft(img: np.ndarray, disp: np.ndarray, out_dir: Path, stem: str, *, save_image_png: bool = True) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        disp (np.ndarray): Array containing disp.
+        out_dir (Path): Directory used for out.
+        stem (str): Text value specifying stem.
+        save_image_png (bool): Boolean flag controlling save image PNG image. Defaults to ``True``.
+
+    Example:
+        >>> save_image_and_fft(
+        ...     img=image_array,
+        ...     disp=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     if save_image_png:
         img_path = out_dir / f"{stem}_img.png"
@@ -447,7 +752,25 @@ def save_image_and_fft(img: np.ndarray, disp: np.ndarray, out_dir: Path, stem: s
 
 
 def save_unet_overlay_panel(rgb: np.ndarray, mask_yx: np.ndarray, overlay: np.ndarray, out_png: Path, *, input_title: str = "Input image", mask_title: str = "Predicted mask", overlay_title: str = "Overlay with outlines") -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        rgb (np.ndarray): Array containing RGB representation.
+        mask_yx (np.ndarray): Array containing mask yx.
+        overlay (np.ndarray): Array containing overlay.
+        out_png (Path): Filesystem path used for out PNG image.
+        input_title (str): Text value specifying input title. Defaults to ``"Input image"``.
+        mask_title (str): Text value specifying mask title. Defaults to ``"Predicted mask"``.
+        overlay_title (str): Text value specifying overlay title. Defaults to ``"Overlay with outlines"``.
+
+    Example:
+        >>> save_unet_overlay_panel(
+        ...     rgb=image_array,
+        ...     mask_yx=image_array,
+        ...     overlay=image_array,
+        ...     out_png=Path("path/to/resource"),
+        ... )
+    """
     fig = plt.figure(figsize=(14, 4.5), dpi=180)
     ax1 = fig.add_subplot(1, 3, 1)
     ax1.imshow(rgb)
@@ -468,7 +791,22 @@ def save_unet_overlay_panel(rgb: np.ndarray, mask_yx: np.ndarray, overlay: np.nd
 
 
 def show_two_channel_overlay(c0n: np.ndarray, c1n: np.ndarray, rgb: np.ndarray, title: str) -> None:
-    """Display a quick visual preview for inspection."""
+    """Display a quick visual preview for inspection.
+
+    Args:
+        c0n (np.ndarray): Array containing c0n.
+        c1n (np.ndarray): Array containing c1n.
+        rgb (np.ndarray): Array containing RGB representation.
+        title (str): Title displayed on the generated figure or report section.
+
+    Example:
+        >>> show_two_channel_overlay(
+        ...     c0n=image_array,
+        ...     c1n=image_array,
+        ...     rgb=image_array,
+        ...     title="title",
+        ... )
+    """
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 3, 1)
     ax2 = fig.add_subplot(1, 3, 2)
@@ -490,18 +828,18 @@ def show_two_channel_overlay(c0n: np.ndarray, c1n: np.ndarray, rgb: np.ndarray, 
 def main_visualization_demo(arr: np.ndarray, dataset: str = "2d_time") -> np.ndarray:
     """Return a normalized RGB preview for the main supported 2D datasets.
 
-    Parameters
-    ----------
-    arr:
-        Input array. For ``2d_time`` this is treated as a single-channel image or stack.
-        For ``2d_wga_dapi`` this is treated as a 2-channel array/stack.
-    dataset:
-        One of ``"2d_time"`` or ``"2d_wga_dapi"``.
+    Args:
+        arr (np.ndarray): Input array. For ``2d_time`` this is treated as a single-channel image or stack. For ``2d_wga_dapi`` this is treated as a 2-channel array/stack.
+        dataset (str): One of ``"2d_time"`` or ``"2d_wga_dapi"``.
 
-    Returns
-    -------
-    np.ndarray
-        RGB float image in [0, 1] suitable for display or saving.
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = main_visualization_demo(arr=image_array)
     """
     if dataset == "2d_time":
         return rgb_time_hada_blue(arr)

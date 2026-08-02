@@ -1,3 +1,19 @@
+r"""Provide command-line and programmatic utilities for intensity distribution three-dimensional data.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/intensity_distribution_3d.py --help
+
+Representative execution:
+
+    python scripts/statistics/intensity_distribution_3d.py \
+        --root_3d results/img/3d_data \
+        --level 0 \
+        --out_root results/example_output
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +29,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -63,7 +91,20 @@ CHANNEL_COLOR_BY_INDEX = {
 
 
 def find_project_root(start: Path) -> Path:
-    """Find project root by walking upward until src/PFT exists."""
+    """Find project root by walking upward until src/PFT exists.
+
+    Args:
+        start (Path): Filesystem path used for start.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root(start=Path("path/to/resource"))
+    """
     start = start.resolve()
     for p in [start, *start.parents]:
         if (p / "src" / "PFT").exists():
@@ -74,19 +115,46 @@ def find_project_root(start: Path) -> Path:
 
 
 def ensure_dir(path: Path) -> None:
-    """Create a folder if it does not yet exist."""
+    """Create a folder if it does not yet exist.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Example:
+        >>> ensure_dir(path=Path("path/to/resource"))
+    """
     path.mkdir(parents=True, exist_ok=True)
 
 
 def sanitize_name(name: str) -> str:
-    """Make names safe for Windows folder/file names."""
+    """Make names safe for Windows folder/file names.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = sanitize_name(name="name")
+    """
     bad = '<>:"/\\|?*'
     out = "".join("_" if ch in bad else ch for ch in str(name))
     return out.strip().replace(" ", "_")
 
 
 def normalize_to_u8(img: np.ndarray) -> np.ndarray:
-    """Min-max normalize one 2D slice to uint8 for display."""
+    """Min-max normalize one 2D slice to uint8 for display.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = normalize_to_u8(img=image_array)
+    """
     arr = np.asarray(img, dtype=np.float32)
     vmin = float(arr.min())
     vmax = float(arr.max())
@@ -98,7 +166,18 @@ def normalize_to_u8(img: np.ndarray) -> np.ndarray:
 
 
 def colorize_single_channel(gray_u8: np.ndarray, color_name: str) -> np.ndarray:
-    """Place grayscale data into one RGB display channel."""
+    """Place grayscale data into one RGB display channel.
+
+    Args:
+        gray_u8 (np.ndarray): Array containing gray u8.
+        color_name (str): Text value specifying color name.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = colorize_single_channel(gray_u8=image_array, color_name="color_name")
+    """
     rgb = np.zeros((*gray_u8.shape, 3), dtype=np.uint8)
     name = color_name.lower()
     if name == "blue":
@@ -113,12 +192,20 @@ def colorize_single_channel(gray_u8: np.ndarray, color_name: str) -> np.ndarray:
 
 
 def make_intensity_distribution_map(img: np.ndarray) -> np.ndarray:
-    """
-    Create an RGB intensity map for one 2D slice.
+    """Create an RGB intensity map for one 2D slice.
 
     0 stays black.
     Lowest nonzero intensities are blue, middle intensities are green,
     and the brightest intensities are red.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = make_intensity_distribution_map(img=image_array)
     """
     arr = np.asarray(img, dtype=np.float32)
     rgb = np.zeros((*arr.shape, 3), dtype=np.uint8)
@@ -146,11 +233,22 @@ def make_intensity_distribution_map(img: np.ndarray) -> np.ndarray:
 
 
 def make_normalized_composite(norm_by_channel: list[np.ndarray]) -> np.ndarray:
-    """
-    Create one RGB composite from normalized per-channel slices.
+    """Create one RGB composite from normalized per-channel slices.
 
     Channel index 0 -> blue, 1 -> green, 2 -> red.
     Extra channels beyond 3 are ignored.
+
+    Args:
+        norm_by_channel (list[np.ndarray]): Array containing norm by channel.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_normalized_composite(norm_by_channel=image_array)
     """
     if not norm_by_channel:
         raise ValueError("No channels were provided for normalized composite.")
@@ -169,10 +267,21 @@ def make_normalized_composite(norm_by_channel: list[np.ndarray]) -> np.ndarray:
 
 
 def make_intensity_composite(map_by_channel: list[np.ndarray]) -> np.ndarray:
-    """
-    Create one RGB composite from per-channel intensity-map RGB images.
+    """Create one RGB composite from per-channel intensity-map RGB images.
 
     The three RGB maps are combined with a channel-wise maximum.
+
+    Args:
+        map_by_channel (list[np.ndarray]): Array containing map by channel.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_intensity_composite(map_by_channel=image_array)
     """
     if not map_by_channel:
         raise ValueError("No channels were provided for intensity composite.")
@@ -187,9 +296,19 @@ def save_per_channel_outputs(
     channel_names: list[str],
     dataset_out: Path,
 ) -> None:
-    """
-    Save per-slice, per-channel normalized and intensity-map TIFF files.
-    Also save one per-slice 3-channel composite for normalized and intensity views.
+    """Save per-slice, per-channel normalized and intensity-map TIFF files. Also save one per-slice 3-channel composite for normalized and intensity views.
+
+    Args:
+        vol_czyx (np.ndarray): Array containing vol czyx.
+        channel_names (list[str]): Text value specifying channel names.
+        dataset_out (Path): Filesystem path used for dataset out.
+
+    Example:
+        >>> save_per_channel_outputs(
+        ...     vol_czyx=image_array,
+        ...     channel_names="channel_names",
+        ...     dataset_out=Path("path/to/resource"),
+        ... )
     """
     per_channel_norm: list[Path] = []
     per_channel_map: list[Path] = []
@@ -261,7 +380,27 @@ def save_per_channel_outputs(
 
 
 def run_one_dataset(zarr_dir: Path, level: int, out_root: Path) -> Path:
-    """Load one OME-Zarr volume and export per-slice TIFF views."""
+    """Load one OME-Zarr volume and export per-slice TIFF views.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+        level (int): Numerical value controlling level.
+        out_root (Path): Directory used for out.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_one_dataset(
+        ...     zarr_dir=Path("path/to/resource"),
+        ...     level=1,
+        ...     out_root=Path("path/to/resource"),
+        ... )
+    """
     zarr_dir = zarr_dir.resolve()
     out_root = out_root.resolve()
 
@@ -309,13 +448,34 @@ def run_one_dataset(zarr_dir: Path, level: int, out_root: Path) -> Path:
 
 
 def find_all_omezarr_3d(root_3d: Path) -> list[Path]:
-    """Find every image.ome.zarr under results/img/3d_data."""
+    """Find every image.ome.zarr under results/img/3d_data.
+
+    Args:
+        root_3d (Path): Filesystem path used for root three-dimensional data.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_all_omezarr_3d(root_3d=Path("path/to/resource"))
+    """
     if not root_3d.exists():
         return []
     return sorted(root_3d.rglob("image.ome.zarr"))
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     project_root = find_project_root(Path(__file__).resolve())
     default_root_3d = project_root / DEFAULT_RELATIVE_3D_ROOT
     default_out_root = project_root / DEFAULT_RELATIVE_OUT_ROOT

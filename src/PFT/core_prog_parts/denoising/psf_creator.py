@@ -111,7 +111,17 @@ class MasterPSFMatch:
 
 
 def _available_levels(zarr_dir: Path) -> list[int]:
-    """Return OME-Zarr pyramid-level indices."""
+    """Return OME-Zarr pyramid-level indices.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _available_levels(zarr_dir=Path("path/to/resource"))
+    """
     root = zarr.open_group(str(zarr_dir), mode="r")
     multiscales = root.attrs.get("multiscales")
     if not isinstance(multiscales, list) or not multiscales:
@@ -121,7 +131,21 @@ def _available_levels(zarr_dir: Path) -> list[int]:
 
 
 def _prompt_level(levels: list[int], default: int = MASTER_LEVEL) -> int:
-    """Prompt for a valid OME-Zarr level and enforce the master level."""
+    """Prompt for a valid OME-Zarr level and enforce the master level.
+
+    Args:
+        levels (list[int]): Numerical value controlling levels.
+        default (int): Numerical value controlling default. Defaults to ``MASTER_LEVEL``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prompt_level(levels=1)
+    """
     if MASTER_LEVEL not in levels:
         raise ValueError(f"Reference OME-Zarr does not contain required level {MASTER_LEVEL}")
     answer = input(f"Choose level [{MASTER_LEVEL}]: ").strip()
@@ -132,7 +156,17 @@ def _prompt_level(levels: list[int], default: int = MASTER_LEVEL) -> int:
 
 
 def _parse_psfgenerator_config(path: Path) -> dict[str, str]:
-    """Parse a PSFGenerator key-value configuration file."""
+    """Parse a PSFGenerator key-value configuration file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[str, str]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parse_psfgenerator_config(path=Path("path/to/resource"))
+    """
     params: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         stripped = line.strip()
@@ -149,7 +183,16 @@ def write_psfgenerator_config(
     *,
     header: Iterable[str] = (),
 ) -> None:
-    """Write a documented PSFGenerator configuration with deterministic ordering."""
+    """Write a documented PSFGenerator configuration with deterministic ordering.
+
+    Args:
+        params (Mapping[str, str]): Text value specifying params.
+        dst (Path): Filesystem path used for dst.
+        header (Iterable[str]): Text value specifying header. Defaults to ``()``.
+
+    Example:
+        >>> write_psfgenerator_config(params="params", dst=Path("path/to/resource"))
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
     lines = ["# " + text for text in header]
     if lines:
@@ -170,7 +213,17 @@ def write_psfgenerator_config(
 
 
 def _builtin_standard_params(model: ModelName) -> dict[str, str]:
-    """Return a conservative standard template if no previous template exists."""
+    """Return a conservative standard template if no previous template exists.
+
+    Args:
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model.
+
+    Returns:
+        dict[str, str]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _builtin_standard_params(model="model_name")
+    """
     params = {
         "Type": model,
         "Lambda": "488",
@@ -193,7 +246,18 @@ def _builtin_standard_params(model: ModelName) -> dict[str, str]:
 
 
 def ensure_standard_config(project_root: Path, model: ModelName) -> Path:
-    """Create the standard named configuration before metadata substitution."""
+    """Create the standard named configuration before metadata substitution.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = ensure_standard_config(project_root=Path("path/to/resource"), model="model_name")
+    """
     config_dir = project_root / "results" / "psf" / "configuration"
     standard = config_dir / f"{STANDARD_CONFIG_BASENAME}_{model}.txt"
     legacy = project_root / "results" / "psf" / f"config{model}.txt"
@@ -219,6 +283,20 @@ def ensure_standard_config(project_root: Path, model: ModelName) -> Path:
 
 
 def _shape_zyx(meta: Mapping[str, Any]) -> tuple[int, int, int]:
+    """Return shape zyx for the supplied inputs.
+
+    Args:
+        meta (Mapping[str, Any]): Text value specifying meta.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _shape_zyx(meta="meta")
+    """
     axes = str(meta.get("axes") or "").lower()
     shape = tuple(meta.get("shape") or ())
     if not all(axis in axes for axis in "zyx"):
@@ -237,7 +315,29 @@ def update_params_for_image_and_channel(
     match_na_to_image: bool = True,
     match_refractive_indices: bool = True,
 ) -> dict[str, str]:
-    """Insert reference sampling, dimensions, optics, and channel wavelength."""
+    """Insert reference sampling, dimensions, optics, and channel wavelength.
+
+    Args:
+        base_params (dict[str, str]): Text value specifying base params.
+        img_meta (dict): Value specifying img meta for the operation.
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        accuracy (str): Text value specifying accuracy. Defaults to ``"Best"``.
+        match_sampling_to_image (bool): Boolean flag controlling match sampling to image. Defaults to ``True``.
+        match_na_to_image (bool): Boolean flag controlling match na to image. Defaults to ``True``.
+        match_refractive_indices (bool): Zero-based indices selecting match refractive. Defaults to ``True``.
+
+    Returns:
+        dict[str, str]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = update_params_for_image_and_channel(
+        ...     base_params="base_params",
+        ...     img_meta={},
+        ...     wavelength_nm=0.5,
+        ...     model="model_name",
+        ... )
+    """
     params = dict(base_params)
     params["Type"] = model
     params["Lambda"] = f"{float(wavelength_nm):.10g}"
@@ -272,6 +372,17 @@ def update_params_for_image_and_channel(
 
 
 def _config_hash(params: Mapping[str, str]) -> str:
+    """Return config hash for the supplied inputs.
+
+    Args:
+        params (Mapping[str, str]): Text value specifying params.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _config_hash(params="params")
+    """
     encoded = json.dumps(
         dict(sorted(params.items())), separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
@@ -279,6 +390,17 @@ def _config_hash(params: Mapping[str, str]) -> str:
 
 
 def _float_or_none(value: Any) -> float | None:
+    """Return float or none for the supplied inputs.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Example:
+        >>> result = _float_or_none(value=...)
+    """
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
@@ -286,6 +408,20 @@ def _float_or_none(value: Any) -> float | None:
 
 
 def _display_color_for_wavelength(wavelength_nm: float) -> tuple[str, str]:
+    """Return display color for wavelength for the supplied inputs.
+
+    Args:
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+
+    Returns:
+        tuple[str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _display_color_for_wavelength(wavelength_nm=0.5)
+    """
     reference, color, color_hex = min(
         REFERENCE_WAVELENGTH_COLORS,
         key=lambda item: abs(float(wavelength_nm) - item[0]),
@@ -298,11 +434,32 @@ def _display_color_for_wavelength(wavelength_nm: float) -> tuple[str, str]:
 
 
 def _canonical_wavelength_filename(wavelength_nm: float) -> str:
+    """Return canonical wavelength filename for the supplied inputs.
+
+    Args:
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _canonical_wavelength_filename(wavelength_nm=0.5)
+    """
     return f"psf_{int(round(float(wavelength_nm)))}nm_L{MASTER_LEVEL}.tif"
 
 
 def master_psf_directory(project_root: Path) -> Path:
-    """Return the fixed storage location for the reusable master PSF set."""
+    """Return the fixed storage location for the reusable master PSF set.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = master_psf_directory(project_root=Path("path/to/resource"))
+    """
     return project_root.resolve() / "results" / "psf" / "master"
 
 
@@ -314,6 +471,27 @@ def _reference_signature(
     model: ModelName,
     accuracy: str,
 ) -> dict[str, Any]:
+    """Return reference signature for the supplied inputs.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+        img_meta (Mapping[str, Any]): Text value specifying img meta.
+        optics (Sequence[ChannelOptics]): Value specifying optics for the operation.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        accuracy (str): Text value specifying accuracy.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _reference_signature(
+        ...     zarr_dir=Path("path/to/resource"),
+        ...     img_meta="img_meta",
+        ...     optics=[],
+        ...     model="model_name",
+        ...     accuracy="accuracy",
+        ... )
+    """
     channels: list[dict[str, Any]] = []
     for channel in optics:
         color, color_hex = _display_color_for_wavelength(channel.wavelength_nm)
@@ -346,6 +524,17 @@ def _reference_signature(
 
 
 def _assert_three_unique_wavelengths(optics: Sequence[ChannelOptics]) -> None:
+    """Return assert three unique wavelengths for the supplied inputs.
+
+    Args:
+        optics (Sequence[ChannelOptics]): Value specifying optics for the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _assert_three_unique_wavelengths(optics=[])
+    """
     if len(optics) != 3:
         raise ValueError(f"The master workflow requires exactly 3 channels, found {len(optics)}")
     wavelengths = [float(item.wavelength_nm) for item in optics]
@@ -368,7 +557,27 @@ def plan_master_psf_jobs(
     channel_wavelength_nm: Mapping[str, float] | None = None,
     accuracy: str = "Best",
 ) -> tuple[list[MasterPSFJob], dict[str, Any]]:
-    """Create three reference-derived master configurations and output paths."""
+    """Create three reference-derived master configurations and output paths.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        reference_zarr (Path): Filesystem path used for reference Zarr.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model. Defaults to ``"BW"``.
+        channel_wavelength_nm (Mapping[str, float] | None): Text value specifying channel wavelength nm. ``None`` selects the function's default behavior.
+        accuracy (str): Text value specifying accuracy. Defaults to ``"Best"``.
+
+    Returns:
+        tuple[list[MasterPSFJob], dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = plan_master_psf_jobs(
+        ...     project_root=Path("path/to/resource"),
+        ...     reference_zarr=Path("path/to/resource"),
+        ... )
+    """
     project_root = project_root.resolve()
     reference_zarr = reference_zarr.resolve()
     img_meta = extract_ome_zarr_meta_for_compare(reference_zarr, level=MASTER_LEVEL)
@@ -440,6 +649,20 @@ def plan_master_psf_jobs(
 
 
 def _find_java_exe(imagej_dir: Path) -> Path:
+    """Find java exe in the available data or project structure.
+
+    Args:
+        imagej_dir (Path): Directory used for imagej.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_java_exe(imagej_dir=Path("path/to/resource"))
+    """
     candidates = [
         imagej_dir / "java" / "win64" / "bin" / "java.exe",
         imagej_dir / "java" / "bin" / "java.exe",
@@ -463,6 +686,24 @@ def _find_java_exe(imagej_dir: Path) -> Path:
 
 
 def _find_psf_jar(imagej_dir: Path, psf_creator_dir: Path | None) -> Path:
+    """Find point-spread function jar in the available data or project structure.
+
+    Args:
+        imagej_dir (Path): Directory used for imagej.
+        psf_creator_dir (Path | None): Directory used for point-spread function creator.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_psf_jar(
+        ...     imagej_dir=Path("path/to/resource"),
+        ...     psf_creator_dir=Path("path/to/resource"),
+        ... )
+    """
     candidates: list[Path] = []
     if psf_creator_dir is not None:
         if psf_creator_dir.is_file():
@@ -493,7 +734,22 @@ def _normalize_psf_file_in_place(
     res_lateral_nm: float | None = None,
     res_axial_nm: float | None = None,
 ) -> tuple[tuple[int, int, int], float]:
-    """Normalize a 3D PSF to sum 1 and retain calibrated TIFF metadata."""
+    """Normalize a 3D PSF to sum 1 and retain calibrated TIFF metadata.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        res_lateral_nm (float | None): Numerical value controlling res lateral nm. ``None`` selects the function's default behavior.
+        res_axial_nm (float | None): Numerical value controlling res axial nm. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[tuple[int, int, int], float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_psf_file_in_place(path=Path("path/to/resource"))
+    """
     array = np.asarray(tiff.imread(str(path)), dtype=np.float32)
     if array.ndim != 3:
         raise ValueError(f"Expected 3D PSF ZYX, got shape={array.shape}")
@@ -545,7 +801,32 @@ def run_psfgenerator_cli_v2(
     quiet: bool = False,
     expected_min_filesize_bytes: int = 1024,
 ) -> Path:
-    """Run PSFGenerator and write a normalized calibrated master TIFF."""
+    """Run PSFGenerator and write a normalized calibrated master TIFF.
+
+    Args:
+        start_path (Path): Filesystem path associated with start.
+        config_path (Path): Filesystem path associated with config.
+        out_path (Path): Filesystem path associated with out.
+        imagej_dir (Path | None): Directory used for imagej. ``None`` selects the function's default behavior.
+        psf_creator_dir (Path | None): Directory used for point-spread function creator. ``None`` selects the function's default behavior.
+        quiet (bool): Boolean flag controlling quiet. Defaults to ``False``.
+        expected_min_filesize_bytes (int): Numerical value controlling expected min filesize bytes. Defaults to ``1024``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_psfgenerator_cli_v2(
+        ...     start_path=Path("path/to/resource"),
+        ...     config_path=Path("path/to/resource"),
+        ...     out_path=Path("path/to/resource"),
+        ... )
+    """
     project_root = find_project_root(start_path.resolve())
     if imagej_dir is None:
         imagej_dir = ensure_fiji_in_project(project_root, quiet=quiet)
@@ -604,7 +885,21 @@ def validate_master_psf_file(
     res_lateral_nm: float | None = None,
     res_axial_nm: float | None = None,
 ) -> PSFValidation:
-    """Validate one master PSF and normalize it automatically when requested."""
+    """Validate one master PSF and normalize it automatically when requested.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        normalize_if_needed (bool): Boolean flag controlling normalize if needed. Defaults to ``True``.
+        normalization_atol (float): Numerical value controlling normalization atol. Defaults to ``NORMALIZATION_ATOL``.
+        res_lateral_nm (float | None): Numerical value controlling res lateral nm. ``None`` selects the function's default behavior.
+        res_axial_nm (float | None): Numerical value controlling res axial nm. ``None`` selects the function's default behavior.
+
+    Returns:
+        PSFValidation: Result produced by the operation.
+
+    Example:
+        >>> result = validate_master_psf_file(path=Path("path/to/resource"))
+    """
     if not path.is_file():
         return PSFValidation(False, False, 0.0, ("PSF TIFF is missing",))
     issues: list[str] = []
@@ -637,10 +932,36 @@ def validate_master_psf_file(
 
 
 def _metadata_path(master_dir: Path) -> Path:
+    """Return metadata path for the supplied inputs.
+
+    Args:
+        master_dir (Path): Directory used for master.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _metadata_path(master_dir=Path("path/to/resource"))
+    """
     return master_dir / MASTER_METADATA_BASENAME
 
 
 def _read_master_metadata(master_dir: Path) -> dict[str, Any]:
+    """Read master metadata from persistent storage.
+
+    Args:
+        master_dir (Path): Directory used for master.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _read_master_metadata(master_dir=Path("path/to/resource"))
+    """
     path = _metadata_path(master_dir)
     if not path.is_file():
         raise FileNotFoundError(
@@ -659,6 +980,20 @@ def _value_close(
     atol: float = 1e-6,
     rtol: float = 1e-5,
 ) -> bool:
+    """Return value close for the supplied inputs.
+
+    Args:
+        first (Any): Value specifying first for the operation.
+        second (Any): Value specifying second for the operation.
+        atol (float): Numerical value controlling atol. Defaults to ``1e-6``.
+        rtol (float): Numerical value controlling rtol. Defaults to ``1e-5``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _value_close(first=..., second=...)
+    """
     if first is None or second is None:
         return first is second
     try:
@@ -668,6 +1003,18 @@ def _value_close(
 
 
 def _compare_voxel_metadata(reference: Mapping[str, Any], current: Mapping[str, Any]) -> list[str]:
+    """Compare voxel metadata across the supplied inputs.
+
+    Args:
+        reference (Mapping[str, Any]): Text value specifying reference.
+        current (Mapping[str, Any]): Text value specifying current.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _compare_voxel_metadata(reference="reference", current="current")
+    """
     issues: list[str] = []
     for axis in ("z", "y", "x"):
         ref_value = (reference.get("voxel_size_um") or {}).get(axis)
@@ -684,6 +1031,25 @@ def _match_channels_by_wavelength(
     tolerance_nm: float,
     master_dir: Path,
 ) -> tuple[list[MasterPSFMatch], list[str]]:
+    """Return match channels by wavelength for the supplied inputs.
+
+    Args:
+        current_optics (Sequence[ChannelOptics]): Value specifying current optics for the operation.
+        master_channels (Sequence[Mapping[str, Any]]): Text value specifying master channels.
+        tolerance_nm (float): Numerical value controlling tolerance nm.
+        master_dir (Path): Directory used for master.
+
+    Returns:
+        tuple[list[MasterPSFMatch], list[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _match_channels_by_wavelength(
+        ...     current_optics=[],
+        ...     master_channels="master_channels",
+        ...     tolerance_nm=0.5,
+        ...     master_dir=Path("path/to/resource"),
+        ... )
+    """
     matches: list[MasterPSFMatch] = []
     issues: list[str] = []
     used_master_indices: set[int] = set()
@@ -741,6 +1107,24 @@ def validate_stack_against_master_psfs(
 
     The function raises ``ValueError`` when the stack is incompatible. It never
     creates stack-specific PSFs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_dir (Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``MASTER_LEVEL``.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model. Defaults to ``"BW"``.
+        channel_wavelength_nm (Mapping[str, float] | None): Text value specifying channel wavelength nm. ``None`` selects the function's default behavior.
+        wavelength_tolerance_nm (float): Numerical value controlling wavelength tolerance nm. Defaults to ``DEFAULT_WAVELENGTH_TOLERANCE_NM``.
+        normalize_psfs (bool): Boolean flag controlling normalize psfs. Defaults to ``True``.
+
+    Returns:
+        tuple[list[MasterPSFMatch], dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_stack_against_master_psfs(project_root=Path("path/to/resource"), zarr_dir=Path("path/to/resource"))
     """
     if level != MASTER_LEVEL:
         raise ValueError("Master PSFs are defined only for OME-Zarr level 0")
@@ -829,7 +1213,32 @@ def generate_or_reuse_master_psfs(
     reuse_existing: bool = True,
     regenerate: bool = False,
 ) -> dict[float, Path]:
-    """Generate the three level-0 master PSFs once, or reuse a valid set."""
+    """Generate the three level-0 master PSFs once, or reuse a valid set.
+
+    Args:
+        reference_zarr (Path): Filesystem path used for reference Zarr.
+        start_path (Path): Filesystem path associated with start.
+        model (ModelName): Model identifier or filesystem path to the pretrained or fine-tuned model. Defaults to ``"BW"``.
+        accuracy (str): Text value specifying accuracy. Defaults to ``"Best"``.
+        quiet (bool): Boolean flag controlling quiet. Defaults to ``False``.
+        imagej_dir (Path | None): Directory used for imagej. ``None`` selects the function's default behavior.
+        psf_creator_dir (Path | None): Directory used for point-spread function creator. ``None`` selects the function's default behavior.
+        channel_wavelength_nm (Mapping[str, float] | None): Text value specifying channel wavelength nm. ``None`` selects the function's default behavior.
+        reuse_existing (bool): Boolean flag controlling reuse existing. Defaults to ``True``.
+        regenerate (bool): Boolean flag controlling regenerate. Defaults to ``False``.
+
+    Returns:
+        dict[float, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = generate_or_reuse_master_psfs(
+        ...     reference_zarr=Path("path/to/resource"),
+        ...     start_path=Path("path/to/resource"),
+        ... )
+    """
     project_root = find_project_root(start_path.resolve())
     jobs, expected = plan_master_psf_jobs(
         project_root=project_root,
@@ -978,7 +1387,20 @@ def generate_or_reuse_master_psfs(
 
 
 def _parse_models_arg(value: str) -> list[ModelName]:
-    """Retained parser with a one-model restriction for compatibility."""
+    """Retained parser with a one-model restriction for compatibility.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        list[ModelName]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _parse_models_arg(value="value")
+    """
     parts = [part.strip().upper() for part in (value or "BW").replace(" ", ",").split(",") if part.strip()]
     output: list[ModelName] = []
     for part in parts:

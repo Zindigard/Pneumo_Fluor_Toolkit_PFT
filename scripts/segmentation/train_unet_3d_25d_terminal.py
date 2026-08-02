@@ -1,8 +1,28 @@
-"""Train the per-volume-target merged-RGB 2.5D foreground U-Net.
+r"""Train the per-volume-target merged-RGB 2.5D foreground U-Net.
 
 Each annotated stack contributes one target slice from the shared mapping. For
 configured target Zn, the input is merged-RGB Z(n-1)/Zn/Z(n+1), concatenated
 as nine channels, and the target is ``zNNN_mask.tif``.
+
+Examples
+--------
+Show all options:
+
+    python scripts/segmentation/train_unet_3d_25d_terminal.py --help
+
+Train the 2.5D U-Net for 50 epochs:
+
+    python scripts/segmentation/train_unet_3d_25d_terminal.py \
+        --level 0 \
+        --patch 256 \
+        --batch 4 \
+        --epochs 50 \
+        --steps-per-epoch 250 \
+        --val-steps 50 \
+        --val-split 0.2 \
+        --learning-rate 0.001 \
+        --predict-batch-size 8 \
+        --seed 1337
 """
 
 from __future__ import annotations
@@ -15,6 +35,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -32,6 +63,14 @@ from PFT.core_prog_parts.segmentation.unet_train_3d_25d_core import (  # noqa: E
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Train the PFT 2.5D U-Net from one configured target slice per annotated volume.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

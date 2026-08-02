@@ -1,3 +1,20 @@
+r"""Provide command-line and programmatic utilities for run welch statistics.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/run_welch_statistics.py --help
+
+Representative execution:
+
+    python scripts/statistics/run_welch_statistics.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --project-root . \
+        --input-root results/img/2d_time
+"""
+
 from __future__ import annotations
 
 """Welch-test analysis for the PFT quantitative fluorescence pipeline.
@@ -79,6 +96,7 @@ NON_METRIC_COLUMNS = {
 
 @dataclass(frozen=True)
 class Comparison:
+    """Store validated configuration or result data for comparison."""
     name: str
     family: str
     group_a_label: str
@@ -90,6 +108,7 @@ class Comparison:
 
 @dataclass(frozen=True)
 class WelchResult:
+    """Store validated configuration or result data for welch result."""
     n_a: int
     n_b: int
     mean_a: float
@@ -108,6 +127,21 @@ class WelchResult:
 
 
 def find_project_root(explicit: Path | None = None) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        explicit (Path | None): Filesystem path used for explicit. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     if explicit is not None:
         root = explicit.expanduser().resolve()
         if not (root / "scripts").is_dir():
@@ -121,11 +155,31 @@ def find_project_root(explicit: Path | None = None) -> Path:
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
+    """Read CSV data from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = read_csv(path=Path("path/to/resource"))
+    """
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
 
 
 def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (Sequence[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -142,6 +196,18 @@ def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
 
 
 def safe_float(value: object, default: float = math.nan) -> float:
+    """Return safe float for the supplied inputs.
+
+    Args:
+        value (object): Value to validate, transform, store, or forward.
+        default (float): Numerical value controlling default. Defaults to ``math.nan``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = safe_float(value=...)
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -150,6 +216,17 @@ def safe_float(value: object, default: float = math.nan) -> float:
 
 
 def numeric_metrics(rows: Sequence[dict[str, str]]) -> list[str]:
+    """Return numeric metrics for the supplied inputs.
+
+    Args:
+        rows (Sequence[dict[str, str]]): Text value specifying rows.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = numeric_metrics(rows="rows")
+    """
     metrics: list[str] = []
     for row in rows:
         for key, value in row.items():
@@ -166,6 +243,23 @@ def values_for_metric(
     metric: str,
     conditions: Sequence[str],
 ) -> np.ndarray:
+    """Return values for metric for the supplied inputs.
+
+    Args:
+        rows (Sequence[dict[str, str]]): Text value specifying rows.
+        metric (str): Text value specifying metric.
+        conditions (Sequence[str]): Text value specifying conditions.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = values_for_metric(
+        ...     rows="rows",
+        ...     metric="metric",
+        ...     conditions="conditions",
+        ... )
+    """
     selected = {
         condition for condition in conditions
     }
@@ -181,6 +275,23 @@ def values_for_metric(
 
 
 def welch_test(a: np.ndarray, b: np.ndarray, min_group_n: int) -> WelchResult:
+    """Return welch test for the supplied inputs.
+
+    Args:
+        a (np.ndarray): Array containing a.
+        b (np.ndarray): Array containing b.
+        min_group_n (int): Minimum permitted value of group n.
+
+    Returns:
+        WelchResult: Result produced by the operation.
+
+    Example:
+        >>> result = welch_test(
+        ...     a=image_array,
+        ...     b=image_array,
+        ...     min_group_n=1,
+        ... )
+    """
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
     a = a[np.isfinite(a)]
@@ -267,6 +378,21 @@ def welch_test(a: np.ndarray, b: np.ndarray, min_group_n: int) -> WelchResult:
 
 
 def adjust_pvalues(values: Sequence[float], method: str) -> list[float]:
+    """Return adjust pvalues for the supplied inputs.
+
+    Args:
+        values (Sequence[float]): Numerical value controlling values.
+        method (str): Text value specifying method.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = adjust_pvalues(values=0.5, method="method")
+    """
     p = np.asarray(values, dtype=np.float64)
     adjusted = np.full(p.shape, np.nan, dtype=np.float64)
     finite_indices = np.flatnonzero(np.isfinite(p))
@@ -308,6 +434,17 @@ def adjust_pvalues(values: Sequence[float], method: str) -> list[float]:
 
 
 def effect_size_magnitude(value: float) -> str:
+    """Return effect size magnitude for the supplied inputs.
+
+    Args:
+        value (float): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = effect_size_magnitude(value=0.5)
+    """
     if not np.isfinite(value):
         return "not_available"
     absolute = abs(value)
@@ -321,6 +458,17 @@ def effect_size_magnitude(value: float) -> str:
 
 
 def metric_base_for_3d(metric: str) -> str:
+    """Return metric base for three-dimensional data for the supplied inputs.
+
+    Args:
+        metric (str): Text value specifying metric.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = metric_base_for_3d(metric="metric")
+    """
     for channel in CHANNELS["3d_mip"]:
         prefix = f"{channel.lower()}_"
         if metric.startswith(prefix):
@@ -329,6 +477,18 @@ def metric_base_for_3d(metric: str) -> str:
 
 
 def graph_target(dataset: str, metric: str) -> str:
+    """Return graph target for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        metric (str): Text value specifying metric.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = graph_target(dataset="2d_time", metric="metric")
+    """
     lower = metric.lower()
     if metric == "n_cells":
         return "detected_cells"
@@ -360,6 +520,20 @@ def graph_target(dataset: str, metric: str) -> str:
 
 
 def planned_comparisons(dataset: str) -> list[Comparison]:
+    """Return planned comparisons for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Comparison]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = planned_comparisons(dataset="2d_time")
+    """
     if dataset == "2d_time":
         return [
             Comparison(
@@ -437,6 +611,18 @@ def planned_comparisons(dataset: str) -> list[Comparison]:
 
 
 def all_pairwise_comparisons(dataset: str, conditions_present: Sequence[str]) -> list[Comparison]:
+    """Return all pairwise comparisons for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        conditions_present (Sequence[str]): Text value specifying conditions present.
+
+    Returns:
+        list[Comparison]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = all_pairwise_comparisons(dataset="2d_time", conditions_present="conditions_present")
+    """
     order = [condition for condition in CONDITION_ORDER[dataset] if condition in conditions_present]
     return [
         Comparison(
@@ -453,6 +639,25 @@ def all_pairwise_comparisons(dataset: str, conditions_present: Sequence[str]) ->
 
 
 def scalar_family_id(dataset: str, metric: str, comparison: Comparison, all_pairwise: bool) -> str:
+    """Return scalar family id for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        metric (str): Text value specifying metric.
+        comparison (Comparison): Value specifying comparison for the operation.
+        all_pairwise (bool): Boolean flag controlling all pairwise.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = scalar_family_id(
+        ...     dataset="2d_time",
+        ...     metric="metric",
+        ...     comparison=...,
+        ...     all_pairwise=True,
+        ... )
+    """
     if all_pairwise:
         return f"all_pairwise::{metric}"
     if dataset == "3d_mip":
@@ -470,6 +675,31 @@ def result_to_row(
     correction: str,
     alpha: float,
 ) -> dict[str, object]:
+    """Return result to row for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        metric (str): Text value specifying metric.
+        comparison (Comparison): Value specifying comparison for the operation.
+        result (WelchResult): Value specifying result for the operation.
+        family_id (str): Text value specifying family id.
+        correction (str): Text value specifying correction.
+        alpha (float): Opacity coefficient used when blending image layers.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = result_to_row(
+        ...     dataset="2d_time",
+        ...     metric="metric",
+        ...     comparison=...,
+        ...     result=...,
+        ...     family_id="family_id",
+        ...     correction="correction",
+        ...     alpha=0.5,
+        ... )
+    """
     percentage_difference = (
         100.0 * result.difference_b_minus_a / abs(result.mean_a)
         if np.isfinite(result.mean_a) and abs(result.mean_a) > EPS
@@ -515,6 +745,20 @@ def apply_family_correction(
     correction: str,
     alpha: float,
 ) -> None:
+    """Apply the configured operation to family correction.
+
+    Args:
+        rows (list[dict[str, object]]): Text value specifying rows.
+        correction (str): Text value specifying correction.
+        alpha (float): Opacity coefficient used when blending image layers.
+
+    Example:
+        >>> apply_family_correction(
+        ...     rows="rows",
+        ...     correction="correction",
+        ...     alpha=0.5,
+        ... )
+    """
     families: dict[str, list[int]] = {}
     for index, row in enumerate(rows):
         if row.get("status") != "OK":
@@ -540,6 +784,31 @@ def calculate_scalar_tests(
     min_group_n: int,
     all_pairwise: bool,
 ) -> list[dict[str, object]]:
+    """Calculate scalar tests from the supplied data.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        rows (list[dict[str, str]]): Text value specifying rows.
+        comparisons (Sequence[Comparison]): Value specifying comparisons for the operation.
+        correction (str): Text value specifying correction.
+        alpha (float): Opacity coefficient used when blending image layers.
+        min_group_n (int): Minimum permitted value of group n.
+        all_pairwise (bool): Boolean flag controlling all pairwise.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = calculate_scalar_tests(
+        ...     dataset="2d_time",
+        ...     rows="rows",
+        ...     comparisons=[],
+        ...     correction="correction",
+        ...     alpha=0.5,
+        ...     min_group_n=1,
+        ...     all_pairwise=True,
+        ... )
+    """
     metrics = numeric_metrics(rows)
     output: list[dict[str, object]] = []
     for metric in metrics:
@@ -564,6 +833,17 @@ def calculate_scalar_tests(
 
 
 def read_roi_profiles(path: Path) -> dict[tuple[str, str, str], list[np.ndarray]]:
+    """Read region of interest profiles from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[tuple[str, str, str], list[np.ndarray]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = read_roi_profiles(path=Path("path/to/resource"))
+    """
     store: dict[tuple[str, str, str], list[np.ndarray]] = {}
     with np.load(path) as archive:
         for key in archive.files:
@@ -584,6 +864,25 @@ def collect_profiles(
     channel: str,
     profile_type: str,
 ) -> list[np.ndarray]:
+    """Collect profiles from the available inputs.
+
+    Args:
+        store (dict[tuple[str, str, str], list[np.ndarray]]): Array containing store.
+        conditions (Sequence[str]): Text value specifying conditions.
+        channel (str): Channel index or channel identifier selected for processing.
+        profile_type (str): Text value specifying profile type.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = collect_profiles(
+        ...     store=image_array,
+        ...     conditions="conditions",
+        ...     channel="channel",
+        ...     profile_type="profile_type",
+        ... )
+    """
     profiles: list[np.ndarray] = []
     for condition in conditions:
         profiles.extend(store.get((condition, channel, profile_type), []))
@@ -599,6 +898,34 @@ def calculate_pointwise_profile_tests(
     alpha: float,
     min_group_n: int,
 ) -> list[dict[str, object]]:
+    """Calculate pointwise profile tests from the supplied data.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        store (dict[tuple[str, str, str], list[np.ndarray]]): Array containing store.
+        comparisons (Sequence[Comparison]): Value specifying comparisons for the operation.
+        profile_type (str): Text value specifying profile type.
+        correction (str): Text value specifying correction.
+        alpha (float): Opacity coefficient used when blending image layers.
+        min_group_n (int): Minimum permitted value of group n.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = calculate_pointwise_profile_tests(
+        ...     dataset="2d_time",
+        ...     store=image_array,
+        ...     comparisons=[],
+        ...     profile_type="profile_type",
+        ...     correction="correction",
+        ...     alpha=0.5,
+        ...     min_group_n=1,
+        ... )
+    """
     output: list[dict[str, object]] = []
     for comparison in comparisons:
         for channel in CHANNELS[dataset]:
@@ -693,6 +1020,17 @@ def calculate_pointwise_profile_tests(
 def significant_intervals(
     pointwise_rows: Sequence[dict[str, object]],
 ) -> list[dict[str, object]]:
+    """Return significant intervals for the supplied inputs.
+
+    Args:
+        pointwise_rows (Sequence[dict[str, object]]): Text value specifying pointwise rows.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = significant_intervals(pointwise_rows="pointwise_rows")
+    """
     grouped: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
     for row in pointwise_rows:
         if not bool(row.get("significant_after_correction", False)):
@@ -735,6 +1073,23 @@ def _interval_row(
     rows: Sequence[dict[str, object]],
     direction: str,
 ) -> dict[str, object]:
+    """Return interval row for the supplied inputs.
+
+    Args:
+        key (tuple[str, str, str, str]): Key used to access or identify an entry in a mapping.
+        rows (Sequence[dict[str, object]]): Text value specifying rows.
+        direction (str): Text value specifying direction.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _interval_row(
+        ...     key="key",
+        ...     rows="rows",
+        ...     direction="direction",
+        ... )
+    """
     dataset, profile_type, channel, comparison = key
     differences = np.asarray(
         [safe_float(row.get("difference_b_minus_a")) for row in rows], dtype=float
@@ -763,6 +1118,17 @@ def _interval_row(
 
 
 def _excel_value(value: object) -> object:
+    """Return excel value for the supplied inputs.
+
+    Args:
+        value (object): Value to validate, transform, store, or forward.
+
+    Returns:
+        object: Result produced by the operation.
+
+    Example:
+        >>> result = _excel_value(value=...)
+    """
     if isinstance(value, (np.floating, np.integer, np.bool_)):
         value = value.item()
     if isinstance(value, float) and not np.isfinite(value):
@@ -771,6 +1137,20 @@ def _excel_value(value: object) -> object:
 
 
 def add_sheet_from_rows(workbook: Workbook, title: str, rows: Sequence[dict[str, object]]) -> None:
+    """Add sheet from rows to the current data structure.
+
+    Args:
+        workbook (Workbook): Value specifying workbook for the operation.
+        title (str): Title displayed on the generated figure or report section.
+        rows (Sequence[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> add_sheet_from_rows(
+        ...     workbook=...,
+        ...     title="title",
+        ...     rows="rows",
+        ... )
+    """
     sheet = workbook.create_sheet(title=title[:31])
     if not rows:
         sheet.append(["No results"])
@@ -826,6 +1206,28 @@ def write_workbook(
     intervals: Sequence[dict[str, object]],
     notes: Sequence[dict[str, object]],
 ) -> None:
+    """Write workbook to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        scalar_planned (Sequence[dict[str, object]]): Text value specifying scalar planned.
+        scalar_all_pairs (Sequence[dict[str, object]]): Text value specifying scalar all pairs.
+        axial_rows (Sequence[dict[str, object]]): Text value specifying axial rows.
+        radial_rows (Sequence[dict[str, object]]): Text value specifying radial rows.
+        intervals (Sequence[dict[str, object]]): Text value specifying intervals.
+        notes (Sequence[dict[str, object]]): Text value specifying notes.
+
+    Example:
+        >>> write_workbook(
+        ...     path=Path("path/to/resource"),
+        ...     scalar_planned="scalar_planned",
+        ...     scalar_all_pairs="scalar_all_pairs",
+        ...     axial_rows="axial_rows",
+        ...     radial_rows="radial_rows",
+        ...     intervals="intervals",
+        ...     notes="notes",
+        ... )
+    """
     workbook = Workbook()
     workbook.remove(workbook.active)
     add_sheet_from_rows(workbook, "scalar_planned", scalar_planned)
@@ -839,6 +1241,21 @@ def write_workbook(
 
 
 def validate_full_mode_input(input_root: Path) -> dict[str, object]:
+    """Validate full mode input against the required constraints.
+
+    Args:
+        input_root (Path): Directory used for input.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_full_mode_input(input_root=Path("path/to/resource"))
+    """
     summary_path = input_root / "graph_run_summary.json"
     if not summary_path.exists():
         raise FileNotFoundError(
@@ -856,6 +1273,18 @@ def validate_full_mode_input(input_root: Path) -> dict[str, object]:
 
 
 def prepare_output(path: Path, overwrite: bool) -> None:
+    """Prepare output for downstream processing.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> prepare_output(path=Path("path/to/resource"), overwrite=True)
+    """
     if path.exists() and any(path.iterdir()):
         if not overwrite:
             raise FileExistsError(f"Output directory is not empty: {path}. Use --overwrite.")
@@ -876,6 +1305,41 @@ def process_dataset(
     min_group_n: int,
     overwrite: bool,
 ) -> dict[str, object]:
+    """Process dataset using the configured workflow.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        input_root (Path): Directory used for input.
+        output_root (Path): Directory used for output.
+        scalar_correction (str): Text value specifying scalar correction.
+        profile_correction (str): Text value specifying profile correction.
+        alpha (float): Opacity coefficient used when blending image layers.
+        min_group_n (int): Minimum permitted value of group n.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_dataset(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     input_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     scalar_correction="scalar_correction",
+        ...     profile_correction="profile_correction",
+        ...     alpha=0.5,
+        ...     min_group_n=1,
+        ...     overwrite=True,
+        ... )
+    """
     summary = validate_full_mode_input(input_root)
     roi_summary_path = input_root / "roi_summary.csv"
     roi_profiles_path = input_root / "roi_profiles.npz"
@@ -1020,6 +1484,14 @@ def process_dataset(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Run ROI-level Welch tests for PFT scalar metrics and axial/radial profiles. "
@@ -1062,6 +1534,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     if not 0.0 < args.alpha < 1.0:
         raise ValueError("--alpha must be between 0 and 1")

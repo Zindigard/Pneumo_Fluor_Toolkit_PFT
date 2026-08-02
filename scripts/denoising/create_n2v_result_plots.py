@@ -1,4 +1,4 @@
-"""
+r"""
 Create thesis-ready plots for the two-dimensional Noise2Void evaluation.
 
 The command combines two result sources:
@@ -10,6 +10,18 @@ The command combines two result sources:
 
 Only the 2D time-lapse HADA and 2D WGA-DAPI datasets are included.
 
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/create_n2v_result_plots.py --help
+
+Representative execution:
+
+    python scripts/denoising/create_n2v_result_plots.py \
+        --comparison-csv results/noise_analysis/2d/n2v_raw_pair_comparison.csv \
+        --output-dir results/example_output \
+        --training-only
 """
 
 from __future__ import annotations
@@ -32,7 +44,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def find_project_root() -> Path:
-    """Locate the PFT repository root from the script location."""
+    """Locate the PFT repository root from the script location.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
 
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
@@ -55,13 +77,36 @@ DATASET_LABELS = {
 
 
 def safe_name(value: str) -> str:
-    """Convert a dataset/variant label to a filesystem-safe lowercase name."""
+    """Convert a dataset/variant label to a filesystem-safe lowercase name.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = safe_name(value="value")
+    """
 
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
 def read_numeric_csv(path: Path) -> list[dict[str, str]]:
-    """Read a UTF-8 CSV file and return rows as dictionaries."""
+    """Read a UTF-8 CSV file and return rows as dictionaries.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_numeric_csv(path=Path("path/to/resource"))
+    """
 
     if not path.is_file():
         raise FileNotFoundError(f"Required CSV file not found: {path}")
@@ -70,7 +115,21 @@ def read_numeric_csv(path: Path) -> list[dict[str, str]]:
 
 
 def float_value(row: dict[str, str], key: str) -> float:
-    """Convert one CSV field to a finite float."""
+    """Convert one CSV field to a finite float.
+
+    Args:
+        row (dict[str, str]): Text value specifying row.
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = float_value(row="row", key="key")
+    """
 
     value = float(row[key])
     if not np.isfinite(value):
@@ -84,6 +143,21 @@ def save_training_curve(history_csv: Path, output_dir: Path, model_name: str) ->
     The recorded losses are plotted without smoothing. A logarithmic Y axis is
     used when all displayed losses are positive, which preserves early training
     spikes while making late-stage convergence visible.
+
+    Args:
+        history_csv (Path): Filesystem path used for history CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        model_name (str): Human-readable model name used in output paths and reports.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_training_curve(
+        ...     history_csv=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     model_name="model_name",
+        ... )
     """
 
     from matplotlib.ticker import MaxNLocator
@@ -174,7 +248,17 @@ def save_training_curve(history_csv: Path, output_dir: Path, model_name: str) ->
 
 
 def grouped_comparison_rows(rows: Sequence[dict[str, str]]) -> dict[tuple[str, str], list[dict[str, str]]]:
-    """Group comparison records by 2D dataset and N2V output variant."""
+    """Group comparison records by 2D dataset and N2V output variant.
+
+    Args:
+        rows (Sequence[dict[str, str]]): Text value specifying rows.
+
+    Returns:
+        dict[tuple[str, str], list[dict[str, str]]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = grouped_comparison_rows(rows="rows")
+    """
 
     groups: dict[tuple[str, str], list[dict[str, str]]] = {}
     for row in rows:
@@ -187,7 +271,25 @@ def grouped_comparison_rows(rows: Sequence[dict[str, str]]) -> dict[tuple[str, s
 
 
 def save_paired_snr_plot(rows: Sequence[dict[str, str]], output_dir: Path, dataset: str, variant: str) -> Path:
-    """Plot each sample's raw and N2V SNR as a connected pair."""
+    """Plot each sample's raw and N2V SNR as a connected pair.
+
+    Args:
+        rows (Sequence[dict[str, str]]): Text value specifying rows.
+        output_dir (Path): Directory where generated resources are written.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        variant (str): Text value specifying variant.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_paired_snr_plot(
+        ...     rows="rows",
+        ...     output_dir=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     variant="variant",
+        ... )
+    """
 
     ordered = sorted(rows, key=lambda row: row.get("sample", ""))
     raw = np.asarray([float_value(row, "raw_roi_snr") for row in ordered])
@@ -220,7 +322,31 @@ def save_distribution_plot(
     y_label: str,
     zero_reference: bool,
 ) -> Path:
-    """Create a box-and-point distribution plot for one N2V metric."""
+    """Create a box-and-point distribution plot for one N2V metric.
+
+    Args:
+        values (np.ndarray): Array containing values.
+        output_dir (Path): Directory where generated resources are written.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        variant (str): Text value specifying variant.
+        metric_name (str): Text value specifying metric name.
+        y_label (str): Text value specifying y label.
+        zero_reference (bool): Boolean flag controlling zero reference.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_distribution_plot(
+        ...     values=image_array,
+        ...     output_dir=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     variant="variant",
+        ...     metric_name="metric_name",
+        ...     y_label="y_label",
+        ...     zero_reference=True,
+        ... )
+    """
 
     figure = plt.figure(figsize=(5.5, 5), constrained_layout=True)
     axis = figure.add_subplot(1, 1, 1)
@@ -244,7 +370,18 @@ def save_distribution_plot(
 
 
 def paired_wilcoxon(raw: np.ndarray, denoised: np.ndarray) -> tuple[float | None, float | None, str]:
-    """Return a paired Wilcoxon statistic and p-value when SciPy is available."""
+    """Return a paired Wilcoxon statistic and p-value when SciPy is available.
+
+    Args:
+        raw (np.ndarray): Array containing raw.
+        denoised (np.ndarray): Array containing denoised.
+
+    Returns:
+        tuple[float | None, float | None, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = paired_wilcoxon(raw=image_array, denoised=image_array)
+    """
 
     if len(raw) < 2:
         return None, None, "not calculated: fewer than two pairs"
@@ -259,7 +396,23 @@ def paired_wilcoxon(raw: np.ndarray, denoised: np.ndarray) -> tuple[float | None
 
 
 def descriptive_record(dataset: str, variant: str, rows: Sequence[dict[str, str]]) -> dict[str, Any]:
-    """Calculate descriptive metrics and an optional paired significance test."""
+    """Calculate descriptive metrics and an optional paired significance test.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        variant (str): Text value specifying variant.
+        rows (Sequence[dict[str, str]]): Text value specifying rows.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = descriptive_record(
+        ...     dataset="2d_time",
+        ...     variant="variant",
+        ...     rows="rows",
+        ... )
+    """
 
     raw = np.asarray([float_value(row, "raw_roi_snr") for row in rows], dtype=float)
     denoised = np.asarray([float_value(row, "n2v_roi_snr") for row in rows], dtype=float)
@@ -287,7 +440,23 @@ def descriptive_record(dataset: str, variant: str, rows: Sequence[dict[str, str]
 
 
 def write_summary(records: Sequence[dict[str, Any]], output_dir: Path, figures: Sequence[Path]) -> Path:
-    """Write descriptive statistics and a manifest of generated figure files."""
+    """Write descriptive statistics and a manifest of generated figure files.
+
+    Args:
+        records (Sequence[dict[str, Any]]): Text value specifying records.
+        output_dir (Path): Directory where generated resources are written.
+        figures (Sequence[Path]): Filesystem path used for figures.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = write_summary(
+        ...     records="records",
+        ...     output_dir=Path("path/to/resource"),
+        ...     figures=Path("path/to/resource"),
+        ... )
+    """
 
     csv_path = output_dir / "n2v_thesis_plot_statistics.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -321,7 +490,14 @@ def write_summary(records: Sequence[dict[str, Any]], output_dir: Path, figures: 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create command-line arguments for input CSV and output directory selection."""
+    """Create command-line arguments for input CSV and output directory selection.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
 
     parser = argparse.ArgumentParser(
         description="Create 2D N2V training and raw-versus-denoised result plots for the thesis.",
@@ -351,7 +527,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Create available training curves and all 2D comparison plots."""
+    """Create available training curves and all 2D comparison plots.
+
+    Args:
+        argv (list[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
 
     args = build_parser().parse_args(argv)
     output_dir = args.output_dir.resolve()

@@ -1,3 +1,19 @@
+r"""Provide command-line and programmatic utilities for collect training OME-Zarr.
+
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/collect_training_omezarr.py --help
+
+Collect the 2D time-course OME-Zarr stores using the current repository:
+
+    python scripts/segmentation/collect_training_omezarr.py \
+        --dataset 2d_time \
+        --repo_root .
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +29,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -50,10 +78,19 @@ from pathlib import Path
 """Script to collect OME-Zarr directories from the datasets, rename them, and split into training/validation folders."""
 
 def find_image_omezarr_parents(dataset_root: Path) -> list[Path]:
-    """
-    Returns a list of sample folders that contain an 'image.ome.zarr' directory.
-    Example returned path:
-      
+    """Returns a list of sample folders that contain an 'image.ome.zarr' directory. Example returned path:.
+
+    Args:
+        dataset_root (Path): Directory used for dataset.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_image_omezarr_parents(dataset_root=Path("path/to/resource"))
     """
     if not dataset_root.exists():
         raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
@@ -66,8 +103,22 @@ def find_image_omezarr_parents(dataset_root: Path) -> list[Path]:
 
 
 def move_image_zarr(sample_dir: Path, dst_sample_dir: Path, overwrite: bool) -> None:
-    """
-    Move sample
+    """Move sample.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+        dst_sample_dir (Path): Directory used for dst sample.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> move_image_zarr(
+        ...     sample_dir=Path("path/to/resource"),
+        ...     dst_sample_dir=Path("path/to/resource"),
+        ...     overwrite=True,
+        ... )
     """
     src_zarr = sample_dir / "image.ome.zarr"
     if not src_zarr.is_dir():
@@ -86,6 +137,11 @@ def move_image_zarr(sample_dir: Path, dst_sample_dir: Path, overwrite: bool) -> 
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     ap = argparse.ArgumentParser(
         )
     ap.add_argument("--dataset", choices=["2d_time", "2d_wga_dapi"], required=False)

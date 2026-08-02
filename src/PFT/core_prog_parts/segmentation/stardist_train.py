@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for stardist train."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +18,18 @@ from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 
 
 def _take_first_time(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
-    """Remove time by taking the first frame when present."""
+    """Remove time by taking the first frame when present.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _take_first_time(x=image_array, axes="axes")
+    """
     if "t" not in axes:
         return x, axes
     t_idx = axes.index("t")
@@ -24,12 +37,33 @@ def _take_first_time(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _center_slice_index(length: int) -> int:
-    """Return the center index for one dimension."""
+    """Return the center index for one dimension.
+
+    Args:
+        length (int): Numerical value controlling length.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _center_slice_index(length=1)
+    """
     return max(0, int(length) // 2)
 
 
 def _pick_channels(dataset: str, n_available: int) -> list[int]:
-    """Choose the image channels used for one dataset."""
+    """Choose the image channels used for one dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        n_available (int): Number of available used by the operation.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _pick_channels(dataset="2d_time", n_available=1)
+    """
     ds = normalize_dataset_name(dataset)
     if ds == "2d_wga_dapi":
         return list(range(min(2, n_available)))
@@ -37,13 +71,35 @@ def _pick_channels(dataset: str, n_available: int) -> list[int]:
 
 
 def _load_filtered_image(path: Path) -> tuple[np.ndarray, str]:
-    """Load one filtered OME-Zarr image as a numpy array."""
+    """Load one filtered OME-Zarr image as a numpy array.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _load_filtered_image(path=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(path, level=0, as_numpy=False)
     return np.asarray(arr), str(axes)
 
 
 def _normalize_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.8) -> np.ndarray:
-    """Normalize an image into a stable display and training range."""
+    """Normalize an image into a stable display and training range.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        p_lo (float): Numerical value controlling p lo. Defaults to ``1.0``.
+        p_hi (float): Numerical value controlling p hi. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_percentile(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 2:
         lo = np.percentile(x, p_lo)
@@ -60,7 +116,26 @@ def _normalize_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.8) 
 
 
 def _extract_input_image(path: Path, dataset: str, ndim: int) -> np.ndarray:
-    """Extract a 2D or 3D StarDist-ready image from one OME-Zarr file."""
+    """Extract a 2D or 3D StarDist-ready image from one OME-Zarr file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _extract_input_image(
+        ...     path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     ndim=1,
+        ... )
+    """
     x, axes = _load_filtered_image(path)
     x, axes = _take_first_time(x, axes)
 
@@ -98,7 +173,17 @@ def _extract_input_image(path: Path, dataset: str, ndim: int) -> np.ndarray:
 
 
 def _mask_candidates(sample_dir: Path):
-    """Yield likely mask files for one sample folder."""
+    """Yield likely mask files for one sample folder.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _mask_candidates(sample_dir=Path("path/to/resource"))
+    """
     names = ["mask.tif", "mask.tiff", "masks.tif", "masks.tiff", "labels.tif", "labels.tiff"]
     for name in names:
         p = sample_dir / name
@@ -110,7 +195,21 @@ def _mask_candidates(sample_dir: Path):
 
 
 def _load_label_mask(path: Path, ndim: int) -> np.ndarray:
-    """Load one integer label mask from disk."""
+    """Load one integer label mask from disk.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_label_mask(path=Path("path/to/resource"), ndim=1)
+    """
     x = np.asarray(tiff.imread(path))
     if ndim == 2:
         if x.ndim == 3:
@@ -124,7 +223,26 @@ def _load_label_mask(path: Path, ndim: int) -> np.ndarray:
 
 
 def _resolve_filtered_zarr(project_root: Path, dataset: str, sample: str) -> Path:
-    """Find the filtered OME-Zarr file for one sample."""
+    """Find the filtered OME-Zarr file for one sample.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _resolve_filtered_zarr(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     ds = normalize_dataset_name(dataset)
     candidates = [
         filtered_img_root(project_root) / ds / sample / "image.ome.zarr",
@@ -139,13 +257,49 @@ def _resolve_filtered_zarr(project_root: Path, dataset: str, sample: str) -> Pat
 
 
 def _segmentation_masks_root(project_root: Path, ndim: int, dataset: str) -> Path:
-    """Return the segmentation mask folder for one dataset."""
+    """Return the segmentation mask folder for one dataset.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        ndim (int): Numerical value controlling ndim.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _segmentation_masks_root(
+        ...     project_root=Path("path/to/resource"),
+        ...     ndim=1,
+        ...     dataset="2d_time",
+        ... )
+    """
     dim_dir = "2d" if ndim == 2 else "3d"
     return project_root / "results" / "segmentation_masks" / dim_dir / normalize_dataset_name(dataset)
 
 
 def load_training_data(project_root: Path, dataset: str, ndim: int):
-    """Load normalized images, integer labels, and sample names for StarDist."""
+    """Load normalized images, integer labels, and sample names for StarDist.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_training_data(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     ndim=1,
+        ... )
+    """
     mask_root = _segmentation_masks_root(project_root, ndim, dataset)
     if not mask_root.exists():
         raise FileNotFoundError(f"Mask folder does not exist: {mask_root}")
@@ -189,7 +343,15 @@ class StarDistTrainConfig:
     use_gpu: bool = True
 
     def run_dir(self) -> Path:
-        """Build the output folder for one training run."""
+        """Build the output folder for one training run.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = StarDistTrainConfig(...)
+            >>> result = instance.run_dir()
+        """
         name = self.model_name or f"stardist_{self.ndim}d_{self.dataset}"
         out = self.project_root / "models" / name
         out.mkdir(parents=True, exist_ok=True)
@@ -197,7 +359,27 @@ class StarDistTrainConfig:
 
 
 def split_train_val(X, Y, names, train_fraction: float, seed: int):
-    """Split loaded samples into training and validation sets."""
+    """Split loaded samples into training and validation sets.
+
+    Args:
+        X (Any): Value specifying x for the operation.
+        Y (Any): Value specifying y for the operation.
+        names (Any): Value specifying names for the operation.
+        train_fraction (float): Fractional value controlling train.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = split_train_val(
+        ...     X=...,
+        ...     Y=...,
+        ...     names=...,
+        ...     train_fraction=0.5,
+        ...     seed=1,
+        ... )
+    """
     idx = list(range(len(X)))
     rnd = random.Random(seed)
     rnd.shuffle(idx)
@@ -221,7 +403,17 @@ def split_train_val(X, Y, names, train_fraction: float, seed: int):
 
 
 def train_stardist_model(cfg: StarDistTrainConfig) -> Path:
-    """Train or fine-tune a 2D or 3D StarDist model and save it to disk."""
+    """Train or fine-tune a 2D or 3D StarDist model and save it to disk.
+
+    Args:
+        cfg (StarDistTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = train_stardist_model(cfg=config)
+    """
     X, Y, names = load_training_data(cfg.project_root, cfg.dataset, cfg.ndim)
     (train_X, train_Y, train_names), (val_X, val_Y, val_names) = split_train_val(
         X, Y, names, cfg.train_fraction, cfg.seed
@@ -281,7 +473,14 @@ def train_stardist_model(cfg: StarDistTrainConfig) -> Path:
 
 
 def parse_args() -> StarDistTrainConfig:
-    """Read command line settings for StarDist training."""
+    """Read command line settings for StarDist training.
+
+    Returns:
+        StarDistTrainConfig: Result produced by the operation.
+
+    Example:
+        >>> result = parse_args()
+    """
     project_root = find_project_root()
     p = argparse.ArgumentParser(description="Train or fine-tune StarDist on filtered OME-Zarr images.")
     p.add_argument("--dataset", default="2d_time")
@@ -315,7 +514,11 @@ def parse_args() -> StarDistTrainConfig:
 
 
 def main() -> None:
-    """Run StarDist training from the terminal."""
+    """Run StarDist training from the terminal.
+
+    Example:
+        >>> exit_code = main()
+    """
     cfg = parse_args()
     out_dir = train_stardist_model(cfg)
     print(f"Saved StarDist training outputs to: {out_dir}")

@@ -49,12 +49,35 @@ _SKIP_DIRECTORY_NAMES = {
 
 
 def _normalized_name(value: str) -> str:
-    """Normalize a folder name to lowercase alphanumeric characters for robust alias matching."""
+    """Normalize a folder name to lowercase alphanumeric characters for robust alias matching.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _normalized_name(value="value")
+    """
     return "".join(ch.lower() for ch in value if ch.isalnum())
 
 
 def dataset_folder_aliases(dataset: str) -> tuple[str, ...]:
-    """Return accepted folder-name aliases for a canonical PFT dataset identifier."""
+    """Return accepted folder-name aliases for a canonical PFT dataset identifier.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[str, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = dataset_folder_aliases(dataset="2d_time")
+    """
     try:
         return DATASET_FOLDER_NAMES[dataset]
     except KeyError as exc:
@@ -62,14 +85,34 @@ def dataset_folder_aliases(dataset: str) -> tuple[str, ...]:
 
 
 def _is_czi_file(path: Path) -> bool:
-    """Return whether a path is a regular file with a case-insensitive ``.czi`` suffix."""
+    """Return whether a path is a regular file with a case-insensitive ``.czi`` suffix.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_czi_file(path=Path("path/to/resource"))
+    """
     return path.is_file() and path.suffix.lower() == ".czi"
 
 
 def contains_czi(folder: str | Path, *, recursive: bool = True) -> bool:
     """Determine whether a folder contains at least one CZI file.
-    
+
     Recursive searches skip repository, environment, cache, and results folders.
+
+    Args:
+        folder (str | Path): Filesystem path used for folder.
+        recursive (bool): Boolean flag controlling recursive. Defaults to ``True``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = contains_czi(folder="folder")
     """
     folder = Path(folder).expanduser()
     if not folder.is_dir():
@@ -86,16 +129,37 @@ def contains_czi(folder: str | Path, *, recursive: bool = True) -> bool:
 
 
 def _name_matches_dataset(folder: Path, dataset: str) -> bool:
-    """Return whether a directory name matches one of the aliases for a dataset."""
+    """Return whether a directory name matches one of the aliases for a dataset.
+
+    Args:
+        folder (Path): Filesystem path used for folder.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _name_matches_dataset(folder=Path("path/to/resource"), dataset="2d_time")
+    """
     aliases = {_normalized_name(name) for name in dataset_folder_aliases(dataset)}
     return _normalized_name(folder.name) in aliases
 
 
 def is_dataset_directory(folder: str | Path, dataset: str) -> bool:
     """Determine whether a directory can serve directly as a dataset root.
-    
+
     A non-standard directory is accepted when it contains CZI files directly. A
     recognized dataset directory may contain CZI files in nested experiment folders.
+
+    Args:
+        folder (str | Path): Filesystem path used for folder.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_dataset_directory(folder="folder", dataset="2d_time")
     """
     folder = Path(folder).expanduser()
     if not folder.is_dir():
@@ -111,8 +175,22 @@ def is_dataset_directory(folder: str | Path, dataset: str) -> bool:
 
 def find_dataset_directories(search_root: str | Path, dataset: str) -> list[Path]:
     """Search recursively for recognized dataset directories containing CZI files.
-    
+
     Returns unique absolute paths in deterministic order.
+
+    Args:
+        search_root (str | Path): Directory used for search.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        NotADirectoryError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_dataset_directories(search_root=Path("path/to/resource"), dataset="2d_time")
     """
     root = Path(search_root).expanduser()
     if not root.exists():
@@ -124,7 +202,14 @@ def find_dataset_directories(search_root: str | Path, dataset: str) -> list[Path
     candidates: list[Path] = []
 
     def consider(path: Path) -> None:
-        """Add a directory to the local candidate list when its name and contents match the dataset."""
+        """Add a directory to the local candidate list when its name and contents match the dataset.
+
+        Args:
+            path (Path): Filesystem path to the required input or output resource.
+
+        Example:
+            >>> consider(path=Path("path/to/resource"))
+        """
         if _normalized_name(path.name) in aliases and contains_czi(path, recursive=True):
             candidates.append(path.resolve())
 
@@ -143,7 +228,21 @@ def find_dataset_directories(search_root: str | Path, dataset: str) -> list[Path
 
 
 def choose_path_from_terminal(paths: Iterable[Path], *, prompt: str) -> Path:
-    """Present candidate paths in the terminal and return the selected path."""
+    """Present candidate paths in the terminal and return the selected path.
+
+    Args:
+        paths (Iterable[Path]): Filesystem path used for paths.
+        prompt (str): Text value specifying prompt.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_path_from_terminal(paths=Path("path/to/resource"), prompt="prompt")
+    """
     items = list(paths)
     if not items:
         raise ValueError("No paths were supplied for selection.")
@@ -162,8 +261,17 @@ def choose_path_from_terminal(paths: Iterable[Path], *, prompt: str) -> Path:
 
 def select_directory_dialog(title: str) -> Path | None:
     """Open a native folder-selection dialog and return the selected path.
-    
+
     Returns ``None`` when Tk is unavailable, the dialog fails, or selection is cancelled.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = select_directory_dialog(title="title")
     """
     try:
         import tkinter as tk
@@ -183,7 +291,22 @@ def select_directory_dialog(title: str) -> Path | None:
 
 
 def _request_search_root(dataset: str) -> Path:
-    """Request a dataset directory or parent search root interactively."""
+    """Request a dataset directory or parent search root interactively.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        NotADirectoryError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _request_search_root(dataset="2d_time")
+    """
     print("\nThe configured raw-data location could not be used.")
     print("Choose how to provide the raw-data location:")
     print("  [0] Select a folder in a file dialog")
@@ -221,9 +344,25 @@ def resolve_dataset_directory(
     interactive: bool = True,
 ) -> Path:
     """Resolve the raw-data directory for a selected dataset.
-    
+
     Resolution proceeds through a preferred path, an optional search root, and
     interactive selection. The returned path always contains discoverable CZI data.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        preferred (str | Path | None): Filesystem path used for preferred. ``None`` selects the function's default behavior.
+        search_root (str | Path | None): Directory used for search. ``None`` selects the function's default behavior.
+        interactive (bool): Boolean flag controlling interactive. Defaults to ``True``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_dataset_directory(dataset="2d_time")
     """
     if dataset not in DATASET_FOLDER_NAMES:
         raise ValueError(f"Unknown dataset: {dataset!r}")
@@ -291,9 +430,21 @@ def resolve_dataset_directory(
 
 def group_czi_files_by_relative_parent(base_folder: str | Path) -> dict[str, list[Path]]:
     """Group recursively discovered CZI files by parent directory relative to a base folder.
-    
+
     The dictionary keys are portable forward-slash experiment paths and the values
     are sorted lists of source CZI files.
+
+    Args:
+        base_folder (str | Path): Filesystem path used for base folder.
+
+    Returns:
+        dict[str, list[Path]]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = group_czi_files_by_relative_parent(base_folder="base_folder")
     """
     base = Path(base_folder).expanduser().resolve()
     if not base.is_dir():
@@ -317,5 +468,12 @@ def group_czi_files_by_relative_parent(base_folder: str | Path) -> dict[str, lis
 
 
 def stdin_is_interactive() -> bool:
-    """Return whether standard input supports interactive terminal prompts."""
+    """Return whether standard input supports interactive terminal prompts.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = stdin_is_interactive()
+    """
     return bool(getattr(sys.stdin, "isatty", lambda: False)())

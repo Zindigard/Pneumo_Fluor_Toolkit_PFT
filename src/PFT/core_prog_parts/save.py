@@ -25,12 +25,30 @@ from PFT.core_prog_parts import visualization as visualize_2d
 
 def safe_axes_label(meta: CziMeta) -> str:
     # Store header axes string.
-    """Return the original CZI axis string or ``unknown`` when it is unavailable."""
+    """Return the original CZI axis string or ``unknown`` when it is unavailable.
+
+    Args:
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = safe_axes_label(meta=...)
+    """
     return meta.axes if isinstance(meta.axes, str) and meta.axes else "unknown"
 
 
 def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
-    """Write a human-readable metadata dump and the complete raw CZI XML sidecar."""
+    """Write a human-readable metadata dump and the complete raw CZI XML sidecar.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Example:
+        >>> write_metadata_txt_xml(out_dir=Path("path/to/resource"), meta=...)
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     txt = "\n".join(
@@ -51,7 +69,17 @@ def write_metadata_txt_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
-    """Create a raw-look blue RGB projection for a time-series image."""
+    """Create a raw-look blue RGB projection for a time-series image.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _rgb01_time_raw(arr=image_array)
+    """
     img2d = visualize_2d.max_project_to_2d(arr)
     b = linear01(img2d, dtype_max(arr))
     z = np.zeros_like(b)
@@ -59,12 +87,32 @@ def _rgb01_time_raw(arr: np.ndarray) -> np.ndarray:
 
 
 def _rgb01_time_norm(arr: np.ndarray) -> np.ndarray:
-    """Create a normalized blue RGB projection for a time-series image."""
+    """Create a normalized blue RGB projection for a time-series image.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _rgb01_time_norm(arr=image_array)
+    """
     return visualize_2d.rgb_time_hada_blue(arr)
 
 
 def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
-    """Create a linearly scaled RGB projection with DAPI in blue and WGA in green."""
+    """Create a linearly scaled RGB projection with DAPI in blue and WGA in green.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _rgb01_wga_dapi_raw(arr=image_array)
+    """
     ch_ax = visualize_2d.find_channel_axis(arr)
     blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
     green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
@@ -76,7 +124,17 @@ def _rgb01_wga_dapi_raw(arr: np.ndarray) -> np.ndarray:
 
 
 def _rgb01_wga_dapi_norm(arr: np.ndarray) -> np.ndarray:
-    """Create a percentile-normalized RGB projection with DAPI in blue and WGA in green."""
+    """Create a percentile-normalized RGB projection with DAPI in blue and WGA in green.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _rgb01_wga_dapi_norm(arr=image_array)
+    """
     ch_ax = visualize_2d.find_channel_axis(arr)
     blue = visualize_2d.get_channel_2d(arr, 0, ch_ax)   # ch0
     green = visualize_2d.get_channel_2d(arr, 1, ch_ax)  # ch1
@@ -104,6 +162,26 @@ def save_normalized_tiffs_and_previews(
     ``preview_raw.png`` provides a linear raw-look display and
     ``preview_norm.png`` provides the normalized display. The original raw array
     is not duplicated as TIFF because it is stored losslessly in OME-Zarr.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        out_dir (Path): Directory used for out.
+        preview_mode (str): Text value specifying preview mode.
+        title (str): Title displayed on the generated figure or report section.
+        meta (CziMeta): Value specifying meta for the operation.
+        scalebar_um (float): Numerical value controlling scalebar um.
+        save_preview_png (bool): Boolean flag controlling save preview PNG image.
+
+    Example:
+        >>> save_normalized_tiffs_and_previews(
+        ...     arr=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     preview_mode="preview_mode",
+        ...     title="title",
+        ...     meta=...,
+        ...     scalebar_um=0.5,
+        ...     save_preview_png=True,
+        ... )
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,9 +240,35 @@ def export_2d(
     validate_omezarr: bool = True,
 ) -> Path:
     """Export one 2D sample with metadata, TIFF images, previews, and OME-Zarr.
-    
+
     When validation is active, exact pixel and metadata preservation is checked
     automatically. The function returns the created sample output directory.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+        dataset_name (str): Text value specifying dataset name.
+        preview_mode (str): Text value specifying preview mode.
+        out_base (Path | None): Filesystem path used for out base. ``None`` selects the function's default behavior.
+        visualize (bool): Boolean flag controlling visualize. Defaults to ``False``.
+        save_preview_png (bool): Boolean flag controlling save preview PNG image. Defaults to ``True``.
+        scalebar_um (float): Numerical value controlling scalebar um. Defaults to ``5.0``.
+        wga_ch (int): Numerical value controlling wga ch. Defaults to ``0``.
+        dapi_ch (int): Numerical value controlling dapi ch. Defaults to ``1``.
+        save_omezarr (bool): Boolean flag controlling save OME-Zarr. Defaults to ``True``.
+        overwrite_omezarr (bool): Boolean flag controlling overwrite OME-Zarr. Defaults to ``True``.
+        validate_omezarr (bool): Boolean flag controlling validate OME-Zarr. Defaults to ``True``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = export_2d(
+        ...     arr=image_array,
+        ...     meta=...,
+        ...     dataset_name="dataset_name",
+        ...     preview_mode="preview_mode",
+        ... )
     """
     if out_base is None:
         out_base = results_img_dir()
@@ -224,7 +328,19 @@ def export_2d(
 
 
 def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | None = None) -> Path:
-    """Create a 3D sample output directory and write metadata sidecars without image export."""
+    """Create a 3D sample output directory and write metadata sidecars without image export.
+
+    Args:
+        meta (CziMeta): Value specifying meta for the operation.
+        dataset_name (str): Text value specifying dataset name.
+        out_base (Path | None): Filesystem path used for out base. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = export_3d_metadata_only(meta=..., dataset_name="dataset_name")
+    """
     if out_base is None:
         out_base = results_img_dir()
 
@@ -237,7 +353,17 @@ def export_3d_metadata_only(meta: CziMeta, dataset_name: str, out_base: Path | N
 
 
 def fmt(v: object) -> str:
-    """Format optional metadata values for reports, using ``-`` for missing or empty values."""
+    """Format optional metadata values for reports, using ``-`` for missing or empty values.
+
+    Args:
+        v (object): Value specifying v for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = fmt(v=...)
+    """
     if v is None:
         return "-"
     s = str(v).strip()
@@ -245,7 +371,15 @@ def fmt(v: object) -> str:
 
 
 def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
-    """Write the complete raw CZI XML to ``metadata_full.xml`` or an absence marker."""
+    """Write the complete raw CZI XML to ``metadata_full.xml`` or an absence marker.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Example:
+        >>> write_metadata_full_xml(out_dir=Path("path/to/resource"), meta=...)
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_xml = getattr(meta, "raw_xml", None)
     if not (isinstance(raw_xml, str) and raw_xml.strip()):
@@ -258,7 +392,15 @@ def write_metadata_full_xml(out_dir: Path, meta: CziMeta) -> None:
 
 
 def write_3d_metadata_report_txt(out_dir: Path, meta: CziMeta) -> None:
-    """Write a structured 3D metadata report covering sampling, optics, channels, and SIM settings."""
+    """Write a structured 3D metadata report covering sampling, optics, channels, and SIM settings.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Example:
+        >>> write_3d_metadata_report_txt(out_dir=Path("path/to/resource"), meta=...)
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     vox = (
@@ -355,9 +497,30 @@ def export_3d(
     pyramid_downscale: int = 2,
 ) -> Path:
     """Export one 3D sample as OME-Zarr with metadata reports and optional multiscale pyramid.
-    
+
     Automatic validation checks the generated image before the export is reported
     as successful. The function returns the sample output directory.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+        dataset_folder (str): Text value specifying dataset folder.
+        out_base (Path | None): Filesystem path used for out base. ``None`` selects the function's default behavior.
+        save_omezarr (bool): Boolean flag controlling save OME-Zarr. Defaults to ``True``.
+        overwrite_omezarr (bool): Boolean flag controlling overwrite OME-Zarr. Defaults to ``True``.
+        validate_omezarr (bool): Boolean flag controlling validate OME-Zarr. Defaults to ``True``.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        pyramid_downscale (int): Numerical value controlling pyramid downscale. Defaults to ``2``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = export_3d(
+        ...     arr=image_array,
+        ...     meta=...,
+        ...     dataset_folder="dataset_folder",
+        ... )
     """
     if out_base is None:
         out_base = results_img_dir()

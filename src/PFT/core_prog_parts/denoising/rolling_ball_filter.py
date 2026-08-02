@@ -24,7 +24,15 @@ class RollingBallParams:
     radius: int = 50
 
     def validate(self) -> None:
-        """Raise ``ValueError`` if the radius cannot define a background scale."""
+        """Raise ``ValueError`` if the radius cannot define a background scale.
+
+        Raises:
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = RollingBallParams(...)
+            >>> instance.validate()
+        """
         if self.radius < 1:
             raise ValueError("Rolling-ball radius must be >= 1 pixel")
 
@@ -37,11 +45,20 @@ def apply_rolling_ball_2d(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Estimate and subtract a smooth background from one 2D image.
 
-    Returns
-    -------
-    corrected, background:
-        Two ``float32`` arrays with the same shape as the input. Negative values
-        after subtraction are clipped to zero.
+    Args:
+        image (np.ndarray): Input image array to process.
+        params (RollingBallParams | None): Value specifying params for the operation. ``None`` selects the function's default behavior.
+        radius (int | None): Radius of the local neighborhood or morphological structuring element. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_rolling_ball_2d(image=image_array)
     """
     if _skimage_rolling_ball is None:
         raise RuntimeError(

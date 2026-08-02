@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for run principal-component analysis result mask terminal.
+
+Examples
+--------
+Launch the interactive PCA-mask workflow:
+
+    python scripts/statistics/run_pca_mask_terminal.py
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +22,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -58,6 +79,19 @@ from PFT.core_prog_parts.statistics.pca_maskt_core import (
 
 
 def ask_choice(title: str, options: list[str], default: int = 0) -> str:
+    """Return ask choice for the supplied inputs.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        options (list[str]): Text value specifying options.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = ask_choice(title="title", options="options")
+    """
     print(f"\n{title}")
     for index, option in enumerate(options, start=1):
         suffix = " (default)" if index - 1 == default else ""
@@ -79,6 +113,18 @@ def ask_choice(title: str, options: list[str], default: int = 0) -> str:
 
 
 def ask_yes_no(text: str, default: bool = True) -> bool:
+    """Return ask yes no for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+        default (bool): Boolean flag controlling default. Defaults to ``True``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = ask_yes_no(text="text")
+    """
     suffix = "Y/n" if default else "y/N"
     while True:
         value = input(f"{text} [{suffix}]: ").strip().lower()
@@ -92,6 +138,19 @@ def ask_yes_no(text: str, default: bool = True) -> bool:
 
 
 def ask_int(text: str, default: int, minimum: int | None = None) -> int:
+    """Return ask int for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+        default (int): Numerical value controlling default.
+        minimum (int | None): Numerical value controlling minimum. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = ask_int(text="text", default=1)
+    """
     while True:
         value = input(f"{text} [{default}]: ").strip()
         try:
@@ -106,6 +165,19 @@ def ask_int(text: str, default: int, minimum: int | None = None) -> int:
 
 
 def ask_float(text: str, default: float, minimum: float | None = None) -> float:
+    """Return ask float for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+        default (float): Numerical value controlling default.
+        minimum (float | None): Numerical value controlling minimum. ``None`` selects the function's default behavior.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = ask_float(text="text", default=0.5)
+    """
     while True:
         value = input(f"{text} [{default}]: ").strip()
         try:
@@ -120,6 +192,18 @@ def ask_float(text: str, default: float, minimum: float | None = None) -> float:
 
 
 def ask_folder_name(text: str, default: str) -> str:
+    """Return ask folder name for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+        default (str): Text value specifying default.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = ask_folder_name(text="text", default="default")
+    """
     while True:
         value = input(f"{text} [{default}]: ").strip() or default
         path = Path(value)
@@ -129,6 +213,14 @@ def ask_folder_name(text: str, default: str) -> str:
 
 
 def detect_project_root() -> Path:
+    """Return detect project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = detect_project_root()
+    """
     try:
         detected = find_project_root(Path(__file__).resolve())
     except TypeError:
@@ -147,6 +239,14 @@ def detect_project_root() -> Path:
 
 
 def choose_method() -> str:
+    """Choose method according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_method()
+    """
     displayed = ask_choice(
         "Choose segmentation method:",
         ["Cellpose", "Omnipose", "StarDist"],
@@ -156,6 +256,14 @@ def choose_method() -> str:
 
 
 def choose_dataset() -> str:
+    """Choose dataset according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_dataset()
+    """
     displayed = ask_choice(
         "Choose dataset:",
         ["2d_time", "2d_wga_dapi", "3d"],
@@ -169,6 +277,23 @@ def choose_prediction_run(
     method: str,
     dataset: str,
 ) -> Path:
+    """Choose prediction run according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        method (str): Text value specifying method.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = choose_prediction_run(
+        ...     project_root=Path("path/to/resource"),
+        ...     method="method",
+        ...     dataset="2d_time",
+        ... )
+    """
     runs = discover_prediction_runs(project_root, method, dataset)
 
     if runs:
@@ -208,6 +333,20 @@ def choose_prediction_run(
 
 
 def choose_samples(prediction_run_dir: Path) -> tuple[str, ...] | None:
+    """Choose samples according to the configured criteria.
+
+    Args:
+        prediction_run_dir (Path): Directory used for prediction run.
+
+    Returns:
+        tuple[str, ...] | None: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_samples(prediction_run_dir=Path("path/to/resource"))
+    """
     samples = list_mask_samples(prediction_run_dir)
     if not samples:
         raise RuntimeError(f"No mask samples found in {prediction_run_dir}")
@@ -247,6 +386,14 @@ def choose_samples(prediction_run_dir: Path) -> tuple[str, ...] | None:
 
 
 def build_config_interactive() -> PCAMaskAlignmentConfig:
+    """Build config interactive from the supplied inputs.
+
+    Returns:
+        PCAMaskAlignmentConfig: Result produced by the operation.
+
+    Example:
+        >>> result = build_config_interactive()
+    """
     project_root = detect_project_root()
 
     # Required order: segmentation method first, then dataset.
@@ -360,6 +507,14 @@ def build_config_interactive() -> PCAMaskAlignmentConfig:
 
 
 def print_config(cfg: PCAMaskAlignmentConfig) -> None:
+    """Print config in a readable format.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Example:
+        >>> print_config(cfg=config)
+    """
     selected = "all" if cfg.sample_names is None else ", ".join(cfg.sample_names)
     print("\n=== PCA MASK ALIGNMENT CONFIGURATION ===")
     print(f"Project root:          {cfg.project_root}")
@@ -383,6 +538,17 @@ def print_config(cfg: PCAMaskAlignmentConfig) -> None:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     cfg = build_config_interactive()
     print_config(cfg)
     if not ask_yes_no("Run PCA alignment with these settings?", True):

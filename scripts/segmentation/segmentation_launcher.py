@@ -1,9 +1,15 @@
-"""Interactive launcher for the validated PFT instance-segmentation workflow.
+r"""Interactive launcher for the validated PFT instance-segmentation workflow.
 
 The launcher deliberately calls the documented terminal scripts as separate
 processes. This keeps preparation, validation, labeling, prediction, training,
 and parameter tuning reproducible and prevents the legacy runners from
 normalizing sparse U-Net outputs again.
+
+Examples
+--------
+Launch the interactive workflow menu:
+
+    python scripts/segmentation/segmentation_launcher.py
 """
 
 from __future__ import annotations
@@ -27,6 +33,17 @@ ACTIONS: tuple[tuple[str, str], ...] = (
 
 
 def _choose_action() -> tuple[str, str]:
+    """Choose action according to the configured criteria.
+
+    Returns:
+        tuple[str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose_action()
+    """
     print("\nPFT instance-segmentation workflow")
     print("=" * 72)
     for index, (label, _script) in enumerate(ACTIONS, start=1):
@@ -48,6 +65,17 @@ def _choose_action() -> tuple[str, str]:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     label, script_name = _choose_action()
     script_path = SCRIPT_DIR / script_name
     if not script_path.is_file():

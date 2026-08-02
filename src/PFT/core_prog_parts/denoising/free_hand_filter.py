@@ -38,7 +38,21 @@ class FreehandMaskParams:
 
 
 def apply_freehand_filter_2d(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
-    """Apply a supplied Fourier keep mask to one 2D image plane."""
+    """Apply a supplied Fourier keep mask to one 2D image plane.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        mask_keep (np.ndarray): Array containing mask keep.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_freehand_filter_2d(img2d=image_array, mask_keep=image_array)
+    """
     x = np.asarray(img2d, dtype=np.float32)
     if x.ndim != 2:
         raise ValueError(f"Expected a 2D image plane, received shape={x.shape}")
@@ -61,12 +75,30 @@ def apply_freehand_filter_2d(img2d: np.ndarray, mask_keep: np.ndarray) -> np.nda
 
 
 def _apply_mask_one_plane(img2d: np.ndarray, mask_keep: np.ndarray) -> np.ndarray:
-    """Backward-compatible wrapper for ``apply_freehand_filter_2d``."""
+    """Backward-compatible wrapper for ``apply_freehand_filter_2d``.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        mask_keep (np.ndarray): Array containing mask keep.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _apply_mask_one_plane(img2d=image_array, mask_keep=image_array)
+    """
     return apply_freehand_filter_2d(img2d, mask_keep)
 
 
 def results_filters_dir() -> Path:
-    """Return the common directory used for optional filter outputs."""
+    """Return the common directory used for optional filter outputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = results_filters_dir()
+    """
     return _repo_root() / "results" / "Filters"
 
 
@@ -84,6 +116,28 @@ def run_freehand_on_dataset(
     Channel selection is dataset-aware: ``2d_time`` uses its blue channel and
     ``2d_wga_dapi`` can process blue and green. ``apply=False`` preserves the
     input values. The function returns the created output directory.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (FreehandMaskParams): Value specifying params for the operation.
+        apply (bool): Boolean flag controlling apply.
+        channel_mode (Literal["auto", "blue", "green"]): Value specifying channel mode for the operation. Defaults to ``"auto"``.
+        image_index (int | None): Zero-based index selecting image. ``None`` selects the function's default behavior.
+        out_subdir_name (str | None): Text value specifying out subdir name. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_freehand_on_dataset(
+        ...     dataset="2d_time",
+        ...     params=...,
+        ...     apply=True,
+        ... )
     """
     zarrs = list_omezarr_images(dataset)
     if not zarrs:
@@ -109,7 +163,14 @@ def run_freehand_on_dataset(
         n_c = 1
 
     def _pick_channels() -> list[int]:
-        """Internal helper used by this module."""
+        """Internal helper used by this module.
+
+        Returns:
+            list[int]: Collection containing the generated or selected values.
+
+        Example:
+            >>> result = _pick_channels()
+        """
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":

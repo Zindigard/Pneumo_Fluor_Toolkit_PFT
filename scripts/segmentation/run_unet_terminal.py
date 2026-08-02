@@ -1,9 +1,35 @@
-"""Run 2D U-Net inference and save a non-normalized enhanced OME-Zarr.
+r"""Run 2D U-Net inference and save a non-normalized enhanced OME-Zarr.
 
 The predicted mask is applied to the original filtered image, not to the
 normalized network tensor. By default, pixels outside the mask are depleted by
 98% and retain 2% of their original intensity. The saved OME-Zarr is then
 reloaded for ROI-SNR calculation.
+
+Examples
+--------
+Interactive selection:
+
+    python scripts/segmentation/run_unet_terminal.py
+
+Run one 2D sample non-interactively:
+
+    python scripts/segmentation/run_unet_terminal.py \
+        --dataset 2d_time \
+        --mode one \
+        --input results/img/2d_time/WT_HADA_NHS_40min_ROI1_SIM/image.ome.zarr \
+        --level 0 \
+        --patch 256 \
+        --threshold 0.5 \
+        --outside-mask-depletion 0.98 \
+        --non-interactive
+
+Process every sample in a dataset:
+
+    python scripts/segmentation/run_unet_terminal.py \
+        --dataset 2d_wga_dapi \
+        --mode all \
+        --outside-mask-depletion 0.98 \
+        --non-interactive
 """
 
 from __future__ import annotations
@@ -17,6 +43,17 @@ _SCRIPT = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (_SCRIPT.parent, *_SCRIPT.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -41,6 +78,14 @@ from PFT.core_prog_parts.segmentation.unet_train_2d_time_core import DATASETS_2D
 
 
 def _choose_dataset() -> str:
+    """Choose dataset according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_dataset()
+    """
     print("\nChoose 2D U-Net model:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
@@ -48,6 +93,14 @@ def _choose_dataset() -> str:
 
 
 def _choose_mode() -> str:
+    """Choose mode according to the configured criteria.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _choose_mode()
+    """
     print("\nChoose inference mode:")
     print("  1) one sample")
     print("  2) selected samples")
@@ -61,6 +114,22 @@ def _choose_mode() -> str:
 
 
 def _choose_indices(paths: list[Path], multiple: bool) -> list[Path]:
+    """Choose indices according to the configured criteria.
+
+    Args:
+        paths (list[Path]): Filesystem path used for paths.
+        multiple (bool): Boolean flag controlling multiple.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose_indices(paths=Path("path/to/resource"), multiple=True)
+    """
     for index, path in enumerate(paths):
         print(f"  [{index}] {path.parent.name} | {path}")
     prompt = "Enter comma-separated indices: " if multiple else "Enter index: "
@@ -77,6 +146,20 @@ def _choose_indices(paths: list[Path], multiple: bool) -> list[Path]:
 
 
 def _normalize_input_path(path: Path) -> Path:
+    """Normalize input path using the configured procedure.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_input_path(path=Path("path/to/resource"))
+    """
     path = Path(path)
     if path.name == "image.ome.zarr" and path.is_dir():
         return path
@@ -89,6 +172,14 @@ def _normalize_input_path(path: Path) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Run 2D U-Net foreground inference and calculate IoU and ROI SNR."
     )
@@ -146,6 +237,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     if args.dataset is None:
         if args.non_interactive:

@@ -1,10 +1,21 @@
-"""
+r"""
 Validate the repository layout and all local PFT imports.
 
 This script checks that ``scripts`` and ``src/PFT/core_prog_parts`` share the
 same repository root. It then verifies every local ``PFT...`` import used by
 the scripts and core modules without importing optional machine-learning or
 microscopy dependencies.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/check_project_imports.py --help
+
+Representative execution:
+
+    python scripts/check_project_imports.py \
+        --output results/example_output/report.txt
 """
 
 from __future__ import annotations
@@ -15,7 +26,20 @@ _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
 
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``."""
+    """Return the repository root containing both ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
+    """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
 
@@ -54,7 +78,18 @@ class ImportIssue:
 
 
 def module_name_from_path(path: Path, src_dir: Path) -> str:
-    """Convert a Python source path below ``src`` into its importable name."""
+    """Convert a Python source path below ``src`` into its importable name.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        src_dir (Path): Directory used for src.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = module_name_from_path(path=Path("path/to/resource"), src_dir=Path("path/to/resource"))
+    """
     relative = path.relative_to(src_dir)
     parts = list(relative.parts)
     if parts[-1] == "__init__.py":
@@ -63,7 +98,17 @@ def module_name_from_path(path: Path, src_dir: Path) -> str:
 
 
 def collect_top_level_symbols(path: Path) -> set[str]:
-    """Return names defined or imported at module scope in one Python file."""
+    """Return names defined or imported at module scope in one Python file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        set[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = collect_top_level_symbols(path=Path("path/to/resource"))
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     symbols: set[str] = set()
 
@@ -87,7 +132,17 @@ def collect_top_level_symbols(path: Path) -> set[str]:
 
 
 def build_module_index(src_dir: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
-    """Index local modules and their top-level symbols below ``src``."""
+    """Index local modules and their top-level symbols below ``src``.
+
+    Args:
+        src_dir (Path): Directory used for src.
+
+    Returns:
+        tuple[dict[str, Path], dict[str, set[str]]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = build_module_index(src_dir=Path("path/to/resource"))
+    """
     modules: dict[str, Path] = {}
 
     for path in src_dir.rglob("*.py"):
@@ -105,7 +160,23 @@ def check_file_imports(
     modules: dict[str, Path],
     symbols: dict[str, set[str]],
 ) -> list[ImportIssue]:
-    """Check all absolute ``PFT`` imports found in one Python source file."""
+    """Check all absolute ``PFT`` imports found in one Python source file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        modules (dict[str, Path]): Filesystem path used for modules.
+        symbols (dict[str, set[str]]): Text value specifying symbols.
+
+    Returns:
+        list[ImportIssue]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = check_file_imports(
+        ...     path=Path("path/to/resource"),
+        ...     modules="modules",
+        ...     symbols="symbols",
+        ... )
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     issues: list[ImportIssue] = []
 
@@ -150,7 +221,17 @@ def check_file_imports(
 
 
 def run_check(project_root: Path) -> tuple[list[str], list[ImportIssue]]:
-    """Run repository, package, syntax, and local-import checks."""
+    """Run repository, package, syntax, and local-import checks.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        tuple[list[str], list[ImportIssue]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = run_check(project_root=Path("path/to/resource"))
+    """
     scripts_dir = project_root / "scripts"
     src_dir = project_root / "src"
     core_dir = src_dir / "PFT" / "core_prog_parts"
@@ -194,7 +275,20 @@ def write_report(
     messages: list[str],
     issues: list[ImportIssue],
 ) -> None:
-    """Write the import-check result to a plain-text report."""
+    """Write the import-check result to a plain-text report.
+
+    Args:
+        output_path (Path): Filesystem path where the generated result is written.
+        messages (list[str]): Text value specifying messages.
+        issues (list[ImportIssue]): Value specifying issues for the operation.
+
+    Example:
+        >>> write_report(
+        ...     output_path=Path("path/to/resource"),
+        ...     messages="messages",
+        ...     issues=[],
+        ... )
+    """
     lines = ["PFT SCRIPT IMPORT CHECK", "=" * 23, *messages, ""]
 
     if issues:
@@ -212,7 +306,14 @@ def write_report(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser for the import checker."""
+    """Create the command-line parser for the import checker.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Check the PFT repository layout and local Python imports."
     )
@@ -226,7 +327,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    """Run the checks, print their results, and return a process status code."""
+    """Run the checks, print their results, and return a process status code.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args()
     messages, issues = run_check(_PFT_PROJECT_ROOT)
     write_report(args.output, messages, issues)

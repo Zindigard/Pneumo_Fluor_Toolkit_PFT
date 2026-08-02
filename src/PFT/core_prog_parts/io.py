@@ -82,9 +82,23 @@ class CziMeta:
 
 def list_czi_files(folder: str | Path, *, recursive: bool = False) -> list[Path]:
     """Return sorted CZI files from a directory using case-insensitive suffix matching.
-    
+
     When ``recursive`` is true, all nested experiment directories are included.
     Missing directories and empty searches raise explicit filesystem errors.
+
+    Args:
+        folder (str | Path): Filesystem path used for folder.
+        recursive (bool): Boolean flag controlling recursive. Defaults to ``False``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        NotADirectoryError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_czi_files(folder="folder")
     """
     folder = Path(folder).expanduser()
     if not folder.exists():
@@ -104,7 +118,17 @@ def list_czi_files(folder: str | Path, *, recursive: bool = False) -> list[Path]
 
 
 def read_czi_header(path: str | Path) -> tuple[str | None, tuple[int, ...] | None]:
-    """Read CZI axis labels and header shape without loading the pixel array."""
+    """Read CZI axis labels and header shape without loading the pixel array.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[str | None, tuple[int, ...] | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = read_czi_header(path="path")
+    """
     path = Path(path)
     with czifile.CziFile(str(path)) as czi:
         axes = getattr(czi, "axes", None)
@@ -113,7 +137,17 @@ def read_czi_header(path: str | Path) -> tuple[str | None, tuple[int, ...] | Non
 
 
 def read_czi_array_squeezed(path: str | Path) -> np.ndarray:
-    """Load the CZI pixel array and remove singleton dimensions with ``numpy.squeeze``."""
+    """Load the CZI pixel array and remove singleton dimensions with ``numpy.squeeze``.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = read_czi_array_squeezed(path="path")
+    """
     path = Path(path)
     with czifile.CziFile(str(path)) as czi:
         arr = czi.asarray()
@@ -122,8 +156,17 @@ def read_czi_array_squeezed(path: str | Path) -> np.ndarray:
 
 def read_czi_xml(path: str | Path) -> str | None:
     """Return the complete CZI metadata XML string when available.
-    
+
     Returns ``None`` when metadata is empty or cannot be read.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = read_czi_xml(path="path")
     """
     path = Path(path)
     try:
@@ -138,7 +181,17 @@ def read_czi_xml(path: str | Path) -> str | None:
 
 
 def _parse_float(text: str | None) -> float | None:
-    """Convert metadata text to ``float`` and return ``None`` for absent or invalid values."""
+    """Convert metadata text to ``float`` and return ``None`` for absent or invalid values.
+
+    Args:
+        text (str | None): Text value specifying text.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Example:
+        >>> result = _parse_float(text="text")
+    """
     if text is None:
         return None
     try:
@@ -148,7 +201,18 @@ def _parse_float(text: str | None) -> float | None:
 
 
 def _find_text(root: ET.Element | None, xpath: str) -> str | None:
-    """Return stripped text from the first XML element matching an XPath expression."""
+    """Return stripped text from the first XML element matching an XPath expression.
+
+    Args:
+        root (ET.Element | None): Root directory used to resolve relative project paths.
+        xpath (str): Text value specifying xpath.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = _find_text(root=Path("path/to/resource"), xpath="xpath")
+    """
     if root is None:
         return None
     el = root.find(xpath)
@@ -159,14 +223,34 @@ def _find_text(root: ET.Element | None, xpath: str) -> str | None:
 
 
 def _parse_scaling_um(xml_text: str) -> tuple[float | None, float | None, float | None]:
-    """Extract X, Y, and Z physical sampling from CZI XML and convert metres to micrometres."""
+    """Extract X, Y, and Z physical sampling from CZI XML and convert metres to micrometres.
+
+    Args:
+        xml_text (str): Text value specifying xml text.
+
+    Returns:
+        tuple[float | None, float | None, float | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _parse_scaling_um(xml_text="xml_text")
+    """
     try:
         root = ET.fromstring(xml_text)
     except Exception:
         return None, None, None
 
     def get_um(axis: str) -> float | None:
-        """Extract one spatial-axis sampling value from the surrounding CZI XML tree."""
+        """Extract one spatial-axis sampling value from the surrounding CZI XML tree.
+
+        Args:
+            axis (str): Array axis along which the operation is performed.
+
+        Returns:
+            float | None: Computed numerical result.
+
+        Example:
+            >>> result = get_um(axis="axis")
+        """
         el = root.find(f".//Scaling/Items/Distance[@Id='{axis}']/Value")
         if el is None:
             el = root.find(f".//Scaling//Distance[@Id='{axis}']/Value")
@@ -182,7 +266,17 @@ def _parse_scaling_um(xml_text: str) -> tuple[float | None, float | None, float 
 
 
 def _parse_channel_names(xml_text: str) -> list[str] | None:
-    """Extract and de-duplicate fluorescence channel names from CZI XML."""
+    """Extract and de-duplicate fluorescence channel names from CZI XML.
+
+    Args:
+        xml_text (str): Text value specifying xml text.
+
+    Returns:
+        list[str] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _parse_channel_names(xml_text="xml_text")
+    """
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -210,7 +304,17 @@ def _parse_channel_names(xml_text: str) -> list[str] | None:
 
 
 def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, list[str] | None]:
-    """Extract channel labels, excitation, emission, exposure, and channel type metadata."""
+    """Extract channel labels, excitation, emission, exposure, and channel type metadata.
+
+    Args:
+        xml_text (str): Text value specifying xml text.
+
+    Returns:
+        tuple[list[dict[str, Any]] | None, list[str] | None]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parse_channel_info(xml_text="xml_text")
+    """
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -224,7 +328,17 @@ def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, lis
     names: list[str] = []
 
     def to_nm(v: float | None) -> float | None:
-        """Convert a wavelength expressed in metres to nanometres while preserving values already in nanometres."""
+        """Convert a wavelength expressed in metres to nanometres while preserving values already in nanometres.
+
+        Args:
+            v (float | None): Numerical value controlling v.
+
+        Returns:
+            float | None: Computed numerical result.
+
+        Example:
+            >>> result = to_nm(v=0.5)
+        """
         if v is None:
             return None
         return v * 1e9 if v < 1e-3 else v
@@ -264,7 +378,17 @@ def _parse_channel_info(xml_text: str) -> tuple[list[dict[str, Any]] | None, lis
 
 
 def _parse_sim_settings_from_lsm_tags(xml_text: str) -> dict[str, str] | None:
-    """Extract selected Zeiss structured-illumination reconstruction settings from LsmTag text."""
+    """Extract selected Zeiss structured-illumination reconstruction settings from LsmTag text.
+
+    Args:
+        xml_text (str): Text value specifying xml text.
+
+    Returns:
+        dict[str, str] | None: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parse_sim_settings_from_lsm_tags(xml_text="xml_text")
+    """
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -309,8 +433,17 @@ def _parse_sim_settings_from_lsm_tags(xml_text: str) -> dict[str, str] | None:
 
 def parse_czi_3d_metadata(xml_text: str) -> dict[str, Any]:
     """Extract best-effort 3D and SIM acquisition metadata from CZI XML.
-    
+
     The returned dictionary can be merged directly into matching ``CziMeta`` fields.
+
+    Args:
+        xml_text (str): Text value specifying xml text.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = parse_czi_3d_metadata(xml_text="xml_text")
     """
     try:
         root = ET.fromstring(xml_text)
@@ -385,9 +518,18 @@ def parse_czi_3d_metadata(xml_text: str) -> dict[str, Any]:
 
 def load_czi(path: str | Path) -> tuple[np.ndarray, CziMeta]:
     """Load a squeezed CZI array together with complete structured metadata.
-    
+
     Returns a tuple ``(array, metadata)``. Pixel statistics are computed from the
     loaded array, while acquisition information is parsed from the raw XML.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, CziMeta]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = load_czi(path="path")
     """
     path = Path(path)
     axes, header_shape = read_czi_header(path)
@@ -431,7 +573,17 @@ def load_czi(path: str | Path) -> tuple[np.ndarray, CziMeta]:
 
 
 def load_czi_metadata_only(path: str | Path) -> CziMeta:
-    """Read CZI header and XML metadata without loading image pixels."""
+    """Read CZI header and XML metadata without loading image pixels.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        CziMeta: Result produced by the operation.
+
+    Example:
+        >>> result = load_czi_metadata_only(path="path")
+    """
     path = Path(path)
     axes, header_shape = read_czi_header(path)
 

@@ -1,4 +1,20 @@
-"""Infer the configured per-volume target slice and broadcast its mask in Z."""
+r"""Infer the configured per-volume target slice and broadcast its mask in Z.
+
+Examples
+--------
+Show all options:
+
+    python scripts/segmentation/run_unet_3d_25d_terminal.py --help
+
+Run 2.5D U-Net inference for one 3D stack:
+
+    python scripts/segmentation/run_unet_3d_25d_terminal.py \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --model models/u_net_3d_25d/u_net_3d_25d_best.keras \
+        --level 0 \
+        --patch 256 \
+        --predict-batch-size 8
+"""
 
 from __future__ import annotations
 
@@ -10,6 +26,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -27,6 +54,14 @@ from PFT.core_prog_parts.segmentation.unet_run_3d_25d_core import (  # noqa: E40
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Infer the configured target-slice mask and broadcast it to all Z-slices.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

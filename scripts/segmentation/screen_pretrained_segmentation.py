@@ -1,4 +1,4 @@
-"""Screen pretrained instance-segmentation models against manual instance masks.
+r"""Screen pretrained instance-segmentation models against manual instance masks.
 
 The script runs Cellpose, Omnipose, or StarDist without fine-tuning and compares
 predicted integer instance labels directly with manually annotated integer masks.
@@ -33,6 +33,24 @@ Crop labels::
 
     results/training_files/segmentation/<dataset>/<source_mode>/<sample>/
         crops/<train|validation>/<crop_id>/mask.tif
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/screen_pretrained_segmentation.py --help
+
+Representative execution:
+
+    python scripts/segmentation/screen_pretrained_segmentation.py \
+        --dataset 2d_time \
+        --family omnipose \
+        --source-mode filtered_unet \
+        --annotation-source all \
+        --annotation-split validation \
+        --sample WT_HADA_NHS_40min_ROI1_SIM \
+        --sample-count 2 \
+        --model models/example_model
 """
 
 from __future__ import annotations
@@ -57,6 +75,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -88,6 +117,21 @@ SCREENING_FAMILIES = ("cellpose", "omnipose", "stardist")
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     if not values:
         raise ValueError(f"No values are available for: {title}")
     print(f"\n{title}")
@@ -100,6 +144,17 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _parse_optional_floats(values: Sequence[str]) -> tuple[float | None, ...]:
+    """Parse optional floats into a validated representation.
+
+    Args:
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        tuple[float | None, ...]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _parse_optional_floats(values="values")
+    """
     parsed: list[float | None] = []
     for value in values:
         parsed.append(None if value.lower() in {"none", "default", "auto"} else float(value))
@@ -107,6 +162,17 @@ def _parse_optional_floats(values: Sequence[str]) -> tuple[float | None, ...]:
 
 
 def _parse_diameters(values: Sequence[str]) -> tuple[float | None, ...]:
+    """Parse diameters into a validated representation.
+
+    Args:
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        tuple[float | None, ...]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _parse_diameters(values="values")
+    """
     parsed: list[float | None] = []
     for value in values:
         parsed.append(None if value.lower() in {"none", "auto"} else float(value))
@@ -123,6 +189,33 @@ def _parameter_grid(
     nms_thresholds: tuple[float | None, ...],
     min_sizes: Sequence[int],
 ) -> list[dict[str, Any]]:
+    """Return parameter grid for the supplied inputs.
+
+    Args:
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        diameters (tuple[float | None, ...]): Numerical value controlling diameters.
+        flow_thresholds (Sequence[float]): Numerical value controlling flow thresholds.
+        cellprob_thresholds (Sequence[float]): Numerical value controlling cellprob thresholds.
+        mask_thresholds (Sequence[float]): Numerical value controlling mask thresholds.
+        prob_thresholds (tuple[float | None, ...]): Numerical value controlling prob thresholds.
+        nms_thresholds (tuple[float | None, ...]): Numerical value controlling nms thresholds.
+        min_sizes (Sequence[int]): Minimum permitted value of sizes.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parameter_grid(
+        ...     family="cellpose",
+        ...     diameters=0.5,
+        ...     flow_thresholds=0.5,
+        ...     cellprob_thresholds=0.5,
+        ...     mask_thresholds=0.5,
+        ...     prob_thresholds=0.5,
+        ...     nms_thresholds=0.5,
+        ...     min_sizes=1,
+        ... )
+    """
     if family == "cellpose":
         return [
             {
@@ -154,10 +247,32 @@ def _parameter_grid(
 
 
 def _source_sample_key(sample_key: str) -> str:
+    """Return source sample key for the supplied inputs.
+
+    Args:
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _source_sample_key(sample_key="sample_key")
+    """
     return sample_key.replace("\\", "/").split("/crops/", 1)[0]
 
 
 def _load_valid_pair(item: Any) -> tuple[Any, np.ndarray, np.ndarray]:
+    """Load valid pair from persistent storage.
+
+    Args:
+        item (Any): Value specifying item for the operation.
+
+    Returns:
+        tuple[Any, np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _load_valid_pair(item=...)
+    """
     image = load_prepared_image(item.input_zarr)
     reference = load_instance_mask(item.training_mask, tuple(int(v) for v in image.shape[:2]))
     return item, image, reference
@@ -171,6 +286,31 @@ def _select_pairs(
     seed: int,
     distinct_sources: bool,
 ) -> tuple[list[tuple[Any, np.ndarray, np.ndarray]], list[dict[str, str]]]:
+    """Select pairs according to the configured criteria.
+
+    Args:
+        candidates (Sequence[Any]): Value specifying candidates for the operation.
+        selected_keys (set[str]): Text value specifying selected keys.
+        sample_count (int): Number of sample used by the operation.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+        distinct_sources (bool): Boolean flag controlling distinct sources.
+
+    Returns:
+        tuple[list[tuple[Any, np.ndarray, np.ndarray]], list[dict[str, str]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_pairs(
+        ...     candidates=[],
+        ...     selected_keys="selected_keys",
+        ...     sample_count=1,
+        ...     seed=1,
+        ...     distinct_sources=True,
+        ... )
+    """
     if sample_count < 1:
         raise ValueError("sample_count must be at least 1")
 
@@ -224,6 +364,18 @@ def _select_pairs(
 def _contingency_iou_matrix(
     reference: np.ndarray, prediction: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return contingency iou matrix for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _contingency_iou_matrix(reference=image_array, prediction=image_array)
+    """
     ref = np.asarray(reference, dtype=np.int64)
     pred = np.asarray(prediction, dtype=np.int64)
     ref_ids = np.unique(ref[ref > 0])
@@ -259,6 +411,17 @@ def _contingency_iou_matrix(
 
 
 def _assignment_pairs(iou_matrix: np.ndarray) -> list[tuple[int, int, float]]:
+    """Return assignment pairs for the supplied inputs.
+
+    Args:
+        iou_matrix (np.ndarray): Array containing iou matrix.
+
+    Returns:
+        list[tuple[int, int, float]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _assignment_pairs(iou_matrix=image_array)
+    """
     if iou_matrix.size == 0:
         return []
     try:
@@ -294,6 +457,19 @@ def _instance_metrics(
     *,
     thresholds: Sequence[float] = (0.50, 0.75),
 ) -> dict[str, Any]:
+    """Return instance metrics for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        thresholds (Sequence[float]): Numerical value controlling thresholds. Defaults to ``(0.50, 0.75)``.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _instance_metrics(reference=image_array, prediction=image_array)
+    """
     matrix, ref_ids, pred_ids = _contingency_iou_matrix(reference, prediction)
     pairs = _assignment_pairs(matrix)
     metrics: dict[str, Any] = {
@@ -351,6 +527,18 @@ def _instance_metrics(
 
 
 def _semantic_metrics(reference: np.ndarray, prediction: np.ndarray) -> dict[str, float | int]:
+    """Return semantic metrics for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+
+    Returns:
+        dict[str, float | int]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _semantic_metrics(reference=image_array, prediction=image_array)
+    """
     ref = np.asarray(reference) > 0
     pred = np.asarray(prediction) > 0
     tp = int(np.count_nonzero(ref & pred))
@@ -372,6 +560,18 @@ def _semantic_metrics(reference: np.ndarray, prediction: np.ndarray) -> dict[str
 
 
 def _input_rgb(image: np.ndarray, dataset: str) -> np.ndarray:
+    """Return input RGB representation for the supplied inputs.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _input_rgb(image=image_array, dataset="2d_time")
+    """
     array = np.asarray(image, dtype=np.float32)
     array = np.clip(array, 0.0, 1.0)
     rgb = np.zeros((*array.shape[:2], 3), dtype=np.float32)
@@ -390,6 +590,17 @@ def _input_rgb(image: np.ndarray, dataset: str) -> np.ndarray:
 
 
 def _boundary(mask: np.ndarray) -> np.ndarray:
+    """Return boundary for the supplied inputs.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _boundary(mask=image_array)
+    """
     binary = np.asarray(mask) > 0
     interior = binary.copy()
     interior[1:, :] &= binary[:-1, :]
@@ -400,6 +611,17 @@ def _boundary(mask: np.ndarray) -> np.ndarray:
 
 
 def _labels_rgb(labels: np.ndarray) -> np.ndarray:
+    """Return labels RGB representation for the supplied inputs.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _labels_rgb(labels=image_array)
+    """
     labels = np.asarray(labels, dtype=np.int64)
     output = np.zeros((*labels.shape, 3), dtype=np.uint8)
     positive = labels > 0
@@ -411,6 +633,19 @@ def _labels_rgb(labels: np.ndarray) -> np.ndarray:
 
 
 def _fit_preview(image: Image.Image, max_size: int, *, nearest: bool = False) -> Image.Image:
+    """Fit preview to the supplied observations.
+
+    Args:
+        image (Image.Image): Input image array to process.
+        max_size (int): Maximum permitted value of size.
+        nearest (bool): Boolean flag controlling nearest. Defaults to ``False``.
+
+    Returns:
+        Image.Image: Result produced by the operation.
+
+    Example:
+        >>> result = _fit_preview(image=image_array, max_size=1)
+    """
     if max(image.size) <= max_size:
         return image
     scale = max_size / max(image.size)
@@ -420,6 +655,24 @@ def _fit_preview(image: Image.Image, max_size: int, *, nearest: bool = False) ->
 
 
 def _panel(rgb: np.ndarray, title: str, max_size: int, *, nearest: bool = False) -> Image.Image:
+    """Return panel for the supplied inputs.
+
+    Args:
+        rgb (np.ndarray): Array containing RGB representation.
+        title (str): Title displayed on the generated figure or report section.
+        max_size (int): Maximum permitted value of size.
+        nearest (bool): Boolean flag controlling nearest. Defaults to ``False``.
+
+    Returns:
+        Image.Image: Result produced by the operation.
+
+    Example:
+        >>> result = _panel(
+        ...     rgb=image_array,
+        ...     title="title",
+        ...     max_size=1,
+        ... )
+    """
     image = _fit_preview(Image.fromarray(rgb, mode="RGB"), max_size, nearest=nearest)
     canvas = Image.new("RGB", (image.width, image.height + 34), "white")
     canvas.paste(image, (0, 34))
@@ -437,6 +690,28 @@ def _save_comparison(
     dataset: str,
     max_size: int,
 ) -> None:
+    """Save comparison to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        image (np.ndarray): Input image array to process.
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        metrics (dict[str, Any]): Text value specifying metrics.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        max_size (int): Maximum permitted value of size.
+
+    Example:
+        >>> _save_comparison(
+        ...     path=Path("path/to/resource"),
+        ...     image=image_array,
+        ...     reference=image_array,
+        ...     prediction=image_array,
+        ...     metrics="metrics",
+        ...     dataset="2d_time",
+        ...     max_size=1,
+        ... )
+    """
     input_rgb = _input_rgb(image, dataset)
     ref_rgb = _labels_rgb(reference)
     pred_rgb = _labels_rgb(prediction)
@@ -473,11 +748,37 @@ def _save_comparison(
 
 
 def _mean_numeric(rows: Sequence[dict[str, Any]], key: str) -> float:
+    """Return mean numeric for the supplied inputs.
+
+    Args:
+        rows (Sequence[dict[str, Any]]): Text value specifying rows.
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _mean_numeric(rows="rows", key="key")
+    """
     values = [float(row[key]) for row in rows if row.get(key) is not None]
     return float(np.nanmean(values)) if values else float("nan")
 
 
 def _write_html(path: Path, rows: list[dict[str, Any]], best: dict[str, Any]) -> None:
+    """Write html to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+        best (dict[str, Any]): Text value specifying best.
+
+    Example:
+        >>> _write_html(
+        ...     path=Path("path/to/resource"),
+        ...     rows="rows",
+        ...     best="best",
+        ... )
+    """
     sample_rows = [row for row in rows if row["sample_key"] != "__MEAN__"]
     sections: list[str] = []
     for row in sample_rows:
@@ -526,6 +827,20 @@ def _write_html(path: Path, rows: list[dict[str, Any]], best: dict[str, Any]) ->
 
 
 def main(default_family: str | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        default_family (str | None): Text value specifying default family. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Screen pretrained Cellpose, Omnipose, or StarDist models directly "

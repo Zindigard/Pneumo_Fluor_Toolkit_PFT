@@ -85,7 +85,22 @@ def roi_snr_components(
     foreground_mask: np.ndarray,
     epsilon: float = 1e-12,
 ) -> tuple[int, int, float, float, float, float]:
-    """Return the same ROI-SNR components used by the 2D checking workflow."""
+    """Return the same ROI-SNR components used by the 2D checking workflow.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        foreground_mask (np.ndarray): Array containing foreground mask.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        tuple[int, int, float, float, float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = roi_snr_components(image=image_array, foreground_mask=image_array)
+    """
     image = np.asarray(image, dtype=np.float64)
     mask = np.asarray(foreground_mask, dtype=bool)
     if image.ndim != 2 or mask.ndim != 2 or image.shape != mask.shape:
@@ -107,11 +122,37 @@ def roi_snr_components(
 
 
 def roi_snr(image: np.ndarray, foreground_mask: np.ndarray, epsilon: float = 1e-12) -> float:
-    """Calculate thesis ROI SNR using the manually labelled foreground region."""
+    """Calculate thesis ROI SNR using the manually labelled foreground region.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        foreground_mask (np.ndarray): Array containing foreground mask.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = roi_snr(image=image_array, foreground_mask=image_array)
+    """
     return roi_snr_components(image, foreground_mask, epsilon)[-1]
 
 
 def _read_mask_zyx(mask_zarr: Path) -> tuple[np.ndarray, dict[str, Any]]:
+    """Read mask zyx from persistent storage.
+
+    Args:
+        mask_zarr (Path): Filesystem path used for mask Zarr.
+
+    Returns:
+        tuple[np.ndarray, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _read_mask_zyx(mask_zarr=Path("path/to/resource"))
+    """
     meta = extract_ome_zarr_meta_for_compare(mask_zarr, level=0)
     axes = str(meta.get("axes") or "").lower()
     root = zarr.open_group(str(mask_zarr), mode="r")
@@ -132,6 +173,17 @@ def _read_mask_zyx(mask_zarr: Path) -> tuple[np.ndarray, dict[str, Any]]:
 
 
 def _display_composite(cyx: np.ndarray) -> np.ndarray:
+    """Return display composite for the supplied inputs.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_composite(cyx=image_array)
+    """
     output = np.zeros((*cyx.shape[1:], 3), dtype=np.float32)
     destinations = (2, 1, 0)
     for channel in range(min(3, cyx.shape[0])):
@@ -152,6 +204,31 @@ def _save_previews(
     slices_1based: Sequence[int],
     manual_mask_dir: Path | None,
 ) -> list[Path]:
+    """Save previews to persistent storage.
+
+    Args:
+        deconvolved (zarr.Array): Array containing deconvolved.
+        masked (zarr.Array): Array containing masked.
+        mask_zyx (np.ndarray): Array containing mask zyx.
+        sample (str): Text value specifying sample.
+        output_dir (Path): Directory where generated resources are written.
+        slices_1based (Sequence[int]): Numerical value controlling slices 1based.
+        manual_mask_dir (Path | None): Directory used for manual mask.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_previews(
+        ...     deconvolved=image_array,
+        ...     masked=image_array,
+        ...     mask_zyx=image_array,
+        ...     sample="sample",
+        ...     output_dir=Path("path/to/resource"),
+        ...     slices_1based=1,
+        ...     manual_mask_dir=Path("path/to/resource"),
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for slice_number in slices_1based:
@@ -205,6 +282,38 @@ def _calculate_snr_rows(
     slices_1based: Sequence[int],
     epsilon: float,
 ) -> list[SNRRow]:
+    """Calculate signal-to-noise ratio rows from the supplied data.
+
+    Args:
+        sample (str): Text value specifying sample.
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+        raw_level (int): Numerical value controlling raw level.
+        deconvolved (zarr.Array): Array containing deconvolved.
+        masked (zarr.Array): Array containing masked.
+        manual_mask_dir (Path): Directory used for manual mask.
+        channel_names (Sequence[str]): Text value specifying channel names.
+        slices_1based (Sequence[int]): Numerical value controlling slices 1based.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        list[SNRRow]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _calculate_snr_rows(
+        ...     sample="sample",
+        ...     raw_zarr=Path("path/to/resource"),
+        ...     raw_level=1,
+        ...     deconvolved=image_array,
+        ...     masked=image_array,
+        ...     manual_mask_dir=Path("path/to/resource"),
+        ...     channel_names="channel_names",
+        ...     slices_1based=1,
+        ...     epsilon=0.5,
+        ... )
+    """
     raw_meta = extract_ome_zarr_meta_for_compare(raw_zarr, level=raw_level)
     raw_root = zarr.open_group(str(raw_zarr), mode="r")
     raw = raw_root[str(raw_meta["array_path"])]
@@ -265,7 +374,33 @@ def apply_saved_mask_to_deconvolution(
     epsilon: float = 1e-12,
     overwrite: bool = True,
 ) -> MaskApplicationOutput:
-    """Apply the saved mask, validate stored values, and calculate annotated-slice SNR."""
+    """Apply the saved mask, validate stored values, and calculate annotated-slice SNR.
+
+    Args:
+        deconvolved_zarr (Path): Filesystem path used for deconvolved Zarr.
+        predicted_mask_zarr (Path): Filesystem path used for predicted mask Zarr.
+        output_root (Path): Directory used for output.
+        manual_mask_root (Path | None): Directory used for manual mask. ``None`` selects the function's default behavior.
+        outside_mask_depletion (float): Numerical value controlling outside mask depletion. Defaults to ``0.98``.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        slices_1based (Sequence[int] | None): Numerical value controlling slices 1based. ``None`` selects the function's default behavior.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+
+    Returns:
+        MaskApplicationOutput: Result produced by the operation.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_saved_mask_to_deconvolution(
+        ...     deconvolved_zarr=Path("path/to/resource"),
+        ...     predicted_mask_zarr=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ... )
+    """
     if not 0.0 <= outside_mask_depletion <= 1.0:
         raise ValueError("outside_mask_depletion must be in [0,1]")
     residual = 1.0 - float(outside_mask_depletion)

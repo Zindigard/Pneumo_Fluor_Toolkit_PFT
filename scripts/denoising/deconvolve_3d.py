@@ -1,3 +1,20 @@
+r"""Provide command-line and programmatic utilities for deconvolve three-dimensional data.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/deconvolve_3d.py --help
+
+Representative execution:
+
+    python scripts/denoising/deconvolve_3d.py \
+        --model BW \
+        --folder 20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM \
+        --root_3d results/img/3d_data \
+        --level 0
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +30,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -61,10 +90,32 @@ DEFAULT_OUT_ROOT = DEFAULT_PROJECT_ROOT / "results" / "deconv"
 
 
 def list_image_folders(root_3d: Path) -> list[Path]:
+    """List image folders available in the configured project structure.
+
+    Args:
+        root_3d (Path): Filesystem path used for root three-dimensional data.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_image_folders(root_3d=Path("path/to/resource"))
+    """
     return [p.parent for p in sorted(root_3d.rglob("image.ome.zarr"))]
 
 
 def available_pyramid_levels(image_omezarr: Path) -> list[int]:
+    """Return available pyramid levels for the supplied inputs.
+
+    Args:
+        image_omezarr (Path): Filesystem path used for image OME-Zarr.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = available_pyramid_levels(image_omezarr=Path("path/to/resource"))
+    """
     root = zarr.open_group(str(image_omezarr), mode="r")
     ms = root.attrs.get("multiscales")
     if not ms or not isinstance(ms, list) or not ms[0].get("datasets"):
@@ -74,6 +125,20 @@ def available_pyramid_levels(image_omezarr: Path) -> list[int]:
 
 
 def prompt_int(prompt: str, *, min_v: int | None = None, max_v: int | None = None, default: int | None = None) -> int:
+    """Return prompt int for the supplied inputs.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        min_v (int | None): Minimum permitted value of v. ``None`` selects the function's default behavior.
+        max_v (int | None): Maximum permitted value of v. ``None`` selects the function's default behavior.
+        default (int | None): Numerical value controlling default. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = prompt_int(prompt="prompt")
+    """
     while True:
         s = input(prompt).strip()
         if s == "" and default is not None:
@@ -94,6 +159,19 @@ def prompt_int(prompt: str, *, min_v: int | None = None, max_v: int | None = Non
 
 
 def prompt_choice(prompt: str, options: list[str], default: str | None = None) -> str:
+    """Return prompt choice for the supplied inputs.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        options (list[str]): Text value specifying options.
+        default (str | None): Text value specifying default. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = prompt_choice(prompt="prompt", options="options")
+    """
     opts_lower = [o.lower() for o in options]
     while True:
         s = input(prompt).strip().lower()
@@ -105,6 +183,20 @@ def prompt_choice(prompt: str, options: list[str], default: str | None = None) -
 
 
 def interactive_select_dataset(root_3d: Path) -> Path:
+    """Return interactive select dataset for the supplied inputs.
+
+    Args:
+        root_3d (Path): Filesystem path used for root three-dimensional data.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = interactive_select_dataset(root_3d=Path("path/to/resource"))
+    """
     folders = list_image_folders(root_3d)
     if not folders:
         raise SystemExit(f"No image.ome.zarr found under: {root_3d}")
@@ -122,6 +214,17 @@ def interactive_select_dataset(root_3d: Path) -> Path:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     ap = argparse.ArgumentParser(description="Interactive DL2 Richardson–Lucy deconvolution for 3D OME-Zarr.")
     ap.add_argument("--root_3d", default=str(DEFAULT_3D_ROOT))
     ap.add_argument("--out_root", default=str(DEFAULT_OUT_ROOT))

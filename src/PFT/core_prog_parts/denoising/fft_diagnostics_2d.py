@@ -57,7 +57,15 @@ class FFTDiagnosticConfig:
     directionality_threshold: float = 0.15
 
     def validate(self) -> None:
-        """Raise ``ValueError`` when a diagnostic parameter is invalid."""
+        """Raise ``ValueError`` when a diagnostic parameter is invalid.
+
+        Raises:
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = FFTDiagnosticConfig(...)
+            >>> instance.validate()
+        """
         if self.dc_radius_px < 0:
             raise ValueError("dc_radius_px must be >= 0")
         if not 0.0 < self.low_frequency_limit < self.mid_frequency_limit < 1.0:
@@ -74,7 +82,20 @@ class FFTDiagnosticConfig:
 
 
 def _as_finite_2d(image: np.ndarray) -> np.ndarray:
-    """Return a finite ``float64`` 2D array for quantitative calculations."""
+    """Return a finite ``float64`` 2D array for quantitative calculations.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _as_finite_2d(image=image_array)
+    """
     x = np.asarray(image)
     if x.ndim != 2:
         raise ValueError(f"Expected a 2D image plane, received shape={x.shape}")
@@ -87,7 +108,18 @@ def _as_finite_2d(image: np.ndarray) -> np.ndarray:
 
 
 def _pearson_correlation(first: np.ndarray, second: np.ndarray) -> float:
-    """Return Pearson correlation for equally sized arrays."""
+    """Return Pearson correlation for equally sized arrays.
+
+    Args:
+        first (np.ndarray): Array containing first.
+        second (np.ndarray): Array containing second.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _pearson_correlation(first=image_array, second=image_array)
+    """
     first_flat = np.asarray(first, dtype=np.float64).ravel()
     second_flat = np.asarray(second, dtype=np.float64).ravel()
     finite = np.isfinite(first_flat) & np.isfinite(second_flat)
@@ -107,7 +139,17 @@ def _pearson_correlation(first: np.ndarray, second: np.ndarray) -> float:
 
 
 def neighbour_correlation(image: np.ndarray) -> float:
-    """Return mean horizontal/vertical adjacent-pixel Pearson correlation."""
+    """Return mean horizontal/vertical adjacent-pixel Pearson correlation.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = neighbour_correlation(image=image_array)
+    """
     x = _as_finite_2d(image)
     values: list[float] = []
     if x.shape[1] >= 2:
@@ -118,7 +160,17 @@ def neighbour_correlation(image: np.ndarray) -> float:
 
 
 def row_column_adjacent_correlations(image: np.ndarray) -> tuple[float, float]:
-    """Return mean correlations between adjacent rows and adjacent columns."""
+    """Return mean correlations between adjacent rows and adjacent columns.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = row_column_adjacent_correlations(image=image_array)
+    """
     x = _as_finite_2d(image)
     row_values = [
         _pearson_correlation(x[index, :], x[index + 1, :])
@@ -134,7 +186,17 @@ def row_column_adjacent_correlations(image: np.ndarray) -> tuple[float, float]:
 
 
 def fano_factor(image: np.ndarray) -> float:
-    """Return full-plane variance divided by full-plane mean intensity."""
+    """Return full-plane variance divided by full-plane mean intensity.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = fano_factor(image=image_array)
+    """
     x = _as_finite_2d(image)
     mean = float(np.mean(x))
     variance = float(np.var(x))
@@ -148,6 +210,19 @@ def fft_peak_score(image: np.ndarray, dc_halfwidth_px: int | None = None) -> flo
 
     When ``dc_halfwidth_px`` is omitted, the excluded central square follows the
     thesis analysis implementation: ``max(2, min(height, width) // 32)``.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        dc_halfwidth_px (int | None): Numerical value controlling dc halfwidth px. ``None`` selects the function's default behavior.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = fft_peak_score(image=image_array)
     """
     x = _as_finite_2d(image)
     centered = x - float(np.mean(x))
@@ -177,7 +252,17 @@ def fft_peak_score(image: np.ndarray, dc_halfwidth_px: int | None = None) -> flo
 def compute_thesis_structured_noise_metrics(
     image: np.ndarray,
 ) -> dict[str, float]:
-    """Calculate all structured-noise parameters required by the thesis table."""
+    """Calculate all structured-noise parameters required by the thesis table.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = compute_thesis_structured_noise_metrics(image=image_array)
+    """
     row_corr, column_corr = row_column_adjacent_correlations(image)
     return {
         "neighbour_correlation": neighbour_correlation(image),
@@ -189,7 +274,17 @@ def compute_thesis_structured_noise_metrics(
 
 
 def _frequency_grids(shape: tuple[int, int]) -> tuple[np.ndarray, ...]:
-    """Return shifted frequency, radius, and angle grids for an image shape."""
+    """Return shifted frequency, radius, and angle grids for an image shape.
+
+    Args:
+        shape (tuple[int, int]): Target or observed array shape.
+
+    Returns:
+        tuple[np.ndarray, ...]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _frequency_grids(shape=1)
+    """
     height, width = shape
     fy = np.fft.fftshift(np.fft.fftfreq(height))
     fx = np.fft.fftshift(np.fft.fftfreq(width))
@@ -202,7 +297,18 @@ def _frequency_grids(shape: tuple[int, int]) -> tuple[np.ndarray, ...]:
 
 
 def _dc_mask(shape: tuple[int, int], radius_px: int) -> np.ndarray:
-    """Return a Boolean mask excluding a circular DC neighborhood."""
+    """Return a Boolean mask excluding a circular DC neighborhood.
+
+    Args:
+        shape (tuple[int, int]): Target or observed array shape.
+        radius_px (int): Numerical value controlling radius px.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _dc_mask(shape=1, radius_px=1)
+    """
     height, width = shape
     yy, xx = np.indices(shape, dtype=np.float64)
     cy = float(height // 2)
@@ -211,12 +317,33 @@ def _dc_mask(shape: tuple[int, int], radius_px: int) -> np.ndarray:
 
 
 def _normalize_orientation(angle_deg: float) -> float:
-    """Normalize an undirected orientation to ``[-90, 90)``."""
+    """Normalize an undirected orientation to ``[-90, 90)``.
+
+    Args:
+        angle_deg (float): Numerical value controlling angle deg.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _normalize_orientation(angle_deg=0.5)
+    """
     return float((float(angle_deg) + 90.0) % 180.0 - 90.0)
 
 
 def _directionality(power: np.ndarray, valid_mask: np.ndarray) -> tuple[float, float]:
-    """Return Fourier-power anisotropy and principal frequency direction."""
+    """Return Fourier-power anisotropy and principal frequency direction.
+
+    Args:
+        power (np.ndarray): Array containing power.
+        valid_mask (np.ndarray): Array containing valid mask.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _directionality(power=image_array, valid_mask=image_array)
+    """
     weighted = np.where(valid_mask, power, 0.0)
     total = float(np.sum(weighted))
     if total <= EPS:
@@ -244,7 +371,23 @@ def _directionality(power: np.ndarray, valid_mask: np.ndarray) -> tuple[float, f
 
 
 def _band_fraction(power: np.ndarray, mask: np.ndarray, valid_mask: np.ndarray) -> float:
-    """Return the fraction of non-DC power in one frequency band."""
+    """Return the fraction of non-DC power in one frequency band.
+
+    Args:
+        power (np.ndarray): Array containing power.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        valid_mask (np.ndarray): Array containing valid mask.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _band_fraction(
+        ...     power=image_array,
+        ...     mask=image_array,
+        ...     valid_mask=image_array,
+        ... )
+    """
     denominator = float(np.sum(power[valid_mask]))
     if denominator <= EPS:
         return 0.0
@@ -255,7 +398,18 @@ def compute_fft_diagnostics(
     image: np.ndarray,
     config: FFTDiagnosticConfig | None = None,
 ) -> dict[str, float | int | bool]:
-    """Calculate thesis parameters and extended FFT measurements for one plane."""
+    """Calculate thesis parameters and extended FFT measurements for one plane.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        config (FFTDiagnosticConfig | None): Configuration object containing the parameters required by the workflow. ``None`` selects the function's default behavior.
+
+    Returns:
+        dict[str, float | int | bool]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = compute_fft_diagnostics(image=image_array)
+    """
     cfg = config or FFTDiagnosticConfig()
     cfg.validate()
     x = _as_finite_2d(image)
@@ -362,7 +516,17 @@ def compute_fft_diagnostics(
 
 
 def fft_log_magnitude_uint8(image: np.ndarray) -> np.ndarray:
-    """Return a display-only percentile-scaled FFT log-magnitude preview."""
+    """Return a display-only percentile-scaled FFT log-magnitude preview.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = fft_log_magnitude_uint8(image=image_array)
+    """
     x = _as_finite_2d(image)
     spectrum = np.fft.fftshift(np.fft.fft2(x - float(np.mean(x))))
     view = np.log1p(np.abs(spectrum))
@@ -379,7 +543,22 @@ def iter_2d_planes(
     *,
     max_frames: int | None = None,
 ) -> Iterator[tuple[int, int, np.ndarray]]:
-    """Yield ``(channel_index, frame_index, plane)`` from an image array."""
+    """Yield ``(channel_index, frame_index, plane)`` from an image array.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        max_frames (int | None): Maximum permitted value of frames. ``None`` selects the function's default behavior.
+
+    Returns:
+        Iterator[tuple[int, int, np.ndarray]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = iter_2d_planes(array=image_array, axes="axes")
+    """
     x = np.asarray(array)
     axes = axes.lower().strip()
     if len(axes) != x.ndim:
@@ -417,7 +596,18 @@ def iter_2d_planes(
 
 
 def channel_label(dataset: str, channel_index: int) -> str:
-    """Return a stable biological/display label for a dataset channel."""
+    """Return a stable biological/display label for a dataset channel.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        channel_index (int): Zero-based index selecting channel.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = channel_label(dataset="2d_time", channel_index=1)
+    """
     dataset_key = dataset.strip().lower()
     if dataset_key == "2d_time":
         return "HADA" if channel_index == 0 else f"ch{channel_index}"

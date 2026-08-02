@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for floodfill algorythm."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +16,7 @@ ArrayLike = np.ndarray
 
 @dataclass(frozen=True)
 class FloodFillResult:
+    """Store validated configuration or result data for flood fill result."""
     mask: np.ndarray
     seed_point: tuple[int, ...]
     seed_value: float
@@ -24,6 +27,21 @@ class FloodFillResult:
 
 
 def _validate_image(image: ArrayLike) -> np.ndarray:
+    """Validate image against the required constraints.
+
+    Args:
+        image (ArrayLike): Input image array to process.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_image(image=image_array)
+    """
     if image is None:
         raise TypeError("`image` must not be None.")
 
@@ -44,6 +62,21 @@ def _validate_seed_point(
     image: np.ndarray,
     seed_point: Sequence[int] | np.ndarray,
 ) -> tuple[int, ...]:
+    """Validate seed point against the required constraints.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        seed_point (Sequence[int] | np.ndarray): Array containing seed point.
+
+    Returns:
+        tuple[int, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_seed_point(image=image_array, seed_point=image_array)
+    """
     if seed_point is None:
         raise ValueError("`seed_point` must not be None.")
 
@@ -65,6 +98,21 @@ def _validate_seed_point(
 
 
 def _validate_connectivity(connectivity: int, ndim: int) -> int:
+    """Validate connectivity against the required constraints.
+
+    Args:
+        connectivity (int): Numerical value controlling connectivity.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_connectivity(connectivity=1, ndim=1)
+    """
     if not isinstance(connectivity, int):
         raise ValueError("`connectivity` must be an integer.")
 
@@ -81,6 +129,22 @@ def _resolve_tolerance(
     tolerance: float | None = None,
     tolerance_rel: float | None = None,
 ) -> float | None:
+    """Resolve tolerance from the supplied configuration.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        tolerance (float | None): Numerical value controlling tolerance. ``None`` selects the function's default behavior.
+        tolerance_rel (float | None): Numerical value controlling tolerance rel. ``None`` selects the function's default behavior.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _resolve_tolerance(image=image_array)
+    """
     if tolerance is not None:
         tol = float(tolerance)
         if tol < 0:
@@ -111,6 +175,21 @@ def flood_mask(
     tolerance_rel: float | None = None,
     connectivity: int = 1,
 ) -> FloodFillResult:
+    """Return flood mask for the supplied inputs.
+
+    Args:
+        image (ArrayLike): Input image array to process.
+        seed_point (Sequence[int]): Numerical value controlling seed point.
+        tolerance (float | None): Numerical value controlling tolerance. ``None`` selects the function's default behavior.
+        tolerance_rel (float | None): Numerical value controlling tolerance rel. ``None`` selects the function's default behavior.
+        connectivity (int): Numerical value controlling connectivity. Defaults to ``1``.
+
+    Returns:
+        FloodFillResult: Result produced by the operation.
+
+    Example:
+        >>> result = flood_mask(image=image_array, seed_point=1)
+    """
     arr = _validate_image(image)
     seed = _validate_seed_point(arr, seed_point)
     conn = _validate_connectivity(connectivity, arr.ndim)
@@ -136,6 +215,20 @@ def flood_mask_from_percentile_tolerance(
     percentile_fraction: float = 0.02,
     connectivity: int = 1,
 ) -> FloodFillResult:
+    """Return flood mask from percentile tolerance for the supplied inputs.
+
+    Args:
+        image (ArrayLike): Input image array to process.
+        seed_point (Sequence[int]): Numerical value controlling seed point.
+        percentile_fraction (float): Fractional value controlling percentile. Defaults to ``0.02``.
+        connectivity (int): Numerical value controlling connectivity. Defaults to ``1``.
+
+    Returns:
+        FloodFillResult: Result produced by the operation.
+
+    Example:
+        >>> result = flood_mask_from_percentile_tolerance(image=image_array, seed_point=1)
+    """
     return flood_mask(
         image=image,
         seed_point=seed_point,
@@ -152,6 +245,21 @@ def merge_flood_masks(
     tolerance_rel: float | None = None,
     connectivity: int = 1,
 ) -> np.ndarray:
+    """Merge flood masks into a combined result.
+
+    Args:
+        image (ArrayLike): Input image array to process.
+        seed_points (Iterable[Sequence[int]]): Numerical value controlling seed points.
+        tolerance (float | None): Numerical value controlling tolerance. ``None`` selects the function's default behavior.
+        tolerance_rel (float | None): Numerical value controlling tolerance rel. ``None`` selects the function's default behavior.
+        connectivity (int): Numerical value controlling connectivity. Defaults to ``1``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = merge_flood_masks(image=image_array, seed_points=1)
+    """
     arr = _validate_image(image)
     merged = np.zeros(arr.shape, dtype=bool)
 
@@ -169,6 +277,21 @@ def merge_flood_masks(
 
 
 def mask_to_uint8(mask: ArrayLike, true_value: int = 255) -> np.ndarray:
+    """Return mask to uint8 for the supplied inputs.
+
+    Args:
+        mask (ArrayLike): Binary or labeled segmentation mask associated with the input image.
+        true_value (int): Numerical value controlling true value. Defaults to ``255``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = mask_to_uint8(mask=image_array)
+    """
     if not (0 <= int(true_value) <= 255):
         raise ValueError("`true_value` must be in [0, 255].")
 
@@ -183,6 +306,22 @@ def apply_mask(
     mask: ArrayLike,
     background_value: int | float = 0,
 ) -> np.ndarray:
+    """Apply the configured operation to mask.
+
+    Args:
+        image (ArrayLike): Input image array to process.
+        mask (ArrayLike): Binary or labeled segmentation mask associated with the input image.
+        background_value (int | float): Numerical value controlling background value. Defaults to ``0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_mask(image=image_array, mask=image_array)
+    """
     arr = np.asarray(image)
     m = np.asarray(mask, dtype=bool)
 
@@ -197,9 +336,16 @@ def apply_mask(
 
 
 def default_floodfill_results_dir(project_root: Path | None = None) -> Path:
-    """
-    Optional helper for later runner scripts.
-    Returns a standard project-relative folder for flood-fill outputs.
+    """Optional helper for later runner scripts. Returns a standard project-relative folder for flood-fill outputs.
+
+    Args:
+        project_root (Path | None): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_floodfill_results_dir()
     """
     root = project_root or find_project_root(Path(__file__).resolve())
     return ensure_dir(root / "results" / "segmented" / "floodfill")

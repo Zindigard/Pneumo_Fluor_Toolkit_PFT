@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for principal-component analysis result maskt core."""
+
 from __future__ import annotations
 
 import csv
@@ -46,6 +48,16 @@ class PCAMaskAlignmentConfig:
     final_values_subfolder: str = "pca_alignment"
 
     def validate(self) -> None:
+        """Validate the requested operation against the required constraints.
+
+        Raises:
+            FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = PCAMaskAlignmentConfig(...)
+            >>> instance.validate()
+        """
         self.project_root = Path(self.project_root).expanduser().resolve()
         self.prediction_run_dir = Path(self.prediction_run_dir).expanduser().resolve()
         self.method = normalize_method(self.method)
@@ -98,6 +110,20 @@ class PCAMaskAlignmentConfig:
 
 
 def normalize_method(method: str) -> str:
+    """Normalize method using the configured procedure.
+
+    Args:
+        method (str): Text value specifying method.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_method(method="method")
+    """
     value = str(method).strip().lower().replace("-", "_")
     aliases = {
         "cell_pose": "cellpose",
@@ -113,6 +139,20 @@ def normalize_method(method: str) -> str:
 
 
 def normalize_dataset(dataset: str) -> str:
+    """Normalize dataset using the configured procedure.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_dataset(dataset="2d_time")
+    """
     value = str(dataset).strip().lower().replace("-", "_")
     aliases = {
         "2dtime": "2d_time",
@@ -136,7 +176,23 @@ def _prediction_root_candidates(
     method: str,
     dataset: str,
 ) -> list[Path]:
-    """Return portable candidate roots used by the existing segmentation scripts."""
+    """Return portable candidate roots used by the existing segmentation scripts.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        method (str): Text value specifying method.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _prediction_root_candidates(
+        ...     project_root=Path("path/to/resource"),
+        ...     method="method",
+        ...     dataset="2d_time",
+        ... )
+    """
     method = normalize_method(method)
     dataset = normalize_dataset(dataset)
     results = Path(project_root) / "results"
@@ -161,7 +217,17 @@ def _prediction_root_candidates(
 
 
 def find_mask_path(sample_dir: Path) -> Path | None:
-    """Find the source label mask in one sample prediction directory."""
+    """Find the source label mask in one sample prediction directory.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_mask_path(sample_dir=Path("path/to/resource"))
+    """
     sample_dir = Path(sample_dir)
     candidates = (
         sample_dir / "labels.tif",
@@ -178,7 +244,17 @@ def find_mask_path(sample_dir: Path) -> Path | None:
 
 
 def list_mask_samples(prediction_run_dir: Path) -> list[tuple[str, Path, Path]]:
-    """List ``(sample_name, sample_directory, mask_path)`` entries."""
+    """List ``(sample_name, sample_directory, mask_path)`` entries.
+
+    Args:
+        prediction_run_dir (Path): Directory used for prediction run.
+
+    Returns:
+        list[tuple[str, Path, Path]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_mask_samples(prediction_run_dir=Path("path/to/resource"))
+    """
     prediction_run_dir = Path(prediction_run_dir)
     if not prediction_run_dir.exists():
         return []
@@ -199,7 +275,23 @@ def discover_prediction_runs(
     method: str,
     dataset: str,
 ) -> list[Path]:
-    """Discover model/run directories without using computer-specific paths."""
+    """Discover model/run directories without using computer-specific paths.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        method (str): Text value specifying method.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_prediction_runs(
+        ...     project_root=Path("path/to/resource"),
+        ...     method="method",
+        ...     dataset="2d_time",
+        ... )
+    """
     project_root = Path(project_root).expanduser().resolve()
     runs: list[Path] = []
 
@@ -229,6 +321,22 @@ def discover_prediction_runs(
 
 
 def _load_label_mask(path: Path, dataset: str) -> tuple[np.ndarray, str]:
+    """Load label mask from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_label_mask(path=Path("path/to/resource"), dataset="2d_time")
+    """
     path = Path(path)
     if path.suffix.lower() in {".tif", ".tiff"}:
         labels = np.asarray(tiff.imread(path))
@@ -262,7 +370,17 @@ def _load_label_mask(path: Path, dataset: str) -> tuple[np.ndarray, str]:
 
 
 def _ensure_instance_labels(plane: np.ndarray) -> tuple[np.ndarray, bool]:
-    """Convert a binary mask to connected-component labels when necessary."""
+    """Convert a binary mask to connected-component labels when necessary.
+
+    Args:
+        plane (np.ndarray): Array containing plane.
+
+    Returns:
+        tuple[np.ndarray, bool]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _ensure_instance_labels(plane=image_array)
+    """
     plane = np.asarray(plane)
     positive = plane[plane > 0]
     if positive.size == 0:
@@ -277,7 +395,17 @@ def _ensure_instance_labels(plane: np.ndarray) -> tuple[np.ndarray, bool]:
 
 
 def _pca_orientation(binary: np.ndarray) -> dict[str, float | bool]:
-    """Calculate the major PCA axis for one binary object in image coordinates."""
+    """Calculate the major PCA axis for one binary object in image coordinates.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+
+    Returns:
+        dict[str, float | bool]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _pca_orientation(binary=image_array)
+    """
     yy, xx = np.nonzero(binary)
     area = int(xx.size)
     if area < 3:
@@ -322,6 +450,18 @@ def _pca_orientation(binary: np.ndarray) -> dict[str, float | bool]:
 
 
 def _tight_crop(binary: np.ndarray, padding: int = 0) -> np.ndarray:
+    """Return tight crop for the supplied inputs.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+        padding (int): Numerical value controlling padding. Defaults to ``0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _tight_crop(binary=image_array)
+    """
     yy, xx = np.nonzero(binary)
     if xx.size == 0:
         return np.zeros((1, 1), dtype=bool)
@@ -338,9 +478,22 @@ def _rotate_to_horizontal(
     angle_deg: float,
     padding: int,
 ) -> np.ndarray:
-    """
-    Rotate one object so its major PCA axis becomes horizontal.
+    """Rotate one object so its major PCA axis becomes horizontal.
 
+    Args:
+        binary (np.ndarray): Array containing binary.
+        angle_deg (float): Numerical value controlling angle deg.
+        padding (int): Numerical value controlling padding.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _rotate_to_horizontal(
+        ...     binary=image_array,
+        ...     angle_deg=0.5,
+        ...     padding=1,
+        ... )
     """
     source = _tight_crop(binary, padding=max(1, padding))
     rotated = ndi.rotate(
@@ -366,6 +519,27 @@ def _paste_centered(
     """Paste an aligned cell around its original centroid.
 
     Returns ``(placed_pixels, collision_pixels, clipped_pixels)``.
+
+    Args:
+        destination (np.ndarray): Array containing destination.
+        cell_crop (np.ndarray): Array containing cell crop.
+        label_value (int): Numerical value controlling label value.
+        centroid_y (float): Numerical value controlling centroid y.
+        centroid_x (float): Numerical value controlling centroid x.
+        collision_policy (CollisionPolicy): Value specifying collision policy for the operation.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _paste_centered(
+        ...     destination=image_array,
+        ...     cell_crop=image_array,
+        ...     label_value=1,
+        ...     centroid_y=0.5,
+        ...     centroid_x=0.5,
+        ...     collision_policy=...,
+        ... )
     """
     height, width = cell_crop.shape
     y0 = int(round(centroid_y - (height - 1) / 2.0))
@@ -407,6 +581,17 @@ def _paste_centered(
 
 
 def _label_dtype(labels: np.ndarray) -> np.dtype:
+    """Return label dtype for the supplied inputs.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+
+    Returns:
+        np.dtype: Result produced by the operation.
+
+    Example:
+        >>> result = _label_dtype(labels=image_array)
+    """
     maximum = int(np.max(labels)) if labels.size else 0
     if maximum <= np.iinfo(np.uint16).max:
         return np.dtype(np.uint16)
@@ -416,6 +601,23 @@ def _label_dtype(labels: np.ndarray) -> np.dtype:
 
 
 def _save_omezarr(path: Path, labels: np.ndarray, axes: str) -> None:
+    """Save OME-Zarr to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _save_omezarr(
+        ...     path=Path("path/to/resource"),
+        ...     labels=image_array,
+        ...     axes="axes",
+        ... )
+    """
     try:
         from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
     except ImportError as exc:
@@ -434,6 +636,17 @@ def _save_omezarr(path: Path, labels: np.ndarray, axes: str) -> None:
 
 
 def _serializable_config(cfg: PCAMaskAlignmentConfig) -> dict[str, Any]:
+    """Return serializable config for the supplied inputs.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _serializable_config(cfg=config)
+    """
     data = asdict(cfg)
     data["project_root"] = str(cfg.project_root)
     data["prediction_run_dir"] = str(cfg.prediction_run_dir)
@@ -443,6 +656,15 @@ def _serializable_config(cfg: PCAMaskAlignmentConfig) -> dict[str, Any]:
 
 
 def _write_records_csv(path: Path, records: list[dict[str, Any]]) -> None:
+    """Write records CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        records (list[dict[str, Any]]): Text value specifying records.
+
+    Example:
+        >>> _write_records_csv(path=Path("path/to/resource"), records="records")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not records:
         path.write_text("", encoding="utf-8")
@@ -460,6 +682,25 @@ def _save_cell_crop(
     label_value: int,
     z_index: int | None,
 ) -> Path:
+    """Save cell crop to persistent storage.
+
+    Args:
+        cells_root (Path): Directory used for cells.
+        cell_crop (np.ndarray): Array containing cell crop.
+        label_value (int): Numerical value controlling label value.
+        z_index (int | None): Zero-based axial slice index selected from a three-dimensional volume.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_cell_crop(
+        ...     cells_root=Path("path/to/resource"),
+        ...     cell_crop=image_array,
+        ...     label_value=1,
+        ...     z_index=1,
+        ... )
+    """
     if z_index is None:
         out_dir = cells_root
         filename = f"cell_label_{label_value:06d}.tif"
@@ -478,6 +719,25 @@ def _align_plane(
     cells_root: Path | None,
     z_index: int | None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], bool]:
+    """Align plane using the configured spatial reference.
+
+    Args:
+        source_plane (np.ndarray): Array containing source plane.
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        cells_root (Path | None): Directory used for cells.
+        z_index (int | None): Zero-based axial slice index selected from a three-dimensional volume.
+
+    Returns:
+        tuple[np.ndarray, list[dict[str, Any]], bool]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _align_plane(
+        ...     source_plane=image_array,
+        ...     cfg=config,
+        ...     cells_root=Path("path/to/resource"),
+        ...     z_index=1,
+        ... )
+    """
     instance_plane, binary_was_relabelled = _ensure_instance_labels(source_plane)
     aligned = np.zeros(instance_plane.shape, dtype=np.int64)
 
@@ -596,7 +856,17 @@ def _align_plane(
 
 
 def _safe_slug(value: str) -> str:
-    """Create a filesystem-safe identifier for CSV filenames."""
+    """Create a filesystem-safe identifier for CSV filenames.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_slug(value="value")
+    """
     text = str(value).strip()
     allowed = []
     for char in text:
@@ -609,11 +879,19 @@ def _safe_slug(value: str) -> str:
 
 
 def _final_values_root(cfg: PCAMaskAlignmentConfig) -> Path:
-    """
-    Directory used by the graph-generation scripts.
+    """Directory used by the graph-generation scripts.
 
     Graph scripts read CSV files from:
         results/final_values
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _final_values_root(cfg=config)
     """
     path = Path(cfg.project_root) / "results" / "final_values" / cfg.final_values_subfolder
     path.mkdir(parents=True, exist_ok=True)
@@ -628,11 +906,31 @@ def _add_alignment_metadata(
     sample_dir: Path,
     output_dir: Path,
 ) -> list[dict[str, Any]]:
-    """
-    Add graph-friendly metadata columns to per-cell PCA records.
+    """Add graph-friendly metadata columns to per-cell PCA records.
 
     The resulting CSV can be selected directly by the graph launcher from
     results/final_values.
+
+    Args:
+        records (list[dict[str, Any]]): Text value specifying records.
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        sample_name (str): Text value specifying sample name.
+        mask_path (Path): Filesystem path associated with mask.
+        sample_dir (Path): Directory used for sample.
+        output_dir (Path): Directory where generated resources are written.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _add_alignment_metadata(
+        ...     records="records",
+        ...     cfg=config,
+        ...     sample_name="sample_name",
+        ...     mask_path=Path("path/to/resource"),
+        ...     sample_dir=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ... )
     """
     enriched: list[dict[str, Any]] = []
     for record in records:
@@ -654,7 +952,23 @@ def _write_final_values_sample_csv(
     cfg: PCAMaskAlignmentConfig,
     sample_name: str,
 ) -> Path:
-    """Write one graph-ready PCA-alignment CSV for one sample."""
+    """Write one graph-ready PCA-alignment CSV for one sample.
+
+    Args:
+        records (list[dict[str, Any]]): Text value specifying records.
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        sample_name (str): Text value specifying sample name.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_final_values_sample_csv(
+        ...     records="records",
+        ...     cfg=config,
+        ...     sample_name="sample_name",
+        ... )
+    """
     final_root = _final_values_root(cfg)
     filename = (
         f"pca_alignment_{_safe_slug(cfg.dataset)}_"
@@ -669,10 +983,19 @@ def _write_final_values_combined_csv(
     cfg: PCAMaskAlignmentConfig,
     output_dirs: list[Path],
 ) -> Path | None:
-    """
-    Combine all sample-level pca_alignment.csv files into one graph-ready CSV.
+    """Combine all sample-level pca_alignment.csv files into one graph-ready CSV.
 
     This file is convenient for plots across all selected samples.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        output_dirs (list[Path]): Filesystem path used for output dirs.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_final_values_combined_csv(cfg=config, output_dirs=Path("path/to/resource"))
     """
     all_rows: list[dict[str, Any]] = []
     fieldnames: list[str] = []
@@ -716,7 +1039,27 @@ def align_mask_file(
     cfg: PCAMaskAlignmentConfig,
     sample_name: str | None = None,
 ) -> Path:
-    """Align all instances in one 2D or slice-wise 3D label mask."""
+    """Align all instances in one 2D or slice-wise 3D label mask.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+        sample_dir (Path): Directory used for sample.
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        sample_name (str | None): Text value specifying sample name. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = align_mask_file(
+        ...     mask_path=Path("path/to/resource"),
+        ...     sample_dir=Path("path/to/resource"),
+        ...     cfg=config,
+        ... )
+    """
     mask_path = Path(mask_path)
     sample_dir = Path(sample_dir)
     labels, axes = _load_label_mask(mask_path, cfg.dataset)
@@ -830,7 +1173,21 @@ def align_mask_file(
 
 
 def run_pca_alignment(cfg: PCAMaskAlignmentConfig) -> list[Path]:
-    """Run PCA alignment for the configured prediction run and samples."""
+    """Run PCA alignment for the configured prediction run and samples.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_pca_alignment(cfg=config)
+    """
     cfg.validate()
     available = list_mask_samples(cfg.prediction_run_dir)
     if not available:
@@ -880,6 +1237,21 @@ def _run_for_dataset(
     cfg: PCAMaskAlignmentConfig,
     expected_dataset: str,
 ) -> list[Path]:
+    """Run for dataset using the supplied configuration.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+        expected_dataset (str): Text value specifying expected dataset.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _run_for_dataset(cfg=config, expected_dataset="expected_dataset")
+    """
     actual = normalize_dataset(cfg.dataset)
     if actual != expected_dataset:
         raise ValueError(
@@ -892,21 +1264,51 @@ def _run_for_dataset(
 def run_pca_alignment_2d_time(
     cfg: PCAMaskAlignmentConfig,
 ) -> list[Path]:
-    """Align Cellpose, Omnipose, or StarDist masks for the 2D time dataset."""
+    """Align Cellpose, Omnipose, or StarDist masks for the 2D time dataset.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_pca_alignment_2d_time(cfg=config)
+    """
     return _run_for_dataset(cfg, "2d_time")
 
 
 def run_pca_alignment_2d_wga_dapi(
     cfg: PCAMaskAlignmentConfig,
 ) -> list[Path]:
-    """Align masks for the 2D WGA-DAPI dataset."""
+    """Align masks for the 2D WGA-DAPI dataset.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_pca_alignment_2d_wga_dapi(cfg=config)
+    """
     return _run_for_dataset(cfg, "2d_wga_dapi")
 
 
 def run_pca_alignment_3d(
     cfg: PCAMaskAlignmentConfig,
 ) -> list[Path]:
-    """Align each z-plane independently for the current slice-wise 3D masks."""
+    """Align each z-plane independently for the current slice-wise 3D masks.
+
+    Args:
+        cfg (PCAMaskAlignmentConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_pca_alignment_3d(cfg=config)
+    """
     return _run_for_dataset(cfg, "3d")
 
 

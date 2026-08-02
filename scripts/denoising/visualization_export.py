@@ -1,4 +1,4 @@
-"""
+r"""
 Unified visualization and image-export command for the PFT project.
 
 The command reads OME-Zarr images produced by the PFT pipeline and can:
@@ -20,6 +20,24 @@ created. Every task is also available through command-line arguments.
 Difference images are computed from the numeric source
 arrays before display normalization. A CSV manifest is written for every run so
 that generated figures can be traced to their source files and parameters.
+
+
+Examples
+--------
+Interactive task selection:
+
+    python scripts/denoising/visualization_export.py
+
+Export normalized and RGB views from one OME-Zarr:
+
+    python scripts/denoising/visualization_export.py \
+        --task export \
+        --input results/img/2d_time/WT_HADA_NHS_40min_ROI1_SIM/image.ome.zarr \
+        --level 0 \
+        --view both \
+        --channels all \
+        --scale-bar-um 2 \
+        --dpi 300
 """
 
 from __future__ import annotations
@@ -45,21 +63,17 @@ SCRIPT_PATH = Path(__file__).resolve()
 def find_project_root(start: Path | None = None) -> Path:
     """Return the repository root containing ``scripts`` and ``src/PFT``.
 
-    Parameters
-    ----------
-    start:
-        File or directory from which the upward search should begin. The
-        physical location of this script is used by default.
+    Args:
+        start (Path | None): File or directory from which the upward search should begin. The physical location of this script is used by default.
 
-    Returns
-    -------
-    pathlib.Path
-        Absolute repository-root path.
+    Returns:
+        Path: Resolved or generated filesystem path.
 
-    Raises
-    ------
-    RuntimeError
-        If the expected PFT repository layout cannot be found.
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
     """
     current = (start or SCRIPT_PATH).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -145,7 +159,17 @@ class ManifestRecord:
 
 
 def require_zarr():
-    """Import and return :mod:`zarr` with a project-specific error message."""
+    """Import and return :mod:`zarr` with a project-specific error message.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = require_zarr()
+    """
     try:
         import zarr
     except Exception as exc:  # pragma: no cover - depends on user environment
@@ -157,7 +181,17 @@ def require_zarr():
 
 
 def is_ome_zarr_store(path: Path) -> bool:
-    """Return ``True`` when *path* appears to be an OME-Zarr directory."""
+    """Return ``True`` when *path* appears to be an OME-Zarr directory.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_ome_zarr_store(path=Path("path/to/resource"))
+    """
     if not path.is_dir():
         return False
     if path.name.lower().endswith(".ome.zarr"):
@@ -169,6 +203,15 @@ def discover_ome_zarr(root: Path) -> list[Path]:
     """Return unique OME-Zarr stores found recursively below *root*.
 
     Nested internal Zarr groups are excluded by retaining only top-level stores.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_ome_zarr(root=Path("path/to/resource"))
     """
     root = root.expanduser().resolve()
     if is_ome_zarr_store(root):
@@ -187,7 +230,18 @@ def discover_ome_zarr(root: Path) -> list[Path]:
 
 
 def _axes_string(value: Any, ndim: int) -> str:
-    """Convert OME-NGFF axis metadata to a lowercase axis string."""
+    """Convert OME-NGFF axis metadata to a lowercase axis string.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _axes_string(value=..., ndim=1)
+    """
     if isinstance(value, str) and len(value) == ndim:
         return value.lower()
     if isinstance(value, list):
@@ -206,7 +260,26 @@ def _axes_string(value: Any, ndim: int) -> str:
 
 
 def _multiscales_info(attrs: dict[str, Any], level: int, ndim: int) -> tuple[str, str, dict[str, float]]:
-    """Extract axes, array path and physical scale for one multiscale level."""
+    """Extract axes, array path and physical scale for one multiscale level.
+
+    Args:
+        attrs (dict[str, Any]): Attribute mapping read from or written to the associated data resource.
+        level (int): Numerical value controlling level.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        tuple[str, str, dict[str, float]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _multiscales_info(
+        ...     attrs="attrs",
+        ...     level=1,
+        ...     ndim=1,
+        ... )
+    """
     multiscales = attrs.get("multiscales")
     axes = ""
     level_path = str(level)
@@ -243,17 +316,19 @@ def _multiscales_info(attrs: dict[str, Any], level: int, ndim: int) -> tuple[str
 def open_ome_image(path: Path, level: int = 0) -> OmeImage:
     """Open one OME-Zarr level in read-only mode.
 
-    Parameters
-    ----------
-    path:
-        OME-Zarr directory.
-    level:
-        Zero-based multiscale level.
+    Args:
+        path (Path): OME-Zarr directory.
+        level (int): Zero-based multiscale level.
 
-    Returns
-    -------
-    OmeImage
-        Array, axes, channel labels, scale metadata and root attributes.
+    Returns:
+        OmeImage: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = open_ome_image(path=Path("path/to/resource"))
     """
     zarr = require_zarr()
     path = path.expanduser().resolve()
@@ -298,7 +373,22 @@ def open_ome_image(path: Path, level: int = 0) -> OmeImage:
 
 
 def parse_channels(text: str | None, channel_count: int) -> tuple[int, ...]:
-    """Parse ``all`` or a comma-separated channel list into validated indices."""
+    """Parse ``all`` or a comma-separated channel list into validated indices.
+
+    Args:
+        text (str | None): Text value specifying text.
+        channel_count (int): Number of channel used by the operation.
+
+    Returns:
+        tuple[int, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = parse_channels(text="text", channel_count=1)
+    """
     if text is None or text.strip().lower() in {"", "all", "*"}:
         return tuple(range(channel_count))
     result: list[int] = []
@@ -317,7 +407,18 @@ def parse_channels(text: str | None, channel_count: int) -> tuple[int, ...]:
 
 
 def axis_size(image: OmeImage, axis: str) -> int:
-    """Return the size of *axis*, or one when the axis is absent."""
+    """Return the size of *axis*, or one when the axis is absent.
+
+    Args:
+        image (OmeImage): Input image array to process.
+        axis (str): Array axis along which the operation is performed.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = axis_size(image=image_array, axis="axis")
+    """
     return int(image.array.shape[image.axes.index(axis)]) if axis in image.axes else 1
 
 
@@ -332,6 +433,22 @@ def select_plane_cyx(
 
     All unsupported non-spatial axes are fixed at index zero. Missing channel
     axes are inserted as a singleton dimension.
+
+    Args:
+        image (OmeImage): Input image array to process.
+        time_index (int): Zero-based time-point index selected from a time series. Defaults to ``0``.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume. Defaults to ``0``.
+        channels (Sequence[int] | None): Channel indices or identifiers selected for processing. ``None`` selects the function's default behavior.
+
+    Returns:
+        PlaneData: Result produced by the operation.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = select_plane_cyx(image=image_array)
     """
     axes = image.axes
     if "y" not in axes or "x" not in axes:
@@ -382,7 +499,23 @@ def select_plane_cyx(
 
 
 def percentile_limits(array: np.ndarray, p_low: float, p_high: float) -> tuple[float, float]:
-    """Return finite percentile limits suitable for display normalization."""
+    """Return finite percentile limits suitable for display normalization.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = percentile_limits(
+        ...     array=image_array,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ... )
+    """
     values = np.asarray(array, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -396,7 +529,23 @@ def percentile_limits(array: np.ndarray, p_low: float, p_high: float) -> tuple[f
 
 
 def normalize_with_limits(array: np.ndarray, low: float, high: float) -> np.ndarray:
-    """Map an array linearly to ``float32`` values in the interval ``[0, 1]``."""
+    """Map an array linearly to ``float32`` values in the interval ``[0, 1]``.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        low (float): Numerical value controlling low.
+        high (float): Numerical value controlling high.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = normalize_with_limits(
+        ...     array=image_array,
+        ...     low=0.5,
+        ...     high=0.5,
+        ... )
+    """
     result = (np.asarray(array, dtype=np.float32) - low) / max(high - low, 1e-12)
     return np.clip(result, 0.0, 1.0).astype(np.float32, copy=False)
 
@@ -413,6 +562,25 @@ def normalize_cyx(
     Using the raw image as the reference gives raw and processed panels the same
     intensity mapping and prevents visual differences caused only by independent
     contrast stretching.
+
+    Args:
+        cyx (np.ndarray): Array containing cyx.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+        reference_cyx (np.ndarray | None): Array containing reference cyx. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[np.ndarray, list[tuple[float, float]]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_cyx(
+        ...     cyx=image_array,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ... )
     """
     source = np.asarray(reference_cyx if reference_cyx is not None else cyx)
     target = np.asarray(cyx)
@@ -434,6 +602,16 @@ def compose_rgb(cyx01: np.ndarray, *, single_color: str = "gray") -> np.ndarray:
     DAPI/WGA convention. Channel two is mapped to red. Additional channels are
     added equally to all RGB components. A single channel can be shown in gray,
     blue or green.
+
+    Args:
+        cyx01 (np.ndarray): Array containing cyx01.
+        single_color (str): Text value specifying single color. Defaults to ``"gray"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = compose_rgb(cyx01=image_array)
     """
     cyx01 = np.asarray(cyx01, dtype=np.float32)
     channels, height, width = cyx01.shape
@@ -471,6 +649,24 @@ def difference_red_rgb(
     The scalar difference is the mean absolute difference across selected
     channels. It is normalized only for display using the requested percentile.
     Numeric difference statistics remain based on the unnormalized values.
+
+    Args:
+        raw_cyx (np.ndarray): Array containing raw cyx.
+        processed_cyx (np.ndarray): Array containing processed cyx.
+        percentile (float): Percentile used for robust intensity scaling or threshold estimation.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = difference_red_rgb(
+        ...     raw_cyx=image_array,
+        ...     processed_cyx=image_array,
+        ...     percentile=0.5,
+        ... )
     """
     raw = np.asarray(raw_cyx, dtype=np.float32)
     processed = np.asarray(processed_cyx, dtype=np.float32)
@@ -486,7 +682,17 @@ def difference_red_rgb(
 
 
 def _matplotlib_pyplot(gui: bool = False):
-    """Return Matplotlib pyplot with an interactive or non-interactive backend."""
+    """Return Matplotlib pyplot with an interactive or non-interactive backend.
+
+    Args:
+        gui (bool): Boolean flag controlling graphical user interface. Defaults to ``False``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _matplotlib_pyplot()
+    """
     import matplotlib
 
     if not gui:
@@ -505,22 +711,19 @@ def add_scalebar(
 ) -> None:
     """Draw a high-contrast scale bar on a displayed microscopy image.
 
-    Parameters
-    ----------
-    axis:
-        Matplotlib axis containing the displayed image.
-    pixel_size_um_x:
-        Physical pixel size along the X axis in micrometres per pixel.
-    image_shape_yx:
-        Displayed image shape as ``(height, width)`` in pixels.
-    bar_um:
-        Scale-bar length in micrometres. The N2V workflow uses 2 µm by
-        default through ``--scale-bar-um 2.0``.
+    Args:
+        axis (Any): Matplotlib axis containing the displayed image.
+        pixel_size_um_x (float | None): Physical pixel size along the X axis in micrometres per pixel.
+        image_shape_yx (tuple[int, int]): Displayed image shape as ``(height, width)`` in pixels.
+        bar_um (float): Scale-bar length in micrometres. The N2V workflow uses 2 µm by default through ``--scale-bar-um 2.0``.
 
-    Notes
-    -----
-    A black outline is applied to the white bar and label so that the scale bar
-    remains visible on both bright and dark fluorescence regions.
+    Example:
+        >>> add_scalebar(
+        ...     axis=...,
+        ...     pixel_size_um_x=0.5,
+        ...     image_shape_yx=1,
+        ...     bar_um=0.5,
+        ... )
     """
     if pixel_size_um_x is None or pixel_size_um_x <= 0 or bar_um <= 0:
         return
@@ -565,7 +768,20 @@ def add_scalebar(
 
 
 def requested_formats(value: str) -> tuple[str, ...]:
-    """Convert ``png``, ``tiff`` or ``both`` to concrete filename suffixes."""
+    """Convert ``png``, ``tiff`` or ``both`` to concrete filename suffixes.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        tuple[str, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = requested_formats(value="value")
+    """
     value = value.lower()
     if value == "both":
         return ("png", "tiff")
@@ -575,7 +791,18 @@ def requested_formats(value: str) -> tuple[str, ...]:
 
 
 def save_rgb_array(rgb01: np.ndarray, path: Path) -> None:
-    """Save an RGB float image as PNG or 16-bit RGB TIFF."""
+    """Save an RGB float image as PNG or 16-bit RGB TIFF.
+
+    Args:
+        rgb01 (np.ndarray): Array containing rgb01.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> save_rgb_array(rgb01=image_array, path=Path("path/to/resource"))
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     rgb = np.clip(np.asarray(rgb01, dtype=np.float32), 0.0, 1.0)
     if path.suffix.lower() == ".png":
@@ -587,7 +814,18 @@ def save_rgb_array(rgb01: np.ndarray, path: Path) -> None:
 
 
 def save_gray_array(gray01: np.ndarray, path: Path) -> None:
-    """Save a normalized grayscale image as PNG or unsigned 16-bit TIFF."""
+    """Save a normalized grayscale image as PNG or unsigned 16-bit TIFF.
+
+    Args:
+        gray01 (np.ndarray): Array containing gray01.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> save_gray_array(gray01=image_array, path=Path("path/to/resource"))
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     gray = np.clip(np.asarray(gray01, dtype=np.float32), 0.0, 1.0)
     if path.suffix.lower() == ".png":
@@ -614,6 +852,31 @@ def save_single_panel(
     This function is used for the separately exported RAW and N2V images so
     that they contain the same physical scale annotation as the combined
     comparison figure.
+
+    Args:
+        panel_rgb (np.ndarray): Array containing panel RGB representation.
+        output_base (Path): Filesystem path used for output base.
+        formats (Sequence[str]): Text value specifying formats.
+        title (str): Title displayed on the generated figure or report section.
+        pixel_size_um_x (float | None): Numerical value controlling pixel size um x.
+        scale_bar_um (float): Numerical value controlling scale bar um.
+        show_scalebar (bool): Boolean flag controlling show scalebar.
+        dpi (int): Resolution of a generated figure in dots per inch.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_single_panel(
+        ...     panel_rgb=image_array,
+        ...     output_base=Path("path/to/resource"),
+        ...     formats="formats",
+        ...     title="title",
+        ...     pixel_size_um_x=0.5,
+        ...     scale_bar_um=0.5,
+        ...     show_scalebar=True,
+        ...     dpi=1,
+        ... )
     """
     plt = _matplotlib_pyplot(gui=False)
     figure, axis = plt.subplots(1, 1, figsize=(5, 5), constrained_layout=True)
@@ -660,6 +923,39 @@ def save_three_panel(
     Scale bars are drawn on both biological-image panels, RAW and processed.
     The numerical difference panel is left without a scale bar because it is a
     derived intensity-change visualization rather than a separate acquisition.
+
+    Args:
+        raw_rgb (np.ndarray): Array containing raw RGB representation.
+        processed_rgb (np.ndarray): Array containing processed RGB representation.
+        difference_rgb (np.ndarray): Array containing difference RGB representation.
+        output_base (Path): Filesystem path used for output base.
+        formats (Sequence[str]): Text value specifying formats.
+        raw_title (str): Text value specifying raw title.
+        processed_title (str): Text value specifying processed title.
+        difference_title (str): Text value specifying difference title.
+        pixel_size_um_x (float | None): Numerical value controlling pixel size um x.
+        scale_bar_um (float): Numerical value controlling scale bar um.
+        show_scalebar (bool): Boolean flag controlling show scalebar.
+        dpi (int): Resolution of a generated figure in dots per inch.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_three_panel(
+        ...     raw_rgb=image_array,
+        ...     processed_rgb=image_array,
+        ...     difference_rgb=image_array,
+        ...     output_base=Path("path/to/resource"),
+        ...     formats="formats",
+        ...     raw_title="raw_title",
+        ...     processed_title="processed_title",
+        ...     difference_title="difference_title",
+        ...     pixel_size_um_x=0.5,
+        ...     scale_bar_um=0.5,
+        ...     show_scalebar=True,
+        ...     dpi=1,
+        ... )
     """
     plt = _matplotlib_pyplot(gui=False)
     figure, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
@@ -691,7 +987,18 @@ def save_three_panel(
 
 
 def write_manifest(records: Sequence[ManifestRecord], output_dir: Path) -> Path:
-    """Write generated-output provenance to a CSV manifest."""
+    """Write generated-output provenance to a CSV manifest.
+
+    Args:
+        records (Sequence[ManifestRecord]): Value specifying records for the operation.
+        output_dir (Path): Directory where generated resources are written.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = write_manifest(records="records", output_dir=Path("path/to/resource"))
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "visualization_export_manifest.csv"
     fieldnames = list(ManifestRecord.__dataclass_fields__)
@@ -704,12 +1011,33 @@ def write_manifest(records: Sequence[ManifestRecord], output_dir: Path) -> Path:
 
 
 def sample_name_from_zarr(path: Path) -> str:
-    """Return a stable sample name from a standard ``sample/image.ome.zarr`` path."""
+    """Return a stable sample name from a standard ``sample/image.ome.zarr`` path.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = sample_name_from_zarr(path=Path("path/to/resource"))
+    """
     return path.parent.name if path.name.lower() == "image.ome.zarr" else path.stem.replace(".ome", "")
 
 
 def _safe_relative_name(path: Path, root: Path | None = None) -> str:
-    """Create a filesystem-safe name from a path, optionally relative to a root."""
+    """Create a filesystem-safe name from a path, optionally relative to a root.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        root (Path | None): Root directory used to resolve relative project paths. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_relative_name(path=Path("path/to/resource"))
+    """
     try:
         value = path.resolve().relative_to(root.resolve()) if root is not None else path.name
     except ValueError:
@@ -729,7 +1057,33 @@ def export_one_plane(
     p_high: float,
     single_color: str,
 ) -> list[ManifestRecord]:
-    """Export one selected plane as per-channel and/or RGB files."""
+    """Export one selected plane as per-channel and/or RGB files.
+
+    Args:
+        image (OmeImage): Input image array to process.
+        plane (PlaneData): Value specifying plane for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        view (str): Text value specifying view.
+        formats (Sequence[str]): Text value specifying formats.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+        single_color (str): Text value specifying single color.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = export_one_plane(
+        ...     image=image_array,
+        ...     plane=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     view="view",
+        ...     formats="formats",
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ...     single_color="single_color",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     normalized, _ = normalize_cyx(plane.cyx, p_low=p_low, p_high=p_high)
     stem = f"t{plane.time_index:03d}_z{plane.z_index:04d}"
@@ -807,7 +1161,20 @@ def export_one_plane(
 
 
 def run_export_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Execute OME-Zarr-to-TIFF/PNG export for one image or a recursive batch."""
+    """Execute OME-Zarr-to-TIFF/PNG export for one image or a recursive batch.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_export_task(args=...)
+    """
     input_path = Path(args.input).expanduser() if args.input else DEFAULT_IMAGE_ROOT
     stores = discover_ome_zarr(input_path)
     if not stores:
@@ -852,7 +1219,18 @@ def run_export_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def _read_provenance_value(attrs: dict[str, Any], key: str) -> Any:
-    """Read a provenance attribute from root attributes or ``pft_processing``."""
+    """Read a provenance attribute from root attributes or ``pft_processing``.
+
+    Args:
+        attrs (dict[str, Any]): Attribute mapping read from or written to the associated data resource.
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _read_provenance_value(attrs="attrs", key="key")
+    """
     if key in attrs:
         return attrs[key]
     processing = attrs.get("pft_processing")
@@ -866,6 +1244,18 @@ def infer_raw_from_n2v(n2v_path: Path) -> tuple[Path, int, tuple[int, ...], str]
 
     Provenance attributes are preferred. Standard PFT output-path inference is
     used for legacy N2V images.
+
+    Args:
+        n2v_path (Path): Filesystem path associated with Noise2Void result.
+
+    Returns:
+        tuple[Path, int, tuple[int, ...], str]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = infer_raw_from_n2v(n2v_path=Path("path/to/resource"))
     """
     n2v_image = open_ome_image(n2v_path, level=0)
     attrs = n2v_image.attrs
@@ -937,7 +1327,62 @@ def compare_pair(
     dpi: int,
     save_individuals: bool,
 ) -> list[ManifestRecord]:
-    """Create one raw/processed/red-difference comparison and manifest records."""
+    """Create one raw/processed/red-difference comparison and manifest records.
+
+    Args:
+        raw_path (Path): Filesystem path associated with raw.
+        processed_path (Path): Filesystem path associated with processed.
+        task (str): Text value specifying task.
+        output_dir (Path): Directory where generated resources are written.
+        level (int): Numerical value controlling level.
+        raw_time (int): Numerical value controlling raw time.
+        raw_z (int): Numerical value controlling raw z.
+        processed_time (int): Numerical value controlling processed time.
+        processed_z (int): Numerical value controlling processed z.
+        channels (Sequence[int] | None): Channel indices or identifiers selected for processing.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+        diff_percentile (float): Numerical value controlling diff percentile.
+        single_color (str): Text value specifying single color.
+        formats (Sequence[str]): Text value specifying formats.
+        raw_label (str): Text value specifying raw label.
+        processed_label (str): Text value specifying processed label.
+        scale_bar_um (float): Numerical value controlling scale bar um.
+        show_scalebar (bool): Boolean flag controlling show scalebar.
+        dpi (int): Resolution of a generated figure in dots per inch.
+        save_individuals (bool): Boolean flag controlling save individuals.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = compare_pair(
+        ...     raw_path=Path("path/to/resource"),
+        ...     processed_path=Path("path/to/resource"),
+        ...     task="task",
+        ...     output_dir=Path("path/to/resource"),
+        ...     level=1,
+        ...     raw_time=1,
+        ...     raw_z=1,
+        ...     processed_time=1,
+        ...     processed_z=1,
+        ...     channels=1,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ...     diff_percentile=0.5,
+        ...     single_color="single_color",
+        ...     formats="formats",
+        ...     raw_label="raw_label",
+        ...     processed_label="processed_label",
+        ...     scale_bar_um=0.5,
+        ...     show_scalebar=True,
+        ...     dpi=1,
+        ...     save_individuals=True,
+        ... )
+    """
     raw_image = open_ome_image(raw_path, level=level)
     processed_image = open_ome_image(processed_path, level=level)
 
@@ -1109,7 +1554,20 @@ def compare_pair(
 
 
 def run_n2v_compare_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Create raw-versus-N2V three-panel comparisons for one pair or a batch."""
+    """Create raw-versus-N2V three-panel comparisons for one pair or a batch.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_n2v_compare_task(args=...)
+    """
     formats = requested_formats(args.format)
     processed_paths = discover_ome_zarr(Path(args.processed)) if args.processed else discover_ome_zarr(DEFAULT_N2V_ROOT)
     if not processed_paths:
@@ -1170,7 +1628,20 @@ def run_n2v_compare_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def run_generic_compare_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Compare two explicitly supplied OME-Zarr images."""
+    """Compare two explicitly supplied OME-Zarr images.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_generic_compare_task(args=...)
+    """
     if not args.raw or not args.processed:
         raise ValueError("The compare task requires both --raw and --processed.")
     raw_path = Path(args.raw).expanduser().resolve()
@@ -1206,7 +1677,18 @@ def run_generic_compare_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def pick_preview(folder: Path, pattern: str | None = None) -> Path | None:
-    """Return the preferred preview image within one sample directory."""
+    """Return the preferred preview image within one sample directory.
+
+    Args:
+        folder (Path): Filesystem path used for folder.
+        pattern (str | None): Text value specifying pattern. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = pick_preview(folder=Path("path/to/resource"))
+    """
     preferred = ["preview_norm.png", "preview_raw.png", "preview.png", "image_norm16_rgb.tif"]
     if pattern:
         matches = sorted(folder.glob(pattern))
@@ -1224,7 +1706,17 @@ def pick_preview(folder: Path, pattern: str | None = None) -> Path | None:
 
 
 def load_rgb_image(path: Path) -> Image.Image:
-    """Load an image as RGB, compositing transparency onto black."""
+    """Load an image as RGB, compositing transparency onto black.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        Image.Image: Result produced by the operation.
+
+    Example:
+        >>> result = load_rgb_image(path=Path("path/to/resource"))
+    """
     image = Image.open(path)
     if image.mode == "RGBA":
         background = Image.new("RGB", image.size, (0, 0, 0))
@@ -1234,7 +1726,26 @@ def load_rgb_image(path: Path) -> Image.Image:
 
 
 def create_collage_image(images: Sequence[Image.Image], *, columns: int, padding: int) -> Image.Image:
-    """Create a white-background collage using equally sized image cells."""
+    """Create a white-background collage using equally sized image cells.
+
+    Args:
+        images (Sequence[Image.Image]): Sequence or batch of input image arrays to process.
+        columns (int): Numerical value controlling columns.
+        padding (int): Numerical value controlling padding.
+
+    Returns:
+        Image.Image: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = create_collage_image(
+        ...     images=[],
+        ...     columns=1,
+        ...     padding=1,
+        ... )
+    """
     if not images:
         raise ValueError("At least one image is required for a collage.")
     columns = max(1, columns)
@@ -1261,7 +1772,20 @@ def create_collage_image(images: Sequence[Image.Image], *, columns: int, padding
 
 
 def run_collage_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Create one collage from sample preview images."""
+    """Create one collage from sample preview images.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_collage_task(args=...)
+    """
     input_root = Path(args.input_root or args.input or DEFAULT_IMAGE_ROOT).expanduser().resolve()
     folders = sorted(path for path in input_root.iterdir() if path.is_dir())
     if args.group_key:
@@ -1304,13 +1828,37 @@ def run_collage_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def iteration_number(path: Path) -> int:
-    """Return a numeric iteration label inferred from a path, or a large fallback."""
+    """Return a numeric iteration label inferred from a path, or a large fallback.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = iteration_number(path=Path("path/to/resource"))
+    """
     matches = re.findall(r"(?:iter(?:ation)?[_-]?)?(\d+)", str(path), flags=re.IGNORECASE)
     return int(matches[-1]) if matches else 10**9
 
 
 def run_iterations_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Create a horizontal panel containing raw and multiple processed iterations."""
+    """Create a horizontal panel containing raw and multiple processed iterations.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_iterations_task(args=...)
+    """
     if not args.raw:
         raise ValueError("The iterations task requires --raw.")
     if not args.processed_root:
@@ -1393,7 +1941,21 @@ def run_iterations_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def parse_roi(value: str, shape_yx: tuple[int, int]) -> tuple[int, int, int, int]:
-    """Parse ``y0,y1,x0,x1`` and clamp the crop to image bounds."""
+    """Parse ``y0,y1,x0,x1`` and clamp the crop to image bounds.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+        shape_yx (tuple[int, int]): Numerical value controlling shape yx.
+
+    Returns:
+        tuple[int, int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = parse_roi(value="value", shape_yx=1)
+    """
     parts = [int(part.strip()) for part in value.split(",")]
     if len(parts) != 4:
         raise ValueError("ROI must use the form y0,y1,x0,x1.")
@@ -1410,7 +1972,15 @@ class InteractiveCropper:
     """Matplotlib rectangle selector used by the interactive crop task."""
 
     def __init__(self, image_rgb: np.ndarray, title: str) -> None:
-        """Create the crop window and register selection callbacks."""
+        """Create the crop window and register selection callbacks.
+
+        Args:
+            image_rgb (np.ndarray): Array containing image RGB representation.
+            title (str): Title displayed on the generated figure or report section.
+
+        Example:
+            >>> instance = InteractiveCropper(image_rgb=image_array, title="title")
+        """
         plt = _matplotlib_pyplot(gui=True)
         from matplotlib.widgets import RectangleSelector
 
@@ -1431,7 +2001,16 @@ class InteractiveCropper:
         self.figure.canvas.mpl_connect("key_press_event", self._on_key)
 
     def _on_select(self, click: Any, release: Any) -> None:
-        """Store the rectangle selected with the mouse."""
+        """Store the rectangle selected with the mouse.
+
+        Args:
+            click (Any): Value specifying click for the operation.
+            release (Any): Value specifying release for the operation.
+
+        Example:
+            >>> instance = InteractiveCropper(...)
+            >>> instance._on_select(click=..., release=...)
+        """
         if None in (click.xdata, click.ydata, release.xdata, release.ydata):
             return
         x0, x1 = sorted((int(math.floor(click.xdata)), int(math.ceil(release.xdata))))
@@ -1439,7 +2018,15 @@ class InteractiveCropper:
         self.roi = (y0, y1, x0, x1)
 
     def _on_key(self, event: Any) -> None:
-        """Confirm with Enter or cancel with Escape."""
+        """Confirm with Enter or cancel with Escape.
+
+        Args:
+            event (Any): Event object supplied by the graphical user interface or callback framework.
+
+        Example:
+            >>> instance = InteractiveCropper(...)
+            >>> instance._on_key(event=event)
+        """
         if event.key == "enter":
             self.plt.close(self.figure)
         elif event.key == "escape":
@@ -1447,14 +2034,36 @@ class InteractiveCropper:
             self.plt.close(self.figure)
 
     def run(self) -> tuple[int, int, int, int] | None:
-        """Display the crop window and return the selected rectangle."""
+        """Display the crop window and return the selected rectangle.
+
+        Returns:
+            tuple[int, int, int, int] | None: Collection containing the generated or selected values.
+
+        Example:
+            >>> instance = InteractiveCropper(...)
+            >>> result = instance.run()
+        """
         print("Drag a rectangle, then press Enter. Press Escape to cancel.")
         self.plt.show()
         return self.roi
 
 
 def run_crop_task(args: argparse.Namespace) -> list[ManifestRecord]:
-    """Select or specify one crop and export raw and normalized crop files."""
+    """Select or specify one crop and export raw and normalized crop files.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        list[ManifestRecord]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_crop_task(args=...)
+    """
     if not args.input:
         raise ValueError("The crop task requires --input.")
     image = open_ome_image(Path(args.input), args.level)
@@ -1520,7 +2129,19 @@ def run_crop_task(args: argparse.Namespace) -> list[ManifestRecord]:
 
 
 def choose(items: Sequence[str], prompt: str, default: int = 0) -> int:
-    """Prompt for a zero-based menu choice."""
+    """Prompt for a zero-based menu choice.
+
+    Args:
+        items (Sequence[str]): Text value specifying items.
+        prompt (str): Text value specifying prompt.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = choose(items="items", prompt="prompt")
+    """
     print(f"\n{prompt}")
     for index, item in enumerate(items):
         marker = " (default)" if index == default else ""
@@ -1540,14 +2161,36 @@ def choose(items: Sequence[str], prompt: str, default: int = 0) -> int:
 
 
 def prompt_path(prompt: str, default: Path | None = None) -> Path:
-    """Prompt for a filesystem path and expand the user directory marker."""
+    """Prompt for a filesystem path and expand the user directory marker.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (Path | None): Filesystem path used for default. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = prompt_path(prompt="prompt")
+    """
     suffix = f" [{default}]" if default is not None else ""
     value = input(f"{prompt}{suffix}: ").strip()
     return Path(value).expanduser() if value else Path(default) if default is not None else Path()
 
 
 def interactive_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> argparse.Namespace:
-    """Collect missing task-specific values using a terminal menu."""
+    """Collect missing task-specific values using a terminal menu.
+
+    Args:
+        parser (argparse.ArgumentParser): Argument parser that receives the command-line interface options.
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        argparse.Namespace: Result produced by the operation.
+
+    Example:
+        >>> result = interactive_arguments(parser=..., args=...)
+    """
     tasks = [
         ("Export OME-Zarr planes to TIFF/PNG", "export"),
         ("Create preview collage", "collage"),
@@ -1592,7 +2235,14 @@ def interactive_arguments(parser: argparse.ArgumentParser, args: argparse.Namesp
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser for all visualization and export tasks."""
+    """Create the command-line parser for all visualization and export tasks.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Unified PFT visualization/export tool. Omit --task for an interactive menu."
@@ -1664,7 +2314,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_numeric_arguments(args: argparse.Namespace) -> None:
-    """Validate shared percentile, scale and index parameters before processing."""
+    """Validate shared percentile, scale and index parameters before processing.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_numeric_arguments(args=...)
+    """
     if not (0.0 <= args.p_low < args.p_high <= 100.0):
         raise ValueError("Display percentiles must satisfy 0 <= p-low < p-high <= 100.")
     if not (0.0 < args.diff_percentile <= 100.0):
@@ -1676,7 +2336,18 @@ def validate_numeric_arguments(args: argparse.Namespace) -> None:
 
 
 def manifest_output_directory(args: argparse.Namespace, records: Sequence[ManifestRecord]) -> Path:
-    """Resolve the directory in which the run-level manifest should be stored."""
+    """Resolve the directory in which the run-level manifest should be stored.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+        records (Sequence[ManifestRecord]): Value specifying records for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = manifest_output_directory(args=..., records="records")
+    """
     if args.output:
         return Path(args.output)
     if records:
@@ -1690,7 +2361,17 @@ def manifest_output_directory(args: argparse.Namespace, records: Sequence[Manife
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the selected visualization/export task and write its CSV manifest."""
+    """Run the selected visualization/export task and write its CSV manifest.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(argv_list)

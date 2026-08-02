@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for bm3 d."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -68,7 +70,17 @@ class BM3DParams:
 
 
 def _require_bm3d():
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _require_bm3d()
+    """
     try:
         import bm3d  # type: ignore
         return bm3d
@@ -79,8 +91,27 @@ def _require_bm3d():
 
 
 def _normalize_to_01(x: np.ndarray, mode: str, p_lo: float, p_hi: float) -> tuple[np.ndarray, dict]:
-    """
-    Returns normalized float32 image in [0..1] and a dict to invert scaling.
+    """Returns normalized float32 image in [0..1] and a dict to invert scaling.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        mode (str): Text value specifying mode.
+        p_lo (float): Numerical value controlling p lo.
+        p_hi (float): Numerical value controlling p hi.
+
+    Returns:
+        tuple[np.ndarray, dict]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_to_01(
+        ...     x=image_array,
+        ...     mode="mode",
+        ...     p_lo=0.5,
+        ...     p_hi=0.5,
+        ... )
     """
     x = np.asarray(x)
 
@@ -117,8 +148,20 @@ def _normalize_to_01(x: np.ndarray, mode: str, p_lo: float, p_hi: float) -> tupl
 
 
 def _denormalize_from_01(y01: np.ndarray, inv: dict) -> np.ndarray:
-    """
-    Map [0..1] back to original range.
+    """Map [0..1] back to original range.
+
+    Args:
+        y01 (np.ndarray): Array containing y01.
+        inv (dict): Value specifying inv for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _denormalize_from_01(y01=image_array, inv={})
     """
     y01 = np.asarray(y01, dtype=np.float32)
 
@@ -137,8 +180,17 @@ def _denormalize_from_01(y01: np.ndarray, inv: dict) -> np.ndarray:
 
 
 def _bm3d_denoise_2d(img2d: np.ndarray, p: BM3DParams) -> np.ndarray:
-    """
-    Denoise one 2D plane with BM3D, using normalization and optional post-processing.
+    """Denoise one 2D plane with BM3D, using normalization and optional post-processing.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        p (BM3DParams): Filesystem path to the resource being processed.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _bm3d_denoise_2d(img2d=image_array, p=...)
     """
     bm3d = _require_bm3d()
 
@@ -187,10 +239,26 @@ def apply_bm3d_to_image(
     *,
     channel_mode: Literal["auto", "blue", "green"] = "auto",
 ) -> np.ndarray:
-    """
-    Apply BM3D to a loaded OME-Zarr array (2D dataset: cyx or tcyx).
-    Works per (y,x) plane.
+    """Apply BM3D to a loaded OME-Zarr array (2D dataset: cyx or tcyx). Works per (y,x) plane.
 
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        params (BM3DParams): Value specifying params for the operation.
+        channel_mode (Literal["auto", "blue", "green"]): Value specifying channel mode for the operation. Defaults to ``"auto"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_bm3d_to_image(
+        ...     x=image_array,
+        ...     axes="axes",
+        ...     params=...,
+        ... )
     """
     x = np.asarray(x)
     x, axes = _ensure_cyx(x, axes)
@@ -203,7 +271,14 @@ def apply_bm3d_to_image(
         n_c = 1
 
     def pick_channels() -> list[int]:
-        """Helper function used by this module."""
+        """Helper function used by this module.
+
+        Returns:
+            list[int]: Collection containing the generated or selected values.
+
+        Example:
+            >>> result = pick_channels()
+        """
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":
@@ -248,11 +323,30 @@ def run_bm3d_on_dataset(
     image_index: int = 0,
     out_subdir_name: str | None = None,
 ) -> Path:
-    """
-    Run BM3D on ONE dataset sample (by index) and save OME-Zarr to:
-      results/Filters/BM3D/<dataset>/<stem>/image.ome.zarr
+    """Run BM3D on ONE dataset sample (by index) and save OME-Zarr to: results/Filters/BM3D/<dataset>/<stem>/image.ome.zarr.
 
     If apply=False, it saves the *original* (no change) to verify the pipeline.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (BM3DParams): Value specifying params for the operation.
+        apply (bool): Boolean flag controlling apply.
+        channel_mode (Literal["auto", "blue", "green"]): Value specifying channel mode for the operation. Defaults to ``"auto"``.
+        image_index (int): Zero-based index selecting image. Defaults to ``0``.
+        out_subdir_name (str | None): Text value specifying out subdir name. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_bm3d_on_dataset(
+        ...     dataset="2d_time",
+        ...     params=...,
+        ...     apply=True,
+        ... )
     """
     zarrs = list_omezarr_images(dataset)
     if not zarrs:

@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for visualize three-dimensional data."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +31,17 @@ except Exception:
     _HAVE_DASK = False
 
 def find_project_root(start: Path) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        start (Path): Filesystem path used for start.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_project_root(start=Path("path/to/resource"))
+    """
     start = start.resolve()
     for p in [start] + list(start.parents):
         if (p / "pyproject.toml").exists():
@@ -43,17 +56,36 @@ def find_project_root(start: Path) -> Path:
 
 
 def discover_3d_omezarrs(project_root: Path) -> List[Path]:
+    """Discover three-dimensional data omezarrs in the configured project structure.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        List[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_3d_omezarrs(project_root=Path("path/to/resource"))
+    """
     base = project_root / "results" / "img" / "3d_data"
     if not base.exists():
         return []
     return sorted([p for p in base.rglob("image.ome.zarr") if p.is_dir()])
 
 def resolve_to_image_omezarr(path: Union[str, Path]) -> Path:
-    """
-    Accepts:
-      - .../image.ome.zarr
-      - a parent folder that contains image.ome.zarr somewhere inside
-    Returns the resolved image.ome.zarr path or raises ValueError.
+    """Accepts: - .../image.ome.zarr - a parent folder that contains image.ome.zarr somewhere inside Returns the resolved image.ome.zarr path or raises ValueError.
+
+    Args:
+        path (Union[str, Path]): Filesystem path to the required input or output resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_to_image_omezarr(path="path")
     """
     p = Path(str(path)).resolve()
     if p.is_dir() and p.name == "image.ome.zarr":
@@ -72,6 +104,21 @@ def resolve_to_image_omezarr(path: Union[str, Path]) -> Path:
     raise ValueError(f"Not an image.ome.zarr folder and none found inside:\n{p}")
 
 def open_omezarr_array(zarr_dir: Path) -> zarr.Array:
+    """Open OME-Zarr array for inspection or interactive use.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+
+    Returns:
+        zarr.Array: Array containing the processed result.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = open_omezarr_array(zarr_dir=Path("path/to/resource"))
+    """
     zarr_dir = resolve_to_image_omezarr(zarr_dir)
     root = zarr.open_group(str(zarr_dir), mode="r")
     if "0" not in root:
@@ -85,12 +132,20 @@ def open_omezarr_array(zarr_dir: Path) -> zarr.Array:
 
 
 def as_lazy(x):
-    """
-    Make x lazy if dask is installed.
+    """Make x lazy if dask is installed.
 
     IMPORTANT:
     - da.from_zarr expects a STORE/PATH, not a numpy array
     - da.from_array works for numpy arrays and zarr.Array (chunked)
+
+    Args:
+        x (Any): Horizontal coordinate or numerical input value used by the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = as_lazy(x=...)
     """
     if not _HAVE_DASK:
         return x
@@ -101,15 +156,30 @@ def as_lazy(x):
     return da.from_array(x, chunks=chunks, asarray=False)
 
 def install_wheel_scroll_z(viewer: napari.Viewer) -> None:
-    """
-    Make mouse wheel scroll through Z slices (first non-displayed axis)
-    instead of zooming. Keep zoom on Ctrl+wheel.
+    """Make mouse wheel scroll through Z slices (first non-displayed axis) instead of zooming. Keep zoom on Ctrl+wheel.
+
+    Args:
+        viewer (napari.Viewer): Napari viewer instance associated with the current graphical operation.
+
+    Example:
+        >>> install_wheel_scroll_z(viewer=...)
     """
     qt_viewer = viewer.window._qt_viewer
 
     orig_wheel_event = qt_viewer.canvas.native.wheelEvent
 
     def wheelEvent(event):
+        """Return wheel event for the supplied inputs.
+
+        Args:
+            event (Any): Event object supplied by the graphical user interface or callback framework.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = wheelEvent(event=event)
+        """
         if event.modifiers() & Qt.ControlModifier:
             return orig_wheel_event(event)
 
@@ -132,6 +202,7 @@ def install_wheel_scroll_z(viewer: napari.Viewer) -> None:
 
 @dataclass
 class CompareState:
+    """Store validated configuration or result data for compare state."""
     path_a: Optional[Path] = None
     path_b: Optional[Path] = None
     arr_a: Optional[zarr.Array] = None
@@ -148,10 +219,32 @@ class DropFilter(QWidget):
     """
 
     def __init__(self, parent, on_drop_callback):
+        """Initialize a ``DropFilter`` instance.
+
+        Args:
+            parent (Any): Value specifying parent for the operation.
+            on_drop_callback (Any): Value specifying on drop callback for the operation.
+
+        Example:
+            >>> instance = DropFilter(parent=..., on_drop_callback=...)
+        """
         super().__init__(parent)
         self._on_drop = on_drop_callback
 
     def eventFilter(self, obj, event):
+        """Return event filter for the supplied inputs.
+
+        Args:
+            obj (Any): Value specifying obj for the operation.
+            event (Any): Event object supplied by the graphical user interface or callback framework.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> instance = DropFilter(...)
+            >>> result = instance.eventFilter(obj=..., event=event)
+        """
         if event.type() == QEvent.DragEnter:
             if event.mimeData().hasUrls():
                 event.acceptProposedAction()
@@ -168,7 +261,17 @@ class DropFilter(QWidget):
 
 
 class OmeZarr3DCompareWidget(QWidget):
+    """Represent ome zarr3 dcompare widget and its associated operations."""
     def __init__(self, viewer: "napari.Viewer", project_root: Path):
+        """Initialize a ``OmeZarr3DCompareWidget`` instance.
+
+        Args:
+            viewer ("napari.Viewer"): Napari viewer instance associated with the current graphical operation.
+            project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(viewer=..., project_root=Path("path/to/resource"))
+        """
         super().__init__()
         self.viewer = viewer
         self.project_root = project_root
@@ -253,28 +356,89 @@ class OmeZarr3DCompareWidget(QWidget):
         qt_viewer.installEventFilter(self._drop_filter)
 
     def show_error(self, title: str, msg: str) -> None:
+        """Display error to the user.
+
+        Args:
+            title (str): Title displayed on the generated figure or report section.
+            msg (str): Text value specifying msg.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.show_error(title="title", msg="msg")
+        """
         QMessageBox.critical(self, title, msg)
 
     def _pretty_name(self, p: Path) -> str:
+        """Return pretty name for the supplied inputs.
+
+        Args:
+            p (Path): Filesystem path to the resource being processed.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> result = instance._pretty_name(p=Path("path/to/resource"))
+        """
         parts = p.parts
         if len(parts) >= 3:
             return "/".join(parts[-3:])
         return str(p)
 
     def _register_hotkeys(self) -> None:
+        """Register hotkeys with the current interface or runtime.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance._register_hotkeys()
+        """
         @self.viewer.bind_key("q")
         def _ch0(_viewer):
+            """Select image channel 0 when the registered keyboard shortcut is activated.
+
+            Args:
+                _viewer (Any): Napari viewer instance associated with the current graphical operation.
+
+            Example:
+                >>> _ch0(_viewer=...)
+            """
             self.select_channel(0)
 
         @self.viewer.bind_key("w")
         def _ch1(_viewer):
+            """Select image channel 1 when the registered keyboard shortcut is activated.
+
+            Args:
+                _viewer (Any): Napari viewer instance associated with the current graphical operation.
+
+            Example:
+                >>> _ch1(_viewer=...)
+            """
             self.select_channel(1)
 
         @self.viewer.bind_key("e")
         def _ch2(_viewer):
+            """Select image channel 2 when the registered keyboard shortcut is activated.
+
+            Args:
+                _viewer (Any): Napari viewer instance associated with the current graphical operation.
+
+            Example:
+                >>> _ch2(_viewer=...)
+            """
             self.select_channel(2)
 
     def _ensure_roi_layer(self):
+        """Ensure that region of interest layer satisfies the required conditions.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> result = instance._ensure_roi_layer()
+        """
         existing = self.viewer.layers.get("CROP_ROI", None)
         if existing is not None:
             return existing
@@ -287,6 +451,12 @@ class OmeZarr3DCompareWidget(QWidget):
         )
 
     def _clear_image_layers_keep_roi(self) -> None:
+        """Clear image layers keep region of interest from the current state.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance._clear_image_layers_keep_roi()
+        """
         keep_name = "CROP_ROI"
         for layer in list(self.viewer.layers):
             if layer.name != keep_name:
@@ -294,9 +464,23 @@ class OmeZarr3DCompareWidget(QWidget):
         self.roi_layer = self._ensure_roi_layer()
 
     def refresh_lists(self) -> None:
+        """Return refresh lists for the supplied inputs.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.refresh_lists()
+        """
         paths = discover_3d_omezarrs(self.project_root)
 
         def fill_combo(combo: QComboBox):
+            """Return fill combo for the supplied inputs.
+
+            Args:
+                combo (QComboBox): Value specifying combo for the operation.
+
+            Example:
+                >>> fill_combo(combo=...)
+            """
             combo.clear()
             combo.addItem("— select —", "")
             for p in paths:
@@ -306,6 +490,15 @@ class OmeZarr3DCompareWidget(QWidget):
         fill_combo(self.combo_b)
 
     def on_browse(self, slot: str) -> None:
+        """Handle the browse callback event.
+
+        Args:
+            slot (str): Text value specifying slot.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.on_browse(slot="slot")
+        """
         p = QFileDialog.getExistingDirectory(
             self, f"Select image.ome.zarr (or parent) for {slot}", str(self.project_root)
         )
@@ -317,6 +510,18 @@ class OmeZarr3DCompareWidget(QWidget):
             self.path_b_edit.setText(p)
 
     def _get_path_for_slot(self, slot: str) -> Optional[Path]:
+        """Return path for slot for the supplied inputs.
+
+        Args:
+            slot (str): Text value specifying slot.
+
+        Returns:
+            Optional[Path]: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> result = instance._get_path_for_slot(slot="slot")
+        """
         slot = slot.upper()
         if slot == "A":
             txt = self.path_a_edit.text().strip().strip('"')
@@ -332,6 +537,15 @@ class OmeZarr3DCompareWidget(QWidget):
         return Path(data) if data else None
 
     def _handle_drop(self, paths: List[Path]) -> None:
+        """Handle the handle drop callback event.
+
+        Args:
+            paths (List[Path]): Filesystem path used for paths.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance._handle_drop(paths=Path("path/to/resource"))
+        """
         try:
             resolved = [resolve_to_image_omezarr(p) for p in paths if p.exists()]
         except Exception as e:
@@ -346,6 +560,12 @@ class OmeZarr3DCompareWidget(QWidget):
             self.path_b_edit.setText(str(resolved[1]))
 
     def load_both(self) -> None:
+        """Load both from persistent storage.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.load_both()
+        """
         path_a = self._get_path_for_slot("A")
         path_b = self._get_path_for_slot("B")
 
@@ -381,6 +601,12 @@ class OmeZarr3DCompareWidget(QWidget):
         self.viewer.dims.ndisplay = 2
 
     def apply_crop_from_rectangle(self) -> None:
+        """Apply the configured operation to crop from rectangle.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.apply_crop_from_rectangle()
+        """
         if not self.state.loaded:
             self.show_error("Not loaded", "Load Image A and B first, then draw a rectangle.")
             return
@@ -407,11 +633,26 @@ class OmeZarr3DCompareWidget(QWidget):
         self._add_layers_for_channel(self.state.selected_channel)
 
     def reset_crop(self) -> None:
+        """Reset crop to its initial state.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.reset_crop()
+        """
         self.state.roi_yx = None
         if self.state.loaded:
             self._add_layers_for_channel(self.state.selected_channel)
 
     def _add_layers_for_channel(self, ch: int) -> None:
+        """Add layers for channel to the current data structure.
+
+        Args:
+            ch (int): Numerical value controlling ch.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance._add_layers_for_channel(ch=1)
+        """
         if self.state.arr_a is None or self.state.arr_b is None:
             return
 
@@ -453,6 +694,15 @@ class OmeZarr3DCompareWidget(QWidget):
         self.viewer.grid.enabled = True
 
     def select_channel(self, ch: int) -> None:
+        """Select channel according to the configured criteria.
+
+        Args:
+            ch (int): Numerical value controlling ch.
+
+        Example:
+            >>> instance = OmeZarr3DCompareWidget(...)
+            >>> instance.select_channel(ch=1)
+        """
         ch = int(ch)
         if ch not in (0, 1, 2):
             return
@@ -463,6 +713,11 @@ class OmeZarr3DCompareWidget(QWidget):
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     here = Path(__file__).resolve()
     project_root = find_project_root(here)
 

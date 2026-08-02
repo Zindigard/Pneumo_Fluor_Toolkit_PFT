@@ -1,4 +1,4 @@
-"""Validate manual full-image or crop annotations before fine-tuning.
+r"""Validate manual full-image or crop annotations before fine-tuning.
 
 The checker verifies that every selected image/mask pair exists, has matching
 YX dimensions, uses finite float32 image data in [0, 1], and contains positive
@@ -6,6 +6,22 @@ integer instance labels. It also previews the source-aware training and
 validation split used by the fine-tuning scripts. Explicit crop assignments are
 preserved, while the requested validation fraction is applied to unspecified
 source images.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/segmentation/check_finetuning_annotations.py --help
+
+Representative execution:
+
+    python scripts/segmentation/check_finetuning_annotations.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --annotation-source all \
+        --validation-policy combined \
+        --validation-fraction 0.2 \
+        --seed 1337
 """
 
 from __future__ import annotations
@@ -23,6 +39,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -49,6 +76,17 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _split_from_key(key: str) -> str:
+    """Split from key into the requested subsets.
+
+    Args:
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _split_from_key(key="key")
+    """
     normalized = key.replace("\\", "/")
     if "/crops/train/" in normalized:
         return "train"
@@ -58,10 +96,32 @@ def _split_from_key(key: str) -> str:
 
 
 def _source_sample(key: str) -> str:
+    """Return source sample for the supplied inputs.
+
+    Args:
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _source_sample(key="key")
+    """
     return key.replace("\\", "/").split("/crops/", 1)[0]
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Check manual image/mask pairs before Cellpose or Omnipose fine-tuning.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

@@ -38,19 +38,49 @@ _MODEL_CACHE_BY_NAME: Dict[str, N2V] = {}
 
 
 def _find_repo_root(start: Optional[Path] = None) -> Path:
-    """Return the repository root from an optional starting path."""
+    """Return the repository root from an optional starting path.
+
+    Args:
+        start (Optional[Path]): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _find_repo_root()
+    """
 
     return project_root(start or Path(__file__))
 
 
 def models_dir() -> Path:
-    """Return the directory containing trained N2V model folders."""
+    """Return the directory containing trained N2V model folders.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = models_dir()
+    """
 
     return models_root(_find_repo_root())
 
 
 def _load_model_by_name(model_name: str) -> N2V:
-    """Load one model folder once and cache the N2V object."""
+    """Load one model folder once and cache the N2V object.
+
+    Args:
+        model_name (str): Human-readable model name used in output paths and reports.
+
+    Returns:
+        N2V: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_model_by_name(model_name="model_name")
+    """
 
     if model_name in _MODEL_CACHE_BY_NAME:
         return _MODEL_CACHE_BY_NAME[model_name]
@@ -72,7 +102,18 @@ def _load_model_by_name(model_name: str) -> N2V:
 
 
 def get_model(dataset: str, key: str) -> N2V:
-    """Load a model through the legacy ``(dataset, key)`` toolkit interface."""
+    """Load a model through the legacy ``(dataset, key)`` toolkit interface.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        key (str): Key used to access or identify an entry in a mapping.
+
+    Returns:
+        N2V: Result produced by the operation.
+
+    Example:
+        >>> result = get_model(dataset="2d_time", key="key")
+    """
 
     cache_key = (str(dataset), str(key))
     if cache_key in _MODEL_CACHE:
@@ -84,13 +125,33 @@ def get_model(dataset: str, key: str) -> N2V:
 
 
 def load_n2v_model(model_name: str) -> N2V:
-    """Load a model by its exact folder name below ``models``."""
+    """Load a model by its exact folder name below ``models``.
+
+    Args:
+        model_name (str): Human-readable model name used in output paths and reports.
+
+    Returns:
+        N2V: Result produced by the operation.
+
+    Example:
+        >>> result = load_n2v_model(model_name="model_name")
+    """
 
     return _load_model_by_name(str(model_name))
 
 
 def load_n2v_model_by_key(model_key: str) -> N2V:
-    """Load a model by the command-line key ``time``, ``dapi``, ``wga``, or ``joint``."""
+    """Load a model by the command-line key ``time``, ``dapi``, ``wga``, or ``joint``.
+
+    Args:
+        model_key (str): Text value specifying model key.
+
+    Returns:
+        N2V: Result produced by the operation.
+
+    Example:
+        >>> result = load_n2v_model_by_key(model_key="model_key")
+    """
 
     return _load_model_by_name(get_model_spec(model_key).model_name)
 
@@ -101,6 +162,19 @@ def predict_yxc(img_yxc: np.ndarray, model: N2V) -> np.ndarray:
     A batch dimension is intentionally not added because N2V receives one image
     with the explicit axes string ``YXC``.  The result must retain exactly the
     input shape.
+
+    Args:
+        img_yxc (np.ndarray): Array containing img yxc.
+        model (N2V): Model identifier or filesystem path to the pretrained or fine-tuned model.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = predict_yxc(img_yxc=image_array, model="model_name")
     """
 
     image = np.asarray(img_yxc, dtype=np.float32)
@@ -119,7 +193,20 @@ def predict_yxc(img_yxc: np.ndarray, model: N2V) -> np.ndarray:
 
 
 def denoise_wga_dapi_joint_raw(img_yxc: np.ndarray) -> np.ndarray:
-    """Denoise a raw-range ``Y,X,2`` DAPI+WGA image with the joint model."""
+    """Denoise a raw-range ``Y,X,2`` DAPI+WGA image with the joint model.
+
+    Args:
+        img_yxc (np.ndarray): Array containing img yxc.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = denoise_wga_dapi_joint_raw(img_yxc=image_array)
+    """
 
     image = np.asarray(img_yxc)
     if image.ndim != 3 or image.shape[-1] != 2:
@@ -133,6 +220,18 @@ def denoise_2d_for_cellpose(img: np.ndarray) -> np.ndarray:
     ``Y,X`` and ``Y,X,1`` inputs use the time-lapse single-channel model.
     ``Y,X,2`` inputs use the joint DAPI+WGA model.  The returned array always
     has a final channel axis and ``float32`` dtype.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = denoise_2d_for_cellpose(img=image_array)
     """
 
     image = np.asarray(img)

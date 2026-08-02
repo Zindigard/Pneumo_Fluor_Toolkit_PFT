@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for sanity three-dimensional data.
+
+Examples
+--------
+Run the configured three-dimensional OME-Zarr sanity check:
+
+    python scripts/denoising/sanity_3d.py
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +22,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -63,6 +84,18 @@ OMEZARR_ROOT = Path(r"D:\Thesis\Pneumo_Fluor_Toolkit_PFT\results\img\3d_data")
 
 
 def _json_preview(obj: Any, max_chars: int = 2500) -> str:
+    """Return JSON data preview for the supplied inputs.
+
+    Args:
+        obj (Any): Value specifying obj for the operation.
+        max_chars (int): Maximum permitted value of chars. Defaults to ``2500``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _json_preview(obj=...)
+    """
     try:
         s = json.dumps(obj, indent=2, ensure_ascii=False)
     except TypeError:
@@ -71,6 +104,17 @@ def _json_preview(obj: Any, max_chars: int = 2500) -> str:
 
 
 def _infer_axes_from_ndim(ndim: int | None) -> str:
+    """Infer axes from ndim from the supplied model inputs.
+
+    Args:
+        ndim (int | None): Numerical value controlling ndim.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _infer_axes_from_ndim(ndim=1)
+    """
     if ndim == 2:
         return "yx"
     if ndim == 3:
@@ -83,6 +127,18 @@ def _infer_axes_from_ndim(ndim: int | None) -> str:
 
 
 def _get_axes_and_multiscales(node_meta: Dict[str, Any], ndim: int | None) -> Tuple[str, Any]:
+    """Return axes and multiscales for the supplied inputs.
+
+    Args:
+        node_meta (Dict[str, Any]): Text value specifying node meta.
+        ndim (int | None): Numerical value controlling ndim.
+
+    Returns:
+        Tuple[str, Any]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _get_axes_and_multiscales(node_meta="node_meta", ndim=1)
+    """
     axes = None
     ms = None
     try:
@@ -100,6 +156,18 @@ def _get_axes_and_multiscales(node_meta: Dict[str, Any], ndim: int | None) -> Tu
 
 
 def _count_channels(shape: Tuple[int, ...], axes: str) -> int | None:
+    """Return count channels for the supplied inputs.
+
+    Args:
+        shape (Tuple[int, ...]): Target or observed array shape.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = _count_channels(shape=1, axes="axes")
+    """
     axes = axes.lower()
     if "c" not in axes:
         return None
@@ -110,6 +178,15 @@ def _count_channels(shape: Tuple[int, ...], axes: str) -> int | None:
 
 
 def _print_zarr_tree(g, indent: str = "") -> None:
+    """Print Zarr tree in a readable format.
+
+    Args:
+        g (Any): Value specifying g for the operation.
+        indent (str): Text value specifying indent. Defaults to ``""``.
+
+    Example:
+        >>> _print_zarr_tree(g=...)
+    """
     for name, subgroup in g.groups():
         print(f"{indent}[group] {name}/")
         _print_zarr_tree(subgroup, indent + "  ")
@@ -125,6 +202,17 @@ def _print_zarr_tree(g, indent: str = "") -> None:
 
 
 def find_omezarr_dirs(root: Path) -> List[Path]:
+    """Find OME-Zarr dirs in the available data or project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        List[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_omezarr_dirs(root=Path("path/to/resource"))
+    """
     if not root.exists():
         return []
     found = [p for p in root.rglob("*.ome.zarr") if p.is_dir()]
@@ -133,6 +221,22 @@ def find_omezarr_dirs(root: Path) -> List[Path]:
 
 
 def choose_from_list(title: str, items: List[str], default: int = 0) -> int:
+    """Choose from list according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        items (List[str]): Text value specifying items.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_from_list(title="title", items="items")
+    """
     print("\n" + title)
     for i, it in enumerate(items):
         d = " (default)" if i == default else ""
@@ -147,11 +251,35 @@ def choose_from_list(title: str, items: List[str], default: int = 0) -> int:
 
 
 def prompt_int(prompt: str, default: int = 0) -> int:
+    """Return prompt int for the supplied inputs.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = prompt_int(prompt="prompt")
+    """
     s = input(f"{prompt} (empty={default}): ").strip()
     return int(s) if s else default
 
 
 def inspect_omezarr(zarr_dir: Path, level: int = 0) -> None:
+    """Return inspect OME-Zarr for the supplied inputs.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> inspect_omezarr(zarr_dir=Path("path/to/resource"))
+    """
     try:
         import zarr
         from ome_zarr.io import parse_url
@@ -176,6 +304,15 @@ def inspect_omezarr(zarr_dir: Path, level: int = 0) -> None:
 
     print("\nZarr tree (groups/arrays)")
     def _print_tree(g, indent=""):
+        """Print tree in a readable format.
+
+        Args:
+            g (Any): Value specifying g for the operation.
+            indent (Any): Value specifying indent for the operation. Defaults to ``""``.
+
+        Example:
+            >>> _print_tree(g=...)
+        """
         for name, subgroup in g.groups():
             _print_tree(subgroup, indent + "")
         for name, arr in g.arrays():
@@ -204,6 +341,18 @@ def inspect_omezarr(zarr_dir: Path, level: int = 0) -> None:
     root_ms = root.attrs.get("multiscales", None)
 
     def _infer_axes_from_multiscales(ms, fallback_ndim):
+        """Infer axes from multiscales from the supplied model inputs.
+
+        Args:
+            ms (Any): Value specifying ms for the operation.
+            fallback_ndim (Any): Value specifying fallback ndim for the operation.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = _infer_axes_from_multiscales(ms=..., fallback_ndim=...)
+        """
         if isinstance(ms, list) and ms and isinstance(ms[0], dict) and "axes" in ms[0]:
             axes_entries = ms[0]["axes"]
             axes = "".join(a["name"] if isinstance(a, dict) else str(a) for a in axes_entries)
@@ -218,6 +367,18 @@ def inspect_omezarr(zarr_dir: Path, level: int = 0) -> None:
     axes = _infer_axes_from_multiscales(root_ms, ndim)
 
     def _count_channels(shape_tuple, axes_str):
+        """Return count channels for the supplied inputs.
+
+        Args:
+            shape_tuple (Any): Value specifying shape tuple for the operation.
+            axes_str (Any): Value specifying axes str for the operation.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = _count_channels(shape_tuple=..., axes_str=...)
+        """
         axes_str = axes_str.lower()
         if shape_tuple is None or "c" not in axes_str:
             return None
@@ -265,6 +426,11 @@ def inspect_omezarr(zarr_dir: Path, level: int = 0) -> None:
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     print(f"\nScanning for *.ome.zarr in:\n  {OMEZARR_ROOT}\n")
 
     zarr_candidates = find_omezarr_dirs(OMEZARR_ROOT)

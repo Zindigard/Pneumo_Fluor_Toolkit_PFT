@@ -1,3 +1,19 @@
+r"""Provide command-line and programmatic utilities for check masks for statistics.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/check_masks_for_statistics.py --help
+
+Representative execution:
+
+    python scripts/statistics/check_masks_for_statistics.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --sample WT_HADA_NHS_40min_ROI1_SIM
+"""
+
 from __future__ import annotations
 
 """Validate instance masks and their corresponding images before PCA analysis.
@@ -38,6 +54,20 @@ MASK_NAMES = ("mask.tif", "mask.tiff", "labels.tif", "labels.tiff")
 
 
 def find_project_root(start: Path | None = None) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     current = (start or SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -50,6 +80,14 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 def configure_project_imports(project_root: Path) -> None:
+    """Return configure project imports for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Example:
+        >>> configure_project_imports(project_root=Path("path/to/resource"))
+    """
     src = project_root / "src"
     if str(src) not in sys.path:
         sys.path.insert(0, str(src))
@@ -57,6 +95,7 @@ def configure_project_imports(project_root: Path) -> None:
 
 @dataclass(frozen=True)
 class AnnotationPair:
+    """Store validated configuration or result data for annotation pair."""
     annotation_id: str
     sample_name: str
     annotation_type: str
@@ -68,6 +107,7 @@ class AnnotationPair:
 
 @dataclass(frozen=True)
 class CellCheck:
+    """Store validated configuration or result data for cell check."""
     label: int
     area_pixels: int
     component_count: int
@@ -80,6 +120,7 @@ class CellCheck:
 
 @dataclass(frozen=True)
 class PairCheck:
+    """Store validated configuration or result data for pair check."""
     annotation_id: str
     sample_name: str
     annotation_type: str
@@ -105,6 +146,17 @@ class PairCheck:
 
 
 def _safe_identifier(text: str) -> str:
+    """Return safe identifier for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_identifier(text="text")
+    """
     allowed = []
     for char in str(text):
         if char.isalnum() or char in {"-", "_", "/"}:
@@ -115,6 +167,17 @@ def _safe_identifier(text: str) -> str:
 
 
 def _annotation_kind(relative_parent: Path) -> tuple[str, str, str, Path]:
+    """Return annotation kind for the supplied inputs.
+
+    Args:
+        relative_parent (Path): Filesystem path used for relative parent.
+
+    Returns:
+        tuple[str, str, str, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _annotation_kind(relative_parent=Path("path/to/resource"))
+    """
     parts = list(relative_parent.parts)
     if "crops" in parts:
         crop_index = parts.index("crops")
@@ -138,6 +201,23 @@ def discover_annotation_pairs(
     include: str = "all",
     sample_filters: Sequence[str] | None = None,
 ) -> list[AnnotationPair]:
+    """Discover annotation pairs in the configured project structure.
+
+    Args:
+        mask_root (Path): Directory used for mask.
+        image_root (Path): Directory used for image.
+        include (str): Text value specifying include. Defaults to ``"all"``.
+        sample_filters (Sequence[str] | None): Text value specifying sample filters. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[AnnotationPair]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = discover_annotation_pairs(mask_root=Path("path/to/resource"), image_root=Path("path/to/resource"))
+    """
     mask_root = Path(mask_root).resolve()
     image_root = Path(image_root).resolve()
     if not mask_root.exists():
@@ -203,6 +283,20 @@ def discover_annotation_pairs(
 
 
 def load_label_mask(mask_path: Path) -> tuple[np.ndarray, str]:
+    """Load label mask from persistent storage.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_label_mask(mask_path=Path("path/to/resource"))
+    """
     raw = np.asarray(tiff.imread(mask_path))
     squeezed = np.squeeze(raw)
     if squeezed.ndim != 2:
@@ -218,6 +312,21 @@ def load_label_mask(mask_path: Path) -> tuple[np.ndarray, str]:
 
 
 def _remove_singleton_nonspatial_axes(array: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
+    """Remove singleton nonspatial axes from the current data structure.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _remove_singleton_nonspatial_axes(array=image_array, axes="axes")
+    """
     axes = axes.lower()
     image = np.asarray(array)
     index = 0
@@ -237,6 +346,25 @@ def _remove_singleton_nonspatial_axes(array: np.ndarray, axes: str) -> tuple[np.
 
 
 def load_image_cyx(image_path: Path, project_root: Path) -> tuple[np.ndarray, str]:
+    """Load image cyx from persistent storage.
+
+    Args:
+        image_path (Path): Filesystem path associated with image.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_image_cyx(
+        ...     image_path=Path("path/to/resource"),
+        ...     project_root=Path("path/to/resource"),
+        ... )
+    """
     if not image_path.exists():
         raise FileNotFoundError(f"Image does not exist: {image_path}")
 
@@ -271,6 +399,18 @@ def load_image_cyx(image_path: Path, project_root: Path) -> tuple[np.ndarray, st
 
 
 def _robust_display_channel(channel: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
+    """Return robust display channel for the supplied inputs.
+
+    Args:
+        channel (np.ndarray): Channel index or channel identifier selected for processing.
+        valid_mask (np.ndarray | None): Array containing valid mask. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _robust_display_channel(channel=image_array)
+    """
     values = channel[valid_mask] if valid_mask is not None and np.any(valid_mask) else channel.ravel()
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -285,6 +425,18 @@ def _robust_display_channel(channel: np.ndarray, valid_mask: np.ndarray | None =
 
 
 def image_to_rgb(image_cyx: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
+    """Return image to RGB representation for the supplied inputs.
+
+    Args:
+        image_cyx (np.ndarray): Array containing image cyx.
+        valid_mask (np.ndarray | None): Array containing valid mask. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = image_to_rgb(image_cyx=image_array)
+    """
     channels = [_robust_display_channel(channel, valid_mask) for channel in image_cyx]
     if len(channels) == 1:
         return np.repeat(channels[0][..., None], 3, axis=2)
@@ -296,6 +448,17 @@ def image_to_rgb(image_cyx: np.ndarray, valid_mask: np.ndarray | None = None) ->
 
 
 def _mask_boundaries(labels: np.ndarray) -> np.ndarray:
+    """Return mask boundaries for the supplied inputs.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _mask_boundaries(labels=image_array)
+    """
     foreground = labels > 0
     eroded = ndi.binary_erosion(foreground, structure=np.ones((3, 3), dtype=bool))
     outer = foreground & ~eroded
@@ -314,6 +477,23 @@ def save_overlay(
     title: str,
     max_label_text: int = 300,
 ) -> None:
+    """Save overlay to persistent storage.
+
+    Args:
+        image_cyx (np.ndarray): Array containing image cyx.
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+        output_path (Path): Filesystem path where the generated result is written.
+        title (str): Title displayed on the generated figure or report section.
+        max_label_text (int): Maximum permitted value of label text. Defaults to ``300``.
+
+    Example:
+        >>> save_overlay(
+        ...     image_cyx=image_array,
+        ...     labels=image_array,
+        ...     output_path=Path("path/to/resource"),
+        ...     title="title",
+        ... )
+    """
     rgb = image_to_rgb(image_cyx)
     boundaries = _mask_boundaries(labels)
     overlay = rgb.copy()
@@ -347,6 +527,18 @@ def save_overlay(
 
 
 def inspect_cells(labels: np.ndarray, min_object_pixels: int) -> list[CellCheck]:
+    """Return inspect cells for the supplied inputs.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+        min_object_pixels (int): Minimum permitted value of object pixels.
+
+    Returns:
+        list[CellCheck]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = inspect_cells(labels=image_array, min_object_pixels=1)
+    """
     height, width = labels.shape
     checks: list[CellCheck] = []
     for label_value in [int(value) for value in np.unique(labels) if value > 0]:
@@ -385,6 +577,15 @@ def inspect_cells(labels: np.ndarray, min_object_pixels: int) -> list[CellCheck]
 
 
 def write_csv(path: Path, rows: Iterable[dict[str, object]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (Iterable[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     rows_list = list(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows_list:
@@ -408,6 +609,27 @@ def validate_pair(
     min_object_pixels: int,
     max_label_text: int,
 ) -> tuple[PairCheck, list[CellCheck]]:
+    """Validate pair against the required constraints.
+
+    Args:
+        pair (AnnotationPair): Value specifying pair for the operation.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        output_dir (Path): Directory where generated resources are written.
+        min_object_pixels (int): Minimum permitted value of object pixels.
+        max_label_text (int): Maximum permitted value of label text.
+
+    Returns:
+        tuple[PairCheck, list[CellCheck]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = validate_pair(
+        ...     pair=...,
+        ...     project_root=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     min_object_pixels=1,
+        ...     max_label_text=1,
+        ... )
+    """
     messages: list[str] = []
     failures: list[str] = []
     warnings: list[str] = []
@@ -505,6 +727,14 @@ def validate_pair(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Validate training or predicted instance masks before PCA analysis."
     )
@@ -527,6 +757,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     project_root = (
         args.project_root.expanduser().resolve()

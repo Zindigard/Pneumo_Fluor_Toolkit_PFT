@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for results widget."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,6 +26,14 @@ class PFTResultsWidget(QWidget):
     """
 
     def __init__(self, napari_viewer):
+        """Initialize a ``PFTResultsWidget`` instance.
+
+        Args:
+            napari_viewer (Any): Value specifying napari viewer for the operation.
+
+        Example:
+            >>> instance = PFTResultsWidget(napari_viewer=...)
+        """
         super().__init__()
         self.viewer = napari_viewer
         self.project_root = find_project_root(Path(__file__).resolve())
@@ -60,11 +70,26 @@ class PFTResultsWidget(QWidget):
         self.layout().addWidget(self.layer_info)
 
     def _active_layer(self):
+        """Return active layer for the supplied inputs.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> instance = PFTResultsWidget(...)
+            >>> result = instance._active_layer()
+        """
         if not self.viewer.layers:
             return None
         return self.viewer.layers.selection.active or self.viewer.layers[-1]
 
     def refresh_layer_info(self) -> None:
+        """Return refresh layer info for the supplied inputs.
+
+        Example:
+            >>> instance = PFTResultsWidget(...)
+            >>> instance.refresh_layer_info()
+        """
         layer = self._active_layer()
         if layer is None or not hasattr(layer, "data"):
             self.layer_info.setText("No active image or label layer selected.")
@@ -87,6 +112,12 @@ class PFTResultsWidget(QWidget):
         )
 
     def export_placeholder_report(self) -> None:
+        """Export placeholder report to the requested output format.
+
+        Example:
+            >>> instance = PFTResultsWidget(...)
+            >>> instance.export_placeholder_report()
+        """
         parent = QFileDialog.getExistingDirectory(
             self,
             "Select output folder",
@@ -105,4 +136,15 @@ class PFTResultsWidget(QWidget):
 
 
 def make_results_widget(napari_viewer):
+    """Create results widget from the supplied inputs.
+
+    Args:
+        napari_viewer (Any): Value specifying napari viewer for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_results_widget(napari_viewer=...)
+    """
     return PFTResultsWidget(napari_viewer)

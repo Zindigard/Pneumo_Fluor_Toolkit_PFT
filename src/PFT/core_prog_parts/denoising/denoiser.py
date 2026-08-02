@@ -83,19 +83,54 @@ PASSTHROUGH_REASON = (
 
 
 def is_passthrough_image(dataset: str, image_name: str) -> bool:
-    """Return whether an image must bypass local thresholding unchanged."""
+    """Return whether an image must bypass local thresholding unchanged.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        image_name (str): Text value specifying image name.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_passthrough_image(dataset="2d_time", image_name="image_name")
+    """
     return image_name in PASSTHROUGH_IMAGE_STEMS.get(dataset, set())
 
 
 def list_source_images(dataset: str) -> list[Path]:
-    """Return all source OME-Zarr images for a supported 2D dataset."""
+    """Return all source OME-Zarr images for a supported 2D dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_source_images(dataset="2d_time")
+    """
     if dataset not in DATASETS:
         raise ValueError(f"Unsupported dataset: {dataset}")
     return list_omezarr_images(dataset)
 
 
 def list_curated_test_images(dataset: str, zarr_paths: list[Path]) -> list[Path]:
-    """Return the curated subset, or all images when no subset is defined."""
+    """Return the curated subset, or all images when no subset is defined.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarr_paths (list[Path]): Filesystem path used for Zarr paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_curated_test_images(dataset="2d_time", zarr_paths=Path("path/to/resource"))
+    """
     wanted = CURATED_TEST_STEMS.get(dataset)
     if not wanted:
         return zarr_paths
@@ -104,7 +139,18 @@ def list_curated_test_images(dataset: str, zarr_paths: list[Path]) -> list[Path]
 
 
 def local_threshold_output_root(dataset: str, params: LocalThresholdParams) -> Path:
-    """Return the deterministic output directory for one dataset and parameter set."""
+    """Return the deterministic output directory for one dataset and parameter set.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (LocalThresholdParams): Value specifying params for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = local_threshold_output_root(dataset="2d_time", params=...)
+    """
     return (
         results_filters_dir()
         / "Local_high_threshold"
@@ -115,7 +161,23 @@ def local_threshold_output_root(dataset: str, params: LocalThresholdParams) -> P
 
 
 def _selected_channels(dataset: str, axes: str, array: np.ndarray) -> list[int]:
-    """Return the biological channels processed for a supported dataset."""
+    """Return the biological channels processed for a supported dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        array (np.ndarray): Array containing array.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _selected_channels(
+        ...     dataset="2d_time",
+        ...     axes="axes",
+        ...     array=image_array,
+        ... )
+    """
     if "c" not in axes:
         return [0]
     channel_count = array.shape[axes.index("c")]
@@ -129,7 +191,27 @@ def _iter_plane_slices(
     axes: str,
     channel_indices: list[int],
 ) -> Iterator[tuple[int, int, tuple[Any, ...]]]:
-    """Yield channel, flattened frame index, and a 2D plane slice."""
+    """Yield channel, flattened frame index, and a 2D plane slice.
+
+    Args:
+        shape (tuple[int, ...]): Target or observed array shape.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        channel_indices (list[int]): Zero-based indices selecting channel.
+
+    Returns:
+        Iterator[tuple[int, int, tuple[Any, ...]]]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _iter_plane_slices(
+        ...     shape=1,
+        ...     axes="axes",
+        ...     channel_indices=1,
+        ... )
+    """
     axes = axes.lower()
     if not axes.endswith("yx"):
         raise ValueError(f"Expected spatial axes at the end, received axes={axes}")
@@ -167,12 +249,27 @@ def apply_local_threshold_to_array(
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
     """Process selected 2D planes by local threshold or unchanged pass-through.
 
-    Parameters
-    ----------
-    passthrough:
-        When ``True``, the returned array is an exact copy of the source array.
-        This mode is reserved for explicitly excluded overexposed images that
-        must remain available to the later U-Net stage.
+    Args:
+        array (np.ndarray): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (LocalThresholdParams): Value specifying params for the operation.
+        passthrough (bool): When ``True``, the returned array is an exact copy of the source array. This mode is reserved for explicitly excluded overexposed images that must remain available to the later U-Net stage.
+
+    Returns:
+        tuple[np.ndarray, list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        AssertionError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_local_threshold_to_array(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     dataset="2d_time",
+        ...     params=...,
+        ... )
     """
     source = np.asarray(array)
     output = source.copy()
@@ -254,7 +351,25 @@ def _source_coordinate_scale(
     target_axes: str,
     level: int,
 ) -> list[float] | None:
-    """Read and reorder the source OME-NGFF coordinate scale when available."""
+    """Read and reorder the source OME-NGFF coordinate scale when available.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        source_axes (str): Text value specifying source axes.
+        target_axes (str): Text value specifying target axes.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _source_coordinate_scale(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     source_axes="source_axes",
+        ...     target_axes="target_axes",
+        ...     level=1,
+        ... )
+    """
     try:
         import zarr
 
@@ -279,7 +394,17 @@ def _source_coordinate_scale(
 
 
 def _source_attrs(zarr_path: Path) -> dict[str, Any]:
-    """Read selected source attributes for provenance without copying multiscales."""
+    """Read selected source attributes for provenance without copying multiscales.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _source_attrs(zarr_path=Path("path/to/resource"))
+    """
     try:
         import zarr
 
@@ -294,7 +419,15 @@ def _source_attrs(zarr_path: Path) -> dict[str, Any]:
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write dictionaries to CSV using a stable union of fields."""
+    """Write dictionaries to CSV using a stable union of fields.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("status\nno_rows\n", encoding="utf-8")
@@ -324,6 +457,17 @@ def _display_limits(
     The limits are calculated from the original image plane and then reused for
     both the original and filtered visualizations. Quantitative arrays are not
     modified.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        lower_percentile (float): Numerical value controlling lower percentile. Defaults to ``1.0``.
+        upper_percentile (float): Numerical value controlling upper percentile. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _display_limits(reference=image_array)
     """
     x = np.asarray(reference, dtype=np.float64)
     finite = x[np.isfinite(x)]
@@ -346,14 +490,15 @@ def _display_uint8(
 ) -> np.ndarray:
     """Normalize one plane to 8-bit for visualization only.
 
-    Parameters
-    ----------
-    image:
-        Quantitative image plane. It is read but never modified.
-    limits:
-        Optional shared ``(low, high)`` display limits. Passing limits derived
-        from the original plane ensures a fair original-versus-filtered
-        comparison.
+    Args:
+        image (np.ndarray): Quantitative image plane. It is read but never modified.
+        limits (tuple[float, float] | None): Optional shared ``(low, high)`` display limits. Passing limits derived from the original plane ensures a fair original-versus-filtered comparison.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_uint8(image=image_array)
     """
     x = np.asarray(image, dtype=np.float64)
     lo, hi = limits if limits is not None else _display_limits(x)
@@ -371,7 +516,27 @@ def _save_normalized_comparison_plot(
     retained_fraction: float,
     passthrough: bool = False,
 ) -> None:
-    """Save a shared-scale original-versus-output comparison figure."""
+    """Save a shared-scale original-versus-output comparison figure.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        original_display (np.ndarray): Array containing original display.
+        filtered_display (np.ndarray): Array containing filtered display.
+        channel_name (str): Text value specifying channel name.
+        threshold_raw (float): Numerical value controlling threshold raw.
+        retained_fraction (float): Fractional value controlling retained.
+        passthrough (bool): Boolean flag controlling passthrough. Defaults to ``False``.
+
+    Example:
+        >>> _save_normalized_comparison_plot(
+        ...     path=Path("path/to/resource"),
+        ...     original_display=image_array,
+        ...     filtered_display=image_array,
+        ...     channel_name="channel_name",
+        ...     threshold_raw=0.5,
+        ...     retained_fraction=0.5,
+        ... )
+    """
     try:
         import matplotlib
 
@@ -428,7 +593,27 @@ def _save_first_plane_previews(
     *,
     passthrough: bool = False,
 ) -> None:
-    """Save shared-scale previews, comparison plots, and keep masks."""
+    """Save shared-scale previews, comparison plots, and keep masks.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        source (np.ndarray): Array containing source.
+        filtered (np.ndarray): Array containing filtered.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (LocalThresholdParams): Value specifying params for the operation.
+        passthrough (bool): Boolean flag controlling passthrough. Defaults to ``False``.
+
+    Example:
+        >>> _save_first_plane_previews(
+        ...     out_dir=Path("path/to/resource"),
+        ...     source=image_array,
+        ...     filtered=image_array,
+        ...     axes="axes",
+        ...     dataset="2d_time",
+        ...     params=...,
+        ... )
+    """
     try:
         from PIL import Image
     except ImportError:
@@ -487,7 +672,28 @@ def process_one_image(
     level: int = 0,
     save_previews: bool = True,
 ) -> tuple[Path, list[dict[str, Any]]]:
-    """Process one image by thresholding or explicit unchanged pass-through."""
+    """Process one image by thresholding or explicit unchanged pass-through.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        params (LocalThresholdParams): Value specifying params for the operation.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        save_previews (bool): Boolean flag controlling save previews. Defaults to ``True``.
+
+    Returns:
+        tuple[Path, list[dict[str, Any]]]: Resolved or generated filesystem path.
+
+    Raises:
+        AssertionError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_one_image(
+        ...     dataset="2d_time",
+        ...     zarr_path=Path("path/to/resource"),
+        ...     params=...,
+        ... )
+    """
     array, source_axes = load_ome_zarr(zarr_path, level=level, as_numpy=False)
     source = _to_numpy(array)
     source, axes = _ensure_cyx(source, source_axes)
@@ -562,7 +768,23 @@ def process_one_image(
     return out_dir, image_rows
 
 def _prompt_choice(prompt: str, choices: dict[str, str], default: str) -> str:
-    """Read one validated interactive choice."""
+    """Read one validated interactive choice.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        choices (dict[str, str]): Text value specifying choices.
+        default (str): Text value specifying default.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _prompt_choice(
+        ...     prompt="prompt",
+        ...     choices="choices",
+        ...     default="default",
+        ... )
+    """
     while True:
         answer = input(prompt).strip() or default
         if answer in choices:
@@ -571,13 +793,31 @@ def _prompt_choice(prompt: str, choices: dict[str, str], default: str) -> str:
 
 
 def _prompt_float(prompt: str, default: float) -> float:
-    """Read one float interactively, using the default for an empty answer."""
+    """Read one float interactively, using the default for an empty answer.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (float): Numerical value controlling default.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _prompt_float(prompt="prompt", default=0.5)
+    """
     answer = input(prompt).strip()
     return default if not answer else float(answer)
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse local-threshold batch-processing options."""
+    """Parse local-threshold batch-processing options.
+
+    Returns:
+        argparse.Namespace: Result produced by the operation.
+
+    Example:
+        >>> result = _parse_args()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Apply intensity-preserving local-threshold filtering to a 2D "
@@ -600,7 +840,16 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run the production local-threshold workflow from the command line."""
+    """Run the production local-threshold workflow from the command line.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = _parse_args()
     if args.non_interactive and (args.dataset is None or args.mode is None):
         raise SystemExit("--dataset and --mode are required with --non-interactive")
@@ -621,6 +870,23 @@ def main() -> None:
         )
 
     def resolve(value: float | None, prompt: str, default: float) -> float:
+        """Resolve the requested operation from the supplied configuration.
+
+        Args:
+            value (float | None): Value to validate, transform, store, or forward.
+            prompt (str): Text value specifying prompt.
+            default (float): Numerical value controlling default.
+
+        Returns:
+            float: Computed numerical result.
+
+        Example:
+            >>> result = resolve(
+            ...     value=0.5,
+            ...     prompt="prompt",
+            ...     default=0.5,
+            ... )
+        """
         if value is not None:
             return value
         if args.non_interactive:

@@ -1,4 +1,4 @@
-"""
+r"""
 Activate the project environment first:
 
     conda activate pft

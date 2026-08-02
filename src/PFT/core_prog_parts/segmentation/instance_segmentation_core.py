@@ -167,6 +167,26 @@ class TuneConfig:
 
 
 def _validate_family_dataset(family: str, dataset: str, source_mode: str) -> tuple[str, str, str]:
+    """Validate family dataset against the required constraints.
+
+    Args:
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        tuple[str, str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_family_dataset(
+        ...     family="cellpose",
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     family = family.lower()
     if family not in MODEL_FAMILIES:
         raise ValueError(f"Unsupported model family: {family!r}")
@@ -185,7 +205,23 @@ def list_prepared_inputs(
     dataset: str,
     source_mode: str,
 ) -> list[PreparedInputItem]:
-    """List prepared inputs and corresponding manual mask paths."""
+    """List prepared inputs and corresponding manual mask paths.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        list[PreparedInputItem]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = list_prepared_inputs(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     _validate_family_dataset("cellpose", dataset, source_mode)
     input_root = segmentation_input_root(project_root, dataset, source_mode)
     mask_root = segmentation_mask_root(project_root, dataset, source_mode)
@@ -204,10 +240,32 @@ def list_prepared_inputs(
 
 
 def _annotation_kind(sample_key: str) -> str:
+    """Return annotation kind for the supplied inputs.
+
+    Args:
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _annotation_kind(sample_key="sample_key")
+    """
     return "crop" if "/crops/" in sample_key.replace("\\", "/") else "full_image"
 
 
 def _annotation_split(sample_key: str) -> str | None:
+    """Return annotation split for the supplied inputs.
+
+    Args:
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = _annotation_split(sample_key="sample_key")
+    """
     normalized = sample_key.replace("\\", "/")
     if "/crops/train/" in normalized:
         return "train"
@@ -217,6 +275,17 @@ def _annotation_split(sample_key: str) -> str | None:
 
 
 def _source_sample_key(sample_key: str) -> str:
+    """Return source sample key for the supplied inputs.
+
+    Args:
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _source_sample_key(sample_key="sample_key")
+    """
     normalized = sample_key.replace("\\", "/")
     return normalized.split("/crops/", 1)[0]
 
@@ -234,6 +303,26 @@ def list_training_inputs(
     Full-image annotations retain their original sample key. Crop pairs use a
     key of the form ``<sample>/crops/<train|validation>/<crop_id>``. The split
     encoded in this key is respected by the train/validation splitter.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        annotation_source (str): Annotation subset to use, for example crop annotations, full-image annotations, or both. Defaults to ``"all"``.
+        annotation_split (str): Annotation split to use, such as training, validation, or any available split. Defaults to ``"any"``.
+
+    Returns:
+        list[PreparedInputItem]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_training_inputs(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
     """
     items = list_prepared_inputs(project_root, dataset, source_mode)
     mask_root = segmentation_mask_root(project_root, dataset, source_mode)
@@ -280,6 +369,21 @@ def _remove_singleton_nonspatial(
     array: np.ndarray,
     axes: str,
 ) -> tuple[np.ndarray, str]:
+    """Remove singleton nonspatial from the current data structure.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _remove_singleton_nonspatial(array=image_array, axes="axes")
+    """
     for axis in tuple(axes):
         if axis not in {"c", "y", "x"}:
             index = axes.index(axis)
@@ -294,7 +398,21 @@ def _remove_singleton_nonspatial(
 
 
 def load_prepared_image(path: Path) -> np.ndarray:
-    """Load one prepared OME-Zarr as YX or YXC without renormalizing it."""
+    """Load one prepared OME-Zarr as YX or YXC without renormalizing it.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_prepared_image(path=Path("path/to/resource"))
+    """
     array, axes = load_ome_zarr(path, level=0, as_numpy=True)
     image = np.asarray(array)
     axes = str(axes).lower()
@@ -316,7 +434,23 @@ def load_prepared_image(path: Path) -> np.ndarray:
 
 
 def load_instance_mask(path: Path, expected_yx: tuple[int, int]) -> np.ndarray:
-    """Load and validate one non-negative integer instance mask."""
+    """Load and validate one non-negative integer instance mask.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_instance_mask(path=Path("path/to/resource"), expected_yx=1)
+    """
     if not path.is_file():
         raise FileNotFoundError(path)
     mask = np.squeeze(np.asarray(tiff.imread(path)))
@@ -340,7 +474,29 @@ def collect_training_data(
     annotation_source: str = "all",
     annotation_split: str = "any",
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[str]]:
-    """Load selected full-image or crop-based pairs with strict checks."""
+    """Load selected full-image or crop-based pairs with strict checks.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        selected_sample_keys (set[str] | None): Optional set of canonical sample identifiers restricting the workflow to selected samples. ``None`` selects the function's default behavior.
+        annotation_source (str): Annotation subset to use, for example crop annotations, full-image annotations, or both. Defaults to ``"all"``.
+        annotation_split (str): Annotation split to use, such as training, validation, or any available split. Defaults to ``"any"``.
+
+    Returns:
+        tuple[list[np.ndarray], list[np.ndarray], list[str]]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = collect_training_data(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     items = list_training_inputs(
         project_root,
         dataset,
@@ -372,6 +528,17 @@ def collect_training_data(
 
 
 def _safe_name(value: str) -> str:
+    """Return safe name for the supplied inputs.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_name(value="value")
+    """
     return value.replace("/", "__").replace("\\", "__")
 
 
@@ -381,6 +548,17 @@ def _compact_artifact_name(value: str, index: int, prefix_length: int = 20) -> s
     The original sample key is retained in CSV/JSON reports. The short folder
     name prevents failures near the legacy Windows MAX_PATH limit when tuning
     outputs are nested below long project and model directories.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+        index (int): Zero-based index of the selected element.
+        prefix_length (int): Numerical value controlling prefix length. Defaults to ``20``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _compact_artifact_name(value="value", index=1)
     """
     safe = _safe_name(value).strip(" ._") or "sample"
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
@@ -389,6 +567,17 @@ def _compact_artifact_name(value: str, index: int, prefix_length: int = 20) -> s
 
 
 def _model_display_name(cfg: PredictionConfig) -> str:
+    """Return model display name for the supplied inputs.
+
+    Args:
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _model_display_name(cfg=config)
+    """
     if cfg.model_name:
         return cfg.model_name
     if cfg.model is None:
@@ -402,7 +591,17 @@ def _model_display_name(cfg: PredictionConfig) -> str:
 
 
 def _select_cellpose_builtin(models_module: Any) -> str:
-    """Choose a Cellpose-SAM model name supported by the installed version."""
+    """Choose a Cellpose-SAM model name supported by the installed version.
+
+    Args:
+        models_module (Any): Value specifying models module for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _select_cellpose_builtin(models_module=...)
+    """
     available = set(getattr(models_module, "MODEL_NAMES", ()) or ())
     for candidate in ("cpsam_v2", "cpsam"):
         if not available or candidate in available:
@@ -411,7 +610,18 @@ def _select_cellpose_builtin(models_module: Any) -> str:
 
 
 def _supported_kwargs(callable_object: Any, values: dict[str, Any]) -> dict[str, Any]:
-    """Filter keyword arguments for compatibility with installed library versions."""
+    """Filter keyword arguments for compatibility with installed library versions.
+
+    Args:
+        callable_object (Any): Value specifying callable object for the operation.
+        values (dict[str, Any]): Text value specifying values.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _supported_kwargs(callable_object=..., values="values")
+    """
     try:
         signature = inspect.signature(callable_object)
     except (TypeError, ValueError):
@@ -425,7 +635,17 @@ def _supported_kwargs(callable_object: Any, values: dict[str, Any]) -> dict[str,
 
 
 def _load_prediction_model(cfg: PredictionConfig):
-    """Load a Cellpose, Omnipose, or StarDist prediction model."""
+    """Load a Cellpose, Omnipose, or StarDist prediction model.
+
+    Args:
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _load_prediction_model(cfg=config)
+    """
 
     family, _dataset, _mode = _validate_family_dataset(
         cfg.family,
@@ -507,7 +727,17 @@ def _load_prediction_model(cfg: PredictionConfig):
     )
 
 def load_prediction_model(cfg: PredictionConfig):
-    """Load one pretrained or user-supplied prediction model for reuse."""
+    """Load one pretrained or user-supplied prediction model for reuse.
+
+    Args:
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = load_prediction_model(cfg=config)
+    """
     return _load_prediction_model(cfg)
 
 def _prepare_omnipose_image(image: np.ndarray, dataset: str) -> tuple[np.ndarray, dict[str, Any]]:
@@ -517,6 +747,19 @@ def _prepare_omnipose_image(image: np.ndarray, dataset: str) -> tuple[np.ndarray
     For ``2d_time``, HADA is placed in channel 0 and channel 1 is zero-filled.
     For ``2d_wga_dapi``, WGA is placed first as the cell-boundary signal and
     DAPI second. Other datasets retain their first two numerical channels.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prepare_omnipose_image(image=image_array, dataset="2d_time")
     """
     array = np.asarray(image, dtype=np.float32)
     if array.ndim == 2:
@@ -549,6 +792,23 @@ def _prepare_omnipose_image(image: np.ndarray, dataset: str) -> tuple[np.ndarray
 def _prepare_family_images(
     images: Sequence[np.ndarray], family: str, dataset: str
 ) -> tuple[list[np.ndarray], list[dict[str, Any]]]:
+    """Prepare family images for downstream processing.
+
+    Args:
+        images (Sequence[np.ndarray]): Sequence or batch of input image arrays to process.
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[list[np.ndarray], list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _prepare_family_images(
+        ...     images=image_array,
+        ...     family="cellpose",
+        ...     dataset="2d_time",
+        ... )
+    """
     if family != "omnipose":
         return [np.asarray(image) for image in images], [
             {"policy": "unchanged", "output_shape": list(np.asarray(image).shape)}
@@ -564,6 +824,23 @@ def _prepare_family_images(
 
 
 def _cellpose_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
+    """Return cellpose predict for the supplied inputs.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        image (np.ndarray): Input image array to process.
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _cellpose_predict(
+        ...     model="model_name",
+        ...     image=image_array,
+        ...     cfg=config,
+        ... )
+    """
     kwargs = {
         "diameter": cfg.diameter,
         "flow_threshold": cfg.flow_threshold,
@@ -590,6 +867,24 @@ def _omnipose_predict(
     explicitly zero-filled. The image is passed as a one-image NumPy batch
     because Omnipose 1.1.4 handles a four-dimensional array more reliably than
     a one-element Python list.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        image (np.ndarray): Input image array to process.
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _omnipose_predict(
+        ...     model="model_name",
+        ...     image=image_array,
+        ...     cfg=config,
+        ... )
     """
 
     prepared, _channel_record = _prepare_omnipose_image(
@@ -685,6 +980,23 @@ def _omnipose_predict(
     )
 
 def _stardist_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
+    """Return stardist predict for the supplied inputs.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        image (np.ndarray): Input image array to process.
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _stardist_predict(
+        ...     model="model_name",
+        ...     image=image_array,
+        ...     cfg=config,
+        ... )
+    """
     kwargs: dict[str, Any] = {}
     if cfg.prob_thresh is not None:
         kwargs["prob_thresh"] = cfg.prob_thresh
@@ -695,7 +1007,26 @@ def _stardist_predict(model, image: np.ndarray, cfg: PredictionConfig) -> np.nda
 
 
 def predict_one(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
-    """Run one model without any additional image normalization."""
+    """Run one model without any additional image normalization.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        image (np.ndarray): Input image array to process.
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = predict_one(
+        ...     model="model_name",
+        ...     image=image_array,
+        ...     cfg=config,
+        ... )
+    """
     if cfg.family == "cellpose":
         labels = _cellpose_predict(model, image, cfg)
     elif cfg.family == "omnipose":
@@ -715,6 +1046,18 @@ def predict_one(model, image: np.ndarray, cfg: PredictionConfig) -> np.ndarray:
 
 
 def _save_prediction(labels: np.ndarray, output_dir: Path) -> tuple[Path, Path]:
+    """Save prediction to persistent storage.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+        output_dir (Path): Directory where generated resources are written.
+
+    Returns:
+        tuple[Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_prediction(labels=image_array, output_dir=Path("path/to/resource"))
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     max_label = int(np.max(labels)) if labels.size else 0
     dtype = np.uint16 if max_label <= np.iinfo(np.uint16).max else np.uint32
@@ -740,7 +1083,20 @@ def _save_prediction(labels: np.ndarray, output_dir: Path) -> tuple[Path, Path]:
 
 
 def run_prediction_dataset(cfg: PredictionConfig) -> Path:
-    """Run one model family on all or selected prepared inputs."""
+    """Run one model family on all or selected prepared inputs.
+
+    Args:
+        cfg (PredictionConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_prediction_dataset(cfg=config)
+    """
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )
@@ -808,6 +1164,30 @@ def _split_train_validation(
     ``legacy-explicit-first`` reproduces the previous behavior: when at least
     one explicit validation crop exists, all unspecified annotations are put
     into training.
+
+    Args:
+        images (list[np.ndarray]): Sequence or batch of input image arrays to process.
+        masks (list[np.ndarray]): Sequence or batch of binary or labeled segmentation masks.
+        names (list[str]): Text value specifying names.
+        fraction (float): Numerical value controlling fraction.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+        validation_policy (str): Text value specifying validation policy. Defaults to ``"combined"``.
+
+    Returns:
+        tuple[ tuple[list[np.ndarray], list[np.ndarray], list[str]], tuple[list[np.ndarray], list[np.ndarray], list[str]], dict[str, Any], ]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _split_train_validation(
+        ...     images=image_array,
+        ...     masks=image_array,
+        ...     names="names",
+        ...     fraction=0.5,
+        ...     seed=1,
+        ... )
     """
     if not 0.0 <= fraction < 1.0:
         raise ValueError("validation_fraction must be in [0,1)")
@@ -965,6 +1345,18 @@ def _split_train_validation(
 
 
 def _save_split_manifest(run_dir: Path, diagnostics: dict[str, Any]) -> Path | None:
+    """Save split manifest to persistent storage.
+
+    Args:
+        run_dir (Path): Directory used for run.
+        diagnostics (dict[str, Any]): Text value specifying diagnostics.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_split_manifest(run_dir=Path("path/to/resource"), diagnostics="diagnostics")
+    """
     rows = diagnostics.get("split_rows", [])
     if not rows:
         return None
@@ -976,6 +1368,17 @@ def _save_split_manifest(run_dir: Path, diagnostics: dict[str, Any]) -> Path | N
     return path
 
 def _numeric_sequence(value: Any) -> list[float]:
+    """Return numeric sequence for the supplied inputs.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _numeric_sequence(value=...)
+    """
     if value is None:
         return []
     try:
@@ -990,6 +1393,23 @@ def _numeric_sequence(value: Any) -> list[float]:
 def _extract_training_result(
     result: Any, run_dir: Path, run_name: str
 ) -> tuple[Path | None, list[float], list[float], str]:
+    """Extract training result from the supplied data.
+
+    Args:
+        result (Any): Value specifying result for the operation.
+        run_dir (Path): Directory used for run.
+        run_name (str): Unique name assigned to the current processing, training, or evaluation run.
+
+    Returns:
+        tuple[Path | None, list[float], list[float], str]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _extract_training_result(
+        ...     result=...,
+        ...     run_dir=Path("path/to/resource"),
+        ...     run_name="example_run",
+        ... )
+    """
     model_path: Path | None = None
     train_losses: list[float] = []
     validation_losses: list[float] = []
@@ -1031,6 +1451,23 @@ def _save_loss_outputs(
     train_losses: Sequence[float],
     validation_losses: Sequence[float],
 ) -> dict[str, str | None]:
+    """Save loss outputs to persistent storage.
+
+    Args:
+        run_dir (Path): Directory used for run.
+        train_losses (Sequence[float]): Numerical value controlling train losses.
+        validation_losses (Sequence[float]): Numerical value controlling validation losses.
+
+    Returns:
+        dict[str, str | None]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _save_loss_outputs(
+        ...     run_dir=Path("path/to/resource"),
+        ...     train_losses=0.5,
+        ...     validation_losses=0.5,
+        ... )
+    """
     if not train_losses and not validation_losses:
         return {"loss_csv": None, "loss_curve_png": None}
     csv_path = run_dir / "training_losses.csv"
@@ -1074,6 +1511,18 @@ def _save_loss_outputs(
 
 
 def _display_rgb(image: np.ndarray, dataset: str) -> np.ndarray:
+    """Return display RGB representation for the supplied inputs.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_rgb(image=image_array, dataset="2d_time")
+    """
     array = np.asarray(image, dtype=np.float32)
     if array.ndim == 2:
         rgb = np.zeros((*array.shape, 3), dtype=np.float32)
@@ -1101,6 +1550,28 @@ def _save_validation_comparison(
     dice: float,
     iou: float,
 ) -> None:
+    """Save validation comparison to persistent storage.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        output_png (Path): Filesystem path used for output PNG image.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        dice (float): Numerical value controlling dice.
+        iou (float): Numerical value controlling iou.
+
+    Example:
+        >>> _save_validation_comparison(
+        ...     image=image_array,
+        ...     reference=image_array,
+        ...     prediction=image_array,
+        ...     output_png=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     dice=0.5,
+        ...     iou=0.5,
+        ... )
+    """
     import matplotlib.pyplot as plt
     from skimage.segmentation import find_boundaries
 
@@ -1128,6 +1599,18 @@ def _save_validation_comparison(
 
 
 def _validation_prediction_config(cfg: TrainingConfig, model_path: Path) -> PredictionConfig:
+    """Return validation prediction config for the supplied inputs.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        model_path (Path): Filesystem path associated with model.
+
+    Returns:
+        PredictionConfig: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _validation_prediction_config(cfg=config, model_path=Path("path/to/resource"))
+    """
     return PredictionConfig(
         project_root=cfg.project_root,
         family=cfg.family,
@@ -1148,7 +1631,14 @@ def _validation_prediction_config(cfg: TrainingConfig, model_path: Path) -> Pred
 
 
 def _release_prediction_model(model: Any) -> None:
-    """Release a prediction model before training or loading another model."""
+    """Release a prediction model before training or loading another model.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+
+    Example:
+        >>> _release_prediction_model(model="model_name")
+    """
     try:
         del model
     finally:
@@ -1172,7 +1662,31 @@ def _evaluate_model_on_validation(
     *,
     evaluation_label: str,
 ) -> dict[str, Any]:
-    """Evaluate one model on a fixed validation set and save binary metrics."""
+    """Evaluate one model on a fixed validation set and save binary metrics.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        prediction_cfg (PredictionConfig): Value specifying prediction cfg for the operation.
+        validation_images (list[np.ndarray]): Array containing validation images.
+        validation_masks (list[np.ndarray]): Array containing validation masks.
+        validation_names (list[str]): Text value specifying validation names.
+        evaluation_label (str): Text value specifying evaluation label.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _evaluate_model_on_validation(
+        ...     cfg=config,
+        ...     output_dir=Path("path/to/resource"),
+        ...     prediction_cfg={},
+        ...     validation_images=image_array,
+        ...     validation_masks=image_array,
+        ...     validation_names="validation_names",
+        ...     evaluation_label="evaluation_label",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     if not validation_images:
         payload = {
@@ -1299,6 +1813,18 @@ def _evaluate_model_on_validation(
 def _baseline_prediction_config(
     cfg: TrainingConfig, pretrained_model: str | Path | None
 ) -> PredictionConfig:
+    """Return baseline prediction config for the supplied inputs.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        pretrained_model (str | Path | None): Filesystem path used for pretrained model.
+
+    Returns:
+        PredictionConfig: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _baseline_prediction_config(cfg=config, pretrained_model="pretrained_model")
+    """
     model_value: str | Path | None = pretrained_model
     model_name: str | None = None
     if cfg.family == "omnipose" and pretrained_model is not None:
@@ -1333,6 +1859,29 @@ def _evaluate_pretrained_baseline(
     validation_masks: list[np.ndarray],
     validation_names: list[str],
 ) -> dict[str, Any]:
+    """Evaluate pretrained baseline using the configured criteria.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        run_dir (Path): Directory used for run.
+        pretrained_model (str | Path | None): Filesystem path used for pretrained model.
+        validation_images (list[np.ndarray]): Array containing validation images.
+        validation_masks (list[np.ndarray]): Array containing validation masks.
+        validation_names (list[str]): Text value specifying validation names.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _evaluate_pretrained_baseline(
+        ...     cfg=config,
+        ...     run_dir=Path("path/to/resource"),
+        ...     pretrained_model="pretrained_model",
+        ...     validation_images=image_array,
+        ...     validation_masks=image_array,
+        ...     validation_names="validation_names",
+        ... )
+    """
     output_dir = run_dir / "validation" / "baseline"
     if not cfg.evaluate_pretrained_baseline:
         payload = {
@@ -1378,6 +1927,29 @@ def _evaluate_validation_after_training(
     validation_masks: list[np.ndarray],
     validation_names: list[str],
 ) -> dict[str, Any]:
+    """Evaluate validation after training using the configured criteria.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        run_dir (Path): Directory used for run.
+        model_path (Path | None): Filesystem path associated with model.
+        validation_images (list[np.ndarray]): Array containing validation images.
+        validation_masks (list[np.ndarray]): Array containing validation masks.
+        validation_names (list[str]): Text value specifying validation names.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _evaluate_validation_after_training(
+        ...     cfg=config,
+        ...     run_dir=Path("path/to/resource"),
+        ...     model_path=Path("path/to/resource"),
+        ...     validation_images=image_array,
+        ...     validation_masks=image_array,
+        ...     validation_names="validation_names",
+        ... )
+    """
     output_dir = run_dir / "validation"
     if model_path is None or not model_path.exists():
         payload = {
@@ -1404,7 +1976,18 @@ def _evaluate_validation_after_training(
 
 
 def _infer_run_dir_from_model(family: str, model_path: Path) -> Path:
-    """Infer the model run directory for validation output placement."""
+    """Infer the model run directory for validation output placement.
+
+    Args:
+        family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+        model_path (Path): Filesystem path associated with model.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _infer_run_dir_from_model(family="cellpose", model_path=Path("path/to/resource"))
+    """
     resolved = model_path.resolve()
     if family == "omnipose" and resolved.is_file() and resolved.parent.name == "models":
         return resolved.parent.parent
@@ -1418,7 +2001,23 @@ def validate_saved_model(
     model_path: str | Path,
     output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Validate an already trained model without repeating training."""
+    """Validate an already trained model without repeating training.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        model_path (str | Path): Filesystem path associated with model.
+        output_dir (str | Path | None): Directory where generated resources are written. ``None`` selects the function's default behavior.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_saved_model(cfg=config, model_path=Path("path/to/resource"))
+    """
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )
@@ -1469,6 +2068,18 @@ def validate_saved_model(
 
 
 def _short_metric_label(name: str, maximum: int = 44) -> str:
+    """Return short metric label for the supplied inputs.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+        maximum (int): Numerical value controlling maximum. Defaults to ``44``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _short_metric_label(name="name")
+    """
     normalized = name.replace("/crops/validation/", " / val crop ")
     normalized = normalized.replace("/crops/train/", " / train crop ")
     if len(normalized) <= maximum:
@@ -1481,7 +2092,23 @@ def _save_improvement_outputs(
     baseline: dict[str, Any],
     fine_tuned: dict[str, Any],
 ) -> dict[str, Any]:
-    """Save paired before/after Dice and IoU tables and graphs."""
+    """Save paired before/after Dice and IoU tables and graphs.
+
+    Args:
+        run_dir (Path): Directory used for run.
+        baseline (dict[str, Any]): Text value specifying baseline.
+        fine_tuned (dict[str, Any]): Text value specifying fine tuned.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _save_improvement_outputs(
+        ...     run_dir=Path("path/to/resource"),
+        ...     baseline="baseline",
+        ...     fine_tuned="fine_tuned",
+        ... )
+    """
     output_dir = run_dir / "validation"
     output_dir.mkdir(parents=True, exist_ok=True)
     if baseline.get("status") != "completed" or fine_tuned.get("status") != "completed":
@@ -1645,6 +2272,21 @@ def _save_improvement_outputs(
     return payload
 
 def _train_cellpose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
+    """Train cellpose using the supplied data and configuration.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        run_dir (Path): Directory used for run.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _train_cellpose(cfg=config, run_dir=Path("path/to/resource"))
+    """
     from cellpose import models, train
 
     images, masks, names = collect_training_data(
@@ -1726,6 +2368,25 @@ def _prepare_omnipose_folder(
     masks: list[np.ndarray],
     names: list[str],
 ) -> Path:
+    """Prepare omnipose folder for downstream processing.
+
+    Args:
+        run_dir (Path): Directory used for run.
+        images (list[np.ndarray]): Sequence or batch of input image arrays to process.
+        masks (list[np.ndarray]): Sequence or batch of binary or labeled segmentation masks.
+        names (list[str]): Text value specifying names.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _prepare_omnipose_folder(
+        ...     run_dir=Path("path/to/resource"),
+        ...     images=image_array,
+        ...     masks=image_array,
+        ...     names="names",
+        ... )
+    """
     data_dir = run_dir / "prepared_training_data"
     if data_dir.exists():
         shutil.rmtree(data_dir)
@@ -1739,7 +2400,17 @@ def _prepare_omnipose_folder(
 
 
 def _relabel_positive_instances(mask: np.ndarray) -> np.ndarray:
-    """Relabel positive instance identifiers consecutively while keeping 0 background."""
+    """Relabel positive instance identifiers consecutively while keeping 0 background.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _relabel_positive_instances(mask=image_array)
+    """
     array = np.asarray(mask)
     unique, inverse = np.unique(array, return_inverse=True)
     mapped = np.zeros(unique.shape, dtype=np.int32)
@@ -1749,7 +2420,17 @@ def _relabel_positive_instances(mask: np.ndarray) -> np.ndarray:
 
 
 def _instance_centroids(mask: np.ndarray) -> np.ndarray:
-    """Return deterministic YX centroids for all positive instance identifiers."""
+    """Return deterministic YX centroids for all positive instance identifiers.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _instance_centroids(mask=image_array)
+    """
     array = np.asarray(mask)
     centroids: list[tuple[float, float]] = []
     for label_id in np.unique(array):
@@ -1766,7 +2447,18 @@ def _select_spatially_distributed_centres(
     centroids: np.ndarray,
     count: int,
 ) -> np.ndarray:
-    """Select spatially distributed instance centres by deterministic farthest sampling."""
+    """Select spatially distributed instance centres by deterministic farthest sampling.
+
+    Args:
+        centroids (np.ndarray): Array containing centroids.
+        count (int): Numerical value controlling count.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _select_spatially_distributed_centres(centroids=image_array, count=1)
+    """
     if len(centroids) <= count:
         return centroids
     overall_centre = centroids.mean(axis=0)
@@ -1794,7 +2486,29 @@ def _extract_centered_patch(
     centre_yx: Sequence[float],
     patch_size: tuple[int, int],
 ) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
-    """Extract one fixed-size patch with the selected foreground point at its centre."""
+    """Extract one fixed-size patch with the selected foreground point at its centre.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        centre_yx (Sequence[float]): Numerical value controlling centre yx.
+        patch_size (tuple[int, int]): Size parameter controlling patch.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, dict[str, int]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _extract_centered_patch(
+        ...     image=image_array,
+        ...     mask=image_array,
+        ...     centre_yx=0.5,
+        ...     patch_size=1,
+        ... )
+    """
     image_array = np.asarray(image)
     mask_array = np.asarray(mask)
     if mask_array.ndim != 2:
@@ -1848,6 +2562,29 @@ def _build_foreground_training_patches(
 
     Validation data are intentionally not passed through this function. They
     remain complete images or manually selected validation crops.
+
+    Args:
+        images (Sequence[np.ndarray]): Sequence or batch of input image arrays to process.
+        masks (Sequence[np.ndarray]): Sequence or batch of binary or labeled segmentation masks.
+        names (Sequence[str]): Text value specifying names.
+        patch_size (tuple[int, int]): Size parameter controlling patch.
+        max_patches_per_image (int): Maximum permitted value of patches per image.
+
+    Returns:
+        tuple[list[np.ndarray], list[np.ndarray], list[str], list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _build_foreground_training_patches(
+        ...     images=image_array,
+        ...     masks=image_array,
+        ...     names="names",
+        ...     patch_size=1,
+        ...     max_patches_per_image=1,
+        ... )
     """
     if max_patches_per_image < 1:
         raise ValueError("max_patches_per_image must be at least 1")
@@ -1903,6 +2640,18 @@ def _save_foreground_patch_manifest(
     run_dir: Path,
     records: Sequence[dict[str, Any]],
 ) -> Path | None:
+    """Save foreground patch manifest to persistent storage.
+
+    Args:
+        run_dir (Path): Directory used for run.
+        records (Sequence[dict[str, Any]]): Text value specifying records.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_foreground_patch_manifest(run_dir=Path("path/to/resource"), records="records")
+    """
     if not records:
         return None
     path = run_dir / "foreground_training_patches.csv"
@@ -1914,7 +2663,21 @@ def _save_foreground_patch_manifest(
 
 
 def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
-    """Fine-tune Omnipose on foreground-centred, non-empty training patches."""
+    """Fine-tune Omnipose on foreground-centred, non-empty training patches.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        run_dir (Path): Directory used for run.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _train_omnipose(cfg=config, run_dir=Path("path/to/resource"))
+    """
     from cellpose_omni import models
 
     images, masks, names = collect_training_data(
@@ -1981,13 +2744,31 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     import torch
 
     class _BatchMeanBCEWithLogits(torch.nn.Module):
+        """Represent batch mean bcewith logits and its associated operations."""
         def __init__(self) -> None:
+            """Initialize a ``_BatchMeanBCEWithLogits`` instance.
+
+            Example:
+                >>> __init__()
+            """
             super().__init__()
             self.loss = torch.nn.BCEWithLogitsLoss(reduction="none")
 
         def forward(
             self, prediction: torch.Tensor, target: torch.Tensor
         ) -> torch.Tensor:
+            """Return forward for the supplied inputs.
+
+            Args:
+                prediction (torch.Tensor): Array containing prediction.
+                target (torch.Tensor): Array containing target.
+
+            Returns:
+                torch.Tensor: Array containing the processed result.
+
+            Example:
+                >>> result = forward(prediction=image_array, target=image_array)
+            """
             target = target.to(dtype=prediction.dtype)
             per_element = self.loss(prediction, target)
             per_sample = per_element.reshape(per_element.shape[0], -1).mean(dim=1)
@@ -1996,6 +2777,11 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
     original_set_criterion = model._set_criterion
 
     def _set_criterion_with_logits(self: Any) -> None:
+        """Set criterion with logits on the current object or configuration.
+
+        Example:
+            >>> _set_criterion_with_logits()
+        """
         original_set_criterion()
         self.BCELoss = _BatchMeanBCEWithLogits()
 
@@ -2093,7 +2879,22 @@ def _train_omnipose(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
 
 
 def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
-    """Train StarDist with foreground-only patch sampling and independent validation."""
+    """Train StarDist with foreground-only patch sampling and independent validation.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+        run_dir (Path): Directory used for run.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _train_stardist(cfg=config, run_dir=Path("path/to/resource"))
+    """
     from stardist.models import Config2D, StarDist2D
 
     images, masks, names = collect_training_data(
@@ -2198,7 +2999,20 @@ def _train_stardist(cfg: TrainingConfig, run_dir: Path) -> dict[str, Any]:
 
 
 def train_initial_model(cfg: TrainingConfig) -> Path:
-    """Train or fine-tune one model and save structured validation outputs."""
+    """Train or fine-tune one model and save structured validation outputs.
+
+    Args:
+        cfg (TrainingConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = train_initial_model(cfg=config)
+    """
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )
@@ -2233,6 +3047,18 @@ def train_initial_model(cfg: TrainingConfig) -> Path:
 
 
 def semantic_dice(reference: np.ndarray, prediction: np.ndarray) -> float:
+    """Return semantic dice for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = semantic_dice(reference=image_array, prediction=image_array)
+    """
     ref = np.asarray(reference) > 0
     pred = np.asarray(prediction) > 0
     denominator = int(np.count_nonzero(ref) + np.count_nonzero(pred))
@@ -2242,6 +3068,18 @@ def semantic_dice(reference: np.ndarray, prediction: np.ndarray) -> float:
 
 
 def semantic_iou(reference: np.ndarray, prediction: np.ndarray) -> float:
+    """Return semantic iou for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = semantic_iou(reference=image_array, prediction=image_array)
+    """
     ref = np.asarray(reference) > 0
     pred = np.asarray(prediction) > 0
     union = int(np.count_nonzero(ref | pred))
@@ -2251,6 +3089,18 @@ def semantic_iou(reference: np.ndarray, prediction: np.ndarray) -> float:
 
 
 def _instance_iou_matrix(reference: np.ndarray, prediction: np.ndarray) -> np.ndarray:
+    """Return instance iou matrix for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _instance_iou_matrix(reference=image_array, prediction=image_array)
+    """
     ref_ids = np.unique(reference[reference > 0])
     pred_ids = np.unique(prediction[prediction > 0])
     matrix = np.zeros((len(ref_ids), len(pred_ids)), dtype=np.float64)
@@ -2272,7 +3122,19 @@ def instance_f1(
     *,
     iou_threshold: float = 0.5,
 ) -> tuple[float, int, int, int]:
-    """Calculate one-to-one instance F1 at the selected IoU threshold."""
+    """Calculate one-to-one instance F1 at the selected IoU threshold.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        iou_threshold (float): Decision threshold applied to iou. Defaults to ``0.5``.
+
+    Returns:
+        tuple[float, int, int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = instance_f1(reference=image_array, prediction=image_array)
+    """
     ref_count = int(np.unique(reference[reference > 0]).size)
     pred_count = int(np.unique(prediction[prediction > 0]).size)
     if ref_count == 0 and pred_count == 0:
@@ -2310,6 +3172,17 @@ def instance_f1(
 
 
 def _parameter_grid(cfg: TuneConfig) -> list[dict[str, Any]]:
+    """Return parameter grid for the supplied inputs.
+
+    Args:
+        cfg (TuneConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _parameter_grid(cfg=config)
+    """
     if cfg.family == "cellpose":
         return [
             {
@@ -2343,7 +3216,17 @@ def _parameter_grid(cfg: TuneConfig) -> list[dict[str, Any]]:
 
 
 def tune_model_parameters(cfg: TuneConfig) -> Path:
-    """Tune inference parameters on manual masks using binary Dice and IoU."""
+    """Tune inference parameters on manual masks using binary Dice and IoU.
+
+    Args:
+        cfg (TuneConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = tune_model_parameters(cfg=config)
+    """
     family, dataset, source_mode = _validate_family_dataset(
         cfg.family, cfg.dataset, cfg.source_mode
     )

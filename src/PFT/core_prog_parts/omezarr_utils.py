@@ -31,7 +31,17 @@ _CANONICAL_TYPES = {
 
 
 def _json_safe(value: Any) -> Any:
-    """Recursively convert metadata values into JSON-compatible Python objects."""
+    """Recursively convert metadata values into JSON-compatible Python objects.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _json_safe(value=...)
+    """
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -48,7 +58,17 @@ def _json_safe(value: Any) -> Any:
 
 
 def metadata_as_json_dict(meta: CziMeta) -> dict[str, Any]:
-    """Convert the complete ``CziMeta`` dataclass to a JSON-safe dictionary."""
+    """Convert the complete ``CziMeta`` dataclass to a JSON-safe dictionary.
+
+    Args:
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = metadata_as_json_dict(meta=...)
+    """
     try:
         return _json_safe(asdict(meta))
     except Exception:
@@ -56,7 +76,17 @@ def metadata_as_json_dict(meta: CziMeta) -> dict[str, Any]:
 
 
 def _axes_dicts(axes: str) -> list[dict[str, str]]:
-    """Create OME-NGFF axis descriptors with axis type and micrometre units."""
+    """Create OME-NGFF axis descriptors with axis type and micrometre units.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _axes_dicts(axes="axes")
+    """
     output: list[dict[str, str]] = []
     for axis in axes:
         descriptor = {"name": axis, "type": _CANONICAL_TYPES.get(axis, "unknown")}
@@ -67,7 +97,18 @@ def _axes_dicts(axes: str) -> list[dict[str, str]]:
 
 
 def _scale_vector_from_meta_um(axes: str, meta: CziMeta) -> list[float]:
-    """Build an axis-aligned coordinate scale vector from CZI physical sampling metadata."""
+    """Build an axis-aligned coordinate scale vector from CZI physical sampling metadata.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _scale_vector_from_meta_um(axes="axes", meta=...)
+    """
     sizes = {
         "x": getattr(meta, "pixel_size_um_x", None),
         "y": getattr(meta, "pixel_size_um_y", None),
@@ -81,12 +122,34 @@ def _scale_vector_from_meta_um(axes: str, meta: CziMeta) -> list[float]:
 
 
 def scale_vector_from_meta_um(axes: str, meta: CziMeta) -> list[float]:
-    """Expose physical scale-vector construction for validators and downstream readers."""
+    """Expose physical scale-vector construction for validators and downstream readers.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = scale_vector_from_meta_um(axes="axes", meta=...)
+    """
     return _scale_vector_from_meta_um(axes, meta)
 
 
 def _axes_from_czi_header(arr: np.ndarray, meta: CziMeta) -> str | None:
-    """Recover canonical squeezed axes from the original CZI header when unambiguous."""
+    """Recover canonical squeezed axes from the original CZI header when unambiguous.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = _axes_from_czi_header(arr=image_array, meta=...)
+    """
     header_axes = getattr(meta, "axes", None)
     header_shape = getattr(meta, "header_shape", None)
     if not isinstance(header_axes, str) or not isinstance(header_shape, (tuple, list)):
@@ -107,7 +170,21 @@ def _axes_from_czi_header(arr: np.ndarray, meta: CziMeta) -> str | None:
 
 
 def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
-    """Infer supported OME axes for a squeezed array using header and metadata evidence."""
+    """Infer supported OME axes for a squeezed array using header and metadata evidence.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _infer_axes_for_squeezed(arr=image_array, meta=...)
+    """
     from_header = _axes_from_czi_header(arr, meta)
     if from_header is not None:
         return from_header
@@ -154,9 +231,22 @@ def _infer_axes_for_squeezed(arr: np.ndarray, meta: CziMeta) -> str:
 
 def prepare_array_and_axes(arr: np.ndarray, meta: CziMeta) -> tuple[np.ndarray, str]:
     """Prepare the exact level-0 array and canonical OME axis order.
-    
+
     The function transposes only when required to obtain ``T, C, Z, Y, X`` order
     and returns the prepared array together with its lowercase axis string.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prepare_array_and_axes(arr=image_array, meta=...)
     """
     prepared = np.asarray(arr)
     axes = _infer_axes_for_squeezed(prepared, meta)
@@ -187,9 +277,26 @@ def _scale_vector_for_level_um(
     downscale: int,
 ) -> list[float]:
     """Calculate the physical scale vector for one pyramid level.
-    
+
     Only X and Y sampling are multiplied by the lateral downsampling factor; Z,
     channel, and time scales remain unchanged.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        base_scale_um (list[float]): Numerical value controlling base scale um.
+        level (int): Numerical value controlling level.
+        downscale (int): Numerical value controlling downscale.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _scale_vector_for_level_um(
+        ...     axes="axes",
+        ...     base_scale_um=0.5,
+        ...     level=1,
+        ...     downscale=1,
+        ... )
     """
     factor = downscale**level
     return [
@@ -213,13 +320,41 @@ def save_ome_zarr(
     extra_attrs: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write an array and optional CZI metadata as an OME-NGFF image.
-    
+
     The function creates level-0 data, optional 3D multiscale levels, coordinate
     transformations, channel and source attributes, and PFT-specific audit fields.
     ``coordinate_scale`` can preserve physical sampling when no ``CziMeta``
     instance is available, as in derived N2V outputs. ``extra_attrs`` adds
     JSON-compatible processing provenance without changing the numeric array.
     The generated OME-Zarr directory is returned.
+
+    Args:
+        out_zarr_dir (str | Path): Directory used for out Zarr.
+        arr (np.ndarray): Array containing arr.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        meta (CziMeta | None): Value specifying meta for the operation. ``None`` selects the function's default behavior.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+        chunks (tuple[int, ...] | None): Numerical value controlling chunks. ``None`` selects the function's default behavior.
+        pyramid_3d (bool): Boolean flag controlling pyramid three-dimensional data. Defaults to ``True``.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        pyramid_downscale (int): Numerical value controlling pyramid downscale. Defaults to ``2``.
+        coordinate_scale (Sequence[float] | None): Numerical value controlling coordinate scale. ``None`` selects the function's default behavior.
+        extra_attrs (Mapping[str, Any] | None): Text value specifying extra attrs. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = save_ome_zarr(
+        ...     out_zarr_dir=Path("path/to/resource"),
+        ...     arr=image_array,
+        ...     axes="axes",
+        ... )
     """
     out_zarr_dir = Path(out_zarr_dir)
     arr = np.asarray(arr)
@@ -327,7 +462,28 @@ def save_ome_zarr_next_to_outputs(
     pyramid_max_layer: int = 2,
     pyramid_downscale: int = 2,
 ) -> Path:
-    """Prepare an array and write it as ``image.ome.zarr`` inside a sample output directory."""
+    """Prepare an array and write it as ``image.ome.zarr`` inside a sample output directory.
+
+    Args:
+        out_dir (str | Path): Directory used for out.
+        arr (np.ndarray): Array containing arr.
+        meta (CziMeta): Value specifying meta for the operation.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``True``.
+        chunks (tuple[int, ...] | None): Numerical value controlling chunks. ``None`` selects the function's default behavior.
+        pyramid_3d (bool): Boolean flag controlling pyramid three-dimensional data. Defaults to ``True``.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        pyramid_downscale (int): Numerical value controlling pyramid downscale. Defaults to ``2``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_ome_zarr_next_to_outputs(
+        ...     out_dir=Path("path/to/resource"),
+        ...     arr=image_array,
+        ...     meta=...,
+        ... )
+    """
     out_dir = Path(out_dir)
     prepared, axes = prepare_array_and_axes(arr, meta)
     return save_ome_zarr(

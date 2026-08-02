@@ -1,4 +1,4 @@
-"""
+r"""
 Generate one reusable three-channel master PSF set for all 3D stacks.
 
 The script reads level-0 metadata from one reference ``image.ome.zarr`` and
@@ -58,6 +58,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -77,6 +88,20 @@ from PFT.core_prog_parts.denoising.psf_creator import (  # noqa: E402
 
 
 def _find_first_image_omezarr(root: Path) -> Path:
+    """Find first image OME-Zarr in the available data or project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_first_image_omezarr(root=Path("path/to/resource"))
+    """
     results = sorted(path for path in root.rglob("image.ome.zarr") if path.is_dir())
     if not results:
         raise FileNotFoundError(f"No image.ome.zarr found below {root}")
@@ -84,6 +109,18 @@ def _find_first_image_omezarr(root: Path) -> Path:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Generate or reuse one level-0 master PSF per channel wavelength.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

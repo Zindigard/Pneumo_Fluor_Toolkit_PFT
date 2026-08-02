@@ -44,6 +44,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -67,6 +78,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -77,12 +103,37 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _parse_optional_float(value: str | None) -> float | None:
+    """Parse optional float into a validated representation.
+
+    Args:
+        value (str | None): Value to validate, transform, store, or forward.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Example:
+        >>> result = _parse_optional_float(value="value")
+    """
     if value is None or value.lower() in {"none", "auto"}:
         return None
     return float(value)
 
 
 def main(default_family: str | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        default_family (str | None): Text value specifying default family. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Run an instance-segmentation model on prepared float32 OME-Zarr inputs.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

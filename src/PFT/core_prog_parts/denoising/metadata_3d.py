@@ -31,6 +31,17 @@ class ChannelOptics:
 
 
 def _as_float(value: Any) -> float | None:
+    """Return as float for the supplied inputs.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Example:
+        >>> result = _as_float(value=...)
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -39,6 +50,17 @@ def _as_float(value: Any) -> float | None:
 
 
 def _channel_info_from_root(root: zarr.Group) -> list[dict[str, Any]]:
+    """Return channel info from root for the supplied inputs.
+
+    Args:
+        root (zarr.Group): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _channel_info_from_root(root=Path("path/to/resource"))
+    """
     pft_meta = root.attrs.get("pft_meta")
     if isinstance(pft_meta, dict):
         info = pft_meta.get("channel_info")
@@ -48,7 +70,17 @@ def _channel_info_from_root(root: zarr.Group) -> list[dict[str, Any]]:
 
 
 def _metadata_wavelength(item: Mapping[str, Any]) -> tuple[float | None, str | None]:
-    """Return the best emission-like wavelength stored in one channel record."""
+    """Return the best emission-like wavelength stored in one channel record.
+
+    Args:
+        item (Mapping[str, Any]): Text value specifying item.
+
+    Returns:
+        tuple[float | None, str | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _metadata_wavelength(item="item")
+    """
     preferred_keys = (
         "emission_nm",
         "emission_wavelength_nm",
@@ -67,6 +99,17 @@ def _metadata_wavelength(item: Mapping[str, Any]) -> tuple[float | None, str | N
 
 
 def _omero_wavelengths(root: zarr.Group) -> list[tuple[float | None, str | None]]:
+    """Return omero wavelengths for the supplied inputs.
+
+    Args:
+        root (zarr.Group): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[tuple[float | None, str | None]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _omero_wavelengths(root=Path("path/to/resource"))
+    """
     omero = root.attrs.get("omero")
     channels = omero.get("channels") if isinstance(omero, dict) else None
     output: list[tuple[float | None, str | None]] = []
@@ -88,6 +131,26 @@ def _omero_wavelengths(root: zarr.Group) -> list[tuple[float | None, str | None]
 
 
 def _fallback_for_channel(name: str, index: int, fallback: Sequence[float]) -> tuple[float, str]:
+    """Return fallback for channel for the supplied inputs.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+        index (int): Zero-based index of the selected element.
+        fallback (Sequence[float]): Numerical value controlling fallback.
+
+    Returns:
+        tuple[float, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _fallback_for_channel(
+        ...     name="name",
+        ...     index=1,
+        ...     fallback=0.5,
+        ... )
+    """
     upper = name.upper()
     name_rules = (("T1", 405.0), ("405", 405.0), ("T2", 488.0), ("488", 488.0),
                   ("T3", 561.0), ("561", 561.0), ("568", 561.0))
@@ -113,6 +176,21 @@ def resolve_channel_optics(
 
     Resolution order is explicit mapping, ``pft_meta.channel_info``, OME/OMERO
     channel metadata, then the documented fallback rules.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+        explicit_wavelength_nm (Mapping[str, float] | None): Text value specifying explicit wavelength nm. ``None`` selects the function's default behavior.
+        fallback_wavelengths_nm (Sequence[float]): Numerical value controlling fallback wavelengths nm. Defaults to ``DEFAULT_FALLBACK_WAVELENGTHS_NM``.
+
+    Returns:
+        list[ChannelOptics]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_channel_optics(zarr_dir=Path("path/to/resource"))
     """
     zarr_dir = Path(zarr_dir)
     meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
@@ -149,7 +227,18 @@ def resolve_channel_optics(
 
 
 def coordinate_scale_for_level(zarr_dir: str | Path, *, level: int) -> list[float]:
-    """Return the axis-aligned physical scale vector for a selected level."""
+    """Return the axis-aligned physical scale vector for a selected level.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = coordinate_scale_for_level(zarr_dir=Path("path/to/resource"), level=1)
+    """
     meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=level)
     axes = str(meta.get("axes") or "czyx").lower()
     voxel = meta.get("voxel_size_um") or {}
@@ -169,6 +258,15 @@ def copyable_root_metadata(zarr_dir: str | Path) -> dict[str, Any]:
     multiscale and processing attributes are retained separately under
     ``pft_source_multiscales`` and ``pft_source_processing`` so no source metadata
     are lost during deconvolution.
+
+    Args:
+        zarr_dir (str | Path): Directory used for Zarr.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = copyable_root_metadata(zarr_dir=Path("path/to/resource"))
     """
     root = zarr.open_group(str(zarr_dir), mode="r")
     retained: dict[str, Any] = {}

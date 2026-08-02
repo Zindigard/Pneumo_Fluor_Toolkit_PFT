@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for reader."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ SUPPORTED_ZARR_SUFFIXES = (".ome.zarr", ".zarr")
 
 @dataclass(frozen=True)
 class MinimalImageMeta:
+    """Store validated configuration or result data for minimal image meta."""
     source_path: str
     axes: str | None
     header_shape: tuple[int, ...] | None
@@ -35,6 +38,17 @@ class MinimalImageMeta:
 
 
 def find_project_root(start: Path) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        start (Path): Filesystem path used for start.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_project_root(start=Path("path/to/resource"))
+    """
     start = start.resolve()
     for p in [start, *start.parents]:
         if (p / "pyproject.toml").exists() or (p / ".git").exists() or (p / "setup.cfg").exists():
@@ -43,11 +57,33 @@ def find_project_root(start: Path) -> Path:
 
 
 def sanitize_stem(name: str) -> str:
+    """Return sanitize stem for the supplied inputs.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = sanitize_stem(name="name")
+    """
     bad = r'<>:"/\\|?*'
     return "".join(ch if ch not in bad else "_" for ch in name).strip()
 
 
 def napari_zarr_dir_for_input(input_path: Path) -> Path:
+    """Return napari Zarr dir for input for the supplied inputs.
+
+    Args:
+        input_path (Path): Filesystem path to the input resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = napari_zarr_dir_for_input(input_path=Path("path/to/resource"))
+    """
     here = Path(__file__).resolve()
     root = find_project_root(here)
     base = root / "results" / "Napari_zarr"
@@ -58,10 +94,35 @@ def napari_zarr_dir_for_input(input_path: Path) -> Path:
 
 
 def is_omezarr_path(path: str | Path) -> bool:
+    """Determine whether OME-Zarr path satisfies the stated condition.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_omezarr_path(path="path")
+    """
     return Path(path).name.lower().endswith(SUPPORTED_ZARR_SUFFIXES)
 
 
 def resolve_omezarr_path(path: str | Path) -> Path:
+    """Resolve OME-Zarr path from the supplied configuration.
+
+    Args:
+        path (str | Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_omezarr_path(path="path")
+    """
     p = Path(path).resolve()
     if p.is_dir() and is_omezarr_path(p):
         return p
@@ -79,6 +140,19 @@ def resolve_omezarr_path(path: str | Path) -> Path:
 
 
 def pct_limits(image: Any, p_low: float = 1.0, p_high: float = 99.8) -> tuple[float, float] | None:
+    """Return pct limits for the supplied inputs.
+
+    Args:
+        image (Any): Input image array to process.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = pct_limits(image=image_array)
+    """
     if not isinstance(image, np.ndarray) or image.size == 0:
         return None
     flat = image.reshape(-1)
@@ -92,6 +166,18 @@ def pct_limits(image: Any, p_low: float = 1.0, p_high: float = 99.8) -> tuple[fl
 
 
 def default_colormap(channel_index: int, channel_name: str | None = None) -> str:
+    """Return default colormap for the supplied inputs.
+
+    Args:
+        channel_index (int): Zero-based index selecting channel.
+        channel_name (str | None): Text value specifying channel name. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = default_colormap(channel_index=1)
+    """
     text = (channel_name or "").lower()
     if any(key in text for key in ("dapi", "hada", "405", "blue")):
         return "blue"
@@ -104,6 +190,18 @@ def default_colormap(channel_index: int, channel_name: str | None = None) -> str
 
 
 def get_channel_names(meta: Any, n_channels: int | None) -> list[str]:
+    """Return channel names for the supplied inputs.
+
+    Args:
+        meta (Any): Value specifying meta for the operation.
+        n_channels (int | None): Number of channels used by the operation.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = get_channel_names(meta=..., n_channels=1)
+    """
     names = getattr(meta, "channel_names", None)
     if isinstance(names, list) and names:
         return [str(n) for n in names]
@@ -113,6 +211,18 @@ def get_channel_names(meta: Any, n_channels: int | None) -> list[str]:
 
 
 def detect_channel_axis(arr: Any, meta: Any | None = None) -> int | None:
+    """Return detect channel axis for the supplied inputs.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        meta (Any | None): Value specifying meta for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = detect_channel_axis(arr=...)
+    """
     shape = tuple(arr.shape)
     ndim = len(shape)
     if ndim < 3:
@@ -151,6 +261,18 @@ def detect_channel_axis(arr: Any, meta: Any | None = None) -> int | None:
 
 
 def infer_axes(shape: tuple[int, ...], channel_axis: int | None) -> str:
+    """Infer axes from the supplied model inputs.
+
+    Args:
+        shape (tuple[int, ...]): Target or observed array shape.
+        channel_axis (int | None): Numerical value controlling channel axis.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = infer_axes(shape=1, channel_axis=1)
+    """
     ndim = len(shape)
     if ndim == 2:
         return "yx"
@@ -174,12 +296,36 @@ def infer_axes(shape: tuple[int, ...], channel_axis: int | None) -> str:
 
 
 def axes_after_removing_channel(axes: str, channel_axis: int | None) -> str:
+    """Return axes after removing channel for the supplied inputs.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        channel_axis (int | None): Numerical value controlling channel axis.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = axes_after_removing_channel(axes="axes", channel_axis=1)
+    """
     if channel_axis is None or channel_axis >= len(axes):
         return axes
     return axes[:channel_axis] + axes[channel_axis + 1 :]
 
 
 def scale_from_axes(axes: str, meta: Any | None) -> tuple[float, ...] | None:
+    """Scale from axes to the requested numerical range.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        meta (Any | None): Value specifying meta for the operation.
+
+    Returns:
+        tuple[float, ...] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = scale_from_axes(axes="axes", meta=...)
+    """
     if not axes:
         return None
     px_x = getattr(meta, "pixel_size_um_x", None) if meta is not None else None
@@ -199,6 +345,17 @@ def scale_from_axes(axes: str, meta: Any | None) -> tuple[float, ...] | None:
 
 
 def maybe_as_lazy_zarr(array: Any) -> Any:
+    """Return maybe as lazy Zarr for the supplied inputs.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = maybe_as_lazy_zarr(array=image_array)
+    """
     try:
         import dask.array as da
     except Exception:
@@ -210,6 +367,17 @@ def maybe_as_lazy_zarr(array: Any) -> Any:
 
 
 def read_tiff(path: Path) -> tuple[np.ndarray, MinimalImageMeta]:
+    """Read TIFF data from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, MinimalImageMeta]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = read_tiff(path=Path("path/to/resource"))
+    """
     import tifffile as tiff
 
     arr = np.asarray(tiff.imread(str(path)))
@@ -236,6 +404,23 @@ def read_tiff(path: Path) -> tuple[np.ndarray, MinimalImageMeta]:
 
 
 def save_array_as_omezarr(path: Path, arr: np.ndarray, meta: Any) -> Path | None:
+    """Save array as OME-Zarr to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        arr (np.ndarray): Array containing arr.
+        meta (Any): Value specifying meta for the operation.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_array_as_omezarr(
+        ...     path=Path("path/to/resource"),
+        ...     arr=image_array,
+        ...     meta=...,
+        ... )
+    """
     out_dir = napari_zarr_dir_for_input(path)
     try:
         return save_ome_zarr_next_to_outputs(out_dir=out_dir, arr=arr, meta=meta, overwrite=True)
@@ -245,6 +430,20 @@ def save_array_as_omezarr(path: Path, arr: np.ndarray, meta: Any) -> Path | None
 
 
 def open_omezarr_array(path: Path) -> tuple[Any, dict[str, Any]]:
+    """Open OME-Zarr array for inspection or interactive use.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[Any, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = open_omezarr_array(path=Path("path/to/resource"))
+    """
     import zarr
 
     zarr_path = resolve_omezarr_path(path)
@@ -275,6 +474,27 @@ def make_layers_from_array(
     ome_zarr_path: Path | None = None,
     zarr_attrs: dict[str, Any] | None = None,
 ) -> list[LayerData]:
+    """Create layers from array from the supplied inputs.
+
+    Args:
+        arr (Any): Value specifying arr for the operation.
+        source_path (Path): Filesystem path associated with source.
+        meta (Any | None): Value specifying meta for the operation.
+        source_format (str): Text value specifying source format.
+        ome_zarr_path (Path | None): Filesystem path associated with ome Zarr. ``None`` selects the function's default behavior.
+        zarr_attrs (dict[str, Any] | None): Text value specifying Zarr attrs. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[LayerData]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = make_layers_from_array(
+        ...     arr=...,
+        ...     source_path=Path("path/to/resource"),
+        ...     meta=...,
+        ...     source_format="source_format",
+        ... )
+    """
     channel_axis = detect_channel_axis(arr, meta)
     axes = infer_axes(tuple(arr.shape), channel_axis)
     n_channels = int(arr.shape[channel_axis]) if channel_axis is not None else None
@@ -338,6 +558,17 @@ def make_layers_from_array(
 
 
 def napari_get_reader(path: str | list[str]) -> Callable[[str], list[LayerData]] | None:
+    """Return napari get reader for the supplied inputs.
+
+    Args:
+        path (str | list[str]): Filesystem path to the required input or output resource.
+
+    Returns:
+        Callable[[str], list[LayerData]] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = napari_get_reader(path="path")
+    """
     if isinstance(path, list):
         if len(path) != 1:
             return None
@@ -354,6 +585,20 @@ def napari_get_reader(path: str | list[str]) -> Callable[[str], list[LayerData]]
 
 
 def read_image(path: str) -> list[LayerData]:
+    """Read image from persistent storage.
+
+    Args:
+        path (str): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[LayerData]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_image(path="path")
+    """
     p = Path(path)
     lower_name = p.name.lower()
     if p.is_dir() and lower_name.endswith(SUPPORTED_ZARR_SUFFIXES):

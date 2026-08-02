@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "PFT"
 version = "0.1.0"
-description = "Pneumo-Fluor Toolkit for fluorescence microscopy processing and analysis"
+description = "Reproducible fluorescence-microscopy processing and single-cell analysis for Streptococcus pneumoniae"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
   { name = "PFT contributors" },
 ]
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.11"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Framework :: napari",
@@ -20,28 +20,43 @@ classifiers = [
   "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
   "Topic :: Scientific/Engineering :: Image Processing",
 ]
 
-# Dependencies needed by the non-deep-learning pipeline, OME-Zarr I/O,
-# visualization, deconvolution, filtering, and statistical analysis.
+# Main PFT environment:
+# - CZI and OME-Zarr processing
+# - filtering, deconvolution, visualization, and statistics
+# - Cellpose 3 as the primary instance-segmentation method
+#
+# StarDist and Omnipose remain isolated in dedicated environments because their
+# tested TensorFlow/CUDA and cellpose_omni dependency stacks are different.
 dependencies = [
   "numpy>=1.23.5,<2",
   "scipy>=1.10,<2",
   "pandas>=2.0,<3",
   "statsmodels>=0.14,<0.15",
+  "scikit-learn>=1.3,<2",
   "matplotlib>=3.7,<4",
   "pillow>=10,<12",
   "imageio>=2.31,<3",
   "tifffile>=2023.9.26,<2027",
-  "scikit-image>=0.22,<0.26",
+  "scikit-image>=0.21,<0.26",
   "czifile>=2019.7.2",
-  "ome-zarr>=0.11,<0.12",
-  "zarr>=2.16,<3",
+  "ome-zarr>=0.9,<0.12",
+  "zarr>=2.15,<3",
   "numcodecs>=0.11,<1",
-  "dask[array]>=2023.9,<2027",
+  "dask[array]>=2023.12,<2027",
+  "distributed>=2023.12,<2027",
+  "fsspec>=2023.6,<2027",
   "psutil>=5.9,<8",
+  "pyyaml>=6,<7",
+  "requests>=2.31,<3",
+  "tqdm>=4.66,<5",
+  "opencv-python>=4.8,<5",
+  "torch>=2.1,<3",
+  "torchvision>=0.16,<1",
+  "cellpose==3.1.1.2",
 ]
 
 [project.urls]
@@ -60,7 +75,7 @@ pft-n2v-train = "PFT.core_prog_parts.denoising.n2v_train_models:main"
 pft-tune-notch = "PFT.core_prog_parts.denoising.tune_notch:main"
 pft-tune-freehand = "PFT.core_prog_parts.denoising.tune_freehand:main"
 
-# Terminal wrappers stored in categorized repository-root scripts subpackages.
+# Terminal wrappers stored under the repository-root scripts package.
 pft-fft = "scripts.denoising.FFT:main"
 pft-fft-3d = "scripts.denoising.FFT_3d:main"
 pft-psf-checks = "scripts.denoising.PSF_checks:main"
@@ -100,78 +115,71 @@ pft-yolo-launcher = "scripts.segmentation.yolo_launcher:main"
 PFT = "PFT.napari:napari.yaml"
 
 [project.optional-dependencies]
+# TensorFlow U-Net on Python 3.10. TensorFlow 2.10.1 is retained because it is
+# the last release with native-Windows NVIDIA GPU support.
+unet = [
+  "tensorflow==2.10.1",
+  "keras==2.10.0",
+  "protobuf>=3.9.2,<3.20",
+  "h5py>=3.7,<4",
+]
+
+# Noise2Void uses the same TensorFlow generation as the current U-Net workflow.
+n2v = [
+  "tensorflow==2.10.1",
+  "keras==2.10.0",
+  "protobuf>=3.9.2,<3.20",
+  "csbdeep==0.8.2",
+  "n2v>=0.3,<0.4",
+]
+
+# Tested StarDist environment. Use PFT_environment_setup.txt rather than adding
+# this stack to the main pft environment.
+stardist = [
+  "numpy==1.23.5",
+  "scipy==1.10.1",
+  "scikit-image==0.21.0",
+  "tensorflow==2.10.1",
+  "keras==2.10.0",
+  "protobuf>=3.9.2,<3.20",
+  "csbdeep==0.8.2",
+  "stardist==0.9.2",
+  "ome-zarr==0.9.0",
+  "zarr==2.16.1",
+  "numcodecs==0.11.0",
+  "dask[array]==2023.12.1",
+  "distributed==2023.12.1",
+]
+
+# Tested Omnipose environment. CUDA-enabled PyTorch and CUDA NVRTC are installed
+# with conda before these packages. The project is then installed with --no-deps.
+omnipose = [
+  "numpy==1.26.4",
+  "omnipose==1.1.4",
+  "aicsimageio==4.14.0",
+  "dask-image==2026.5.0",
+  "ome-zarr==0.9.0",
+  "zarr==2.15.0",
+  "numcodecs==0.11.0",
+  "dask[array]==2024.4.1",
+  "distributed==2024.4.1",
+  "fsspec==2023.6.0",
+  "s3fs==2023.6.0",
+  "urllib3==1.26.20",
+]
+
 # BM3D denoising.
 bm3d = [
   "bm3d>=4,<5",
 ]
 
-# TensorFlow U-Net training and inference.
-unet = [
-  "tensorflow>=2.13,<2.16",
-  "keras>=2.13,<3",
-  "opencv-python>=4.8,<5",
-]
-
-# Noise2Void. N2V is not compatible with TensorFlow 2.16+.
-n2v = [
-  "tensorflow>=2.13,<2.16",
-  "keras>=2.13,<3",
-  "csbdeep>=0.7.4,<0.9",
-  "n2v>=0.3,<0.4",
-]
-
-# Cellpose 3.x is required because the current code uses APIs removed in Cellpose 4.
-cellpose = [
-  "cellpose>=3,<4",
-  "torch>=2.1,<3",
-  "opencv-python>=4.8,<5",
-]
-
-# Omnipose and its cellpose_omni compatibility package.
-omnipose = [
-  "omnipose>=1.1,<2",
-  "cellpose>=3,<4",
-  "torch>=2.1,<3",
-  "opencv-python>=4.8,<5",
-]
-
-# StarDist uses TensorFlow and CSBDeep.
-stardist = [
-  "tensorflow>=2.13,<2.16",
-  "keras>=2.13,<3",
-  "csbdeep>=0.7.4,<0.9",
-  "stardist>=0.9,<1",
-]
-
 # Ultralytics YOLO training and inference.
 yolo = [
   "ultralytics>=8,<9",
-  "torch>=2.1,<3",
-  "opencv-python>=4.8,<5",
-  "pyyaml>=6,<7",
 ]
 
 # napari application and OME-Zarr reader support.
 napari = [
-  "napari[all]>=0.6,<0.7",
-  "napari-ome-zarr",
-]
-
-# Complete CPU-oriented thesis environment. For CUDA, install the correct
-# PyTorch build first, then install this project with the same extra.
-all = [
-  "bm3d>=4,<5",
-  "tensorflow>=2.13,<2.16",
-  "keras>=2.13,<3",
-  "csbdeep>=0.7.4,<0.9",
-  "n2v>=0.3,<0.4",
-  "cellpose>=3,<4",
-  "omnipose>=1.1,<2",
-  "stardist>=0.9,<1",
-  "ultralytics>=8,<9",
-  "torch>=2.1,<3",
-  "opencv-python>=4.8,<5",
-  "pyyaml>=6,<7",
   "napari[all]>=0.6,<0.7",
   "napari-ome-zarr",
 ]
@@ -185,8 +193,8 @@ dev = [
 ]
 
 [tool.setuptools]
-# The importable PFT package remains under src/PFT, while command wrappers
-# remain in the repository-root scripts directory.
+# The importable PFT package is under src/PFT. User-facing command wrappers are
+# retained under the repository-root scripts directory.
 package-dir = { "PFT" = "src/PFT", "scripts" = "scripts" }
 include-package-data = true
 

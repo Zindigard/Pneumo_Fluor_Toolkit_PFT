@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for segmentation widget."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
 @dataclass
 class StepLayerResult:
+    """Store validated configuration or result data for step layer result."""
     data: np.ndarray
     name: str
     layer_type: str = "image"
@@ -40,6 +43,7 @@ class StepLayerResult:
 
 @dataclass
 class SegmentationRequest:
+    """Store validated configuration or result data for segmentation request."""
     mode: str
     model_family: str
     dataset: str
@@ -61,10 +65,32 @@ class SegmentationRequest:
 
 
 def make_segmentation_widget(napari_viewer):
+    """Create segmentation widget from the supplied inputs.
+
+    Args:
+        napari_viewer (Any): Value specifying napari viewer for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_segmentation_widget(napari_viewer=...)
+    """
     return PFTSegmentationWidget(napari_viewer)
 
 
 def _safe_name(text: str) -> str:
+    """Return safe name for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_name(text="text")
+    """
     bad = r'<>:"/\\|?*• '
     cleaned = "".join("_" if ch in bad else ch for ch in str(text))
     while "__" in cleaned:
@@ -73,12 +99,34 @@ def _safe_name(text: str) -> str:
 
 
 def _as_numpy(data: Any) -> np.ndarray:
+    """Return as numpy for the supplied inputs.
+
+    Args:
+        data (Any): Value specifying data for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _as_numpy(data=image_array)
+    """
     if hasattr(data, "compute"):
         data = data.compute()
     return np.asarray(data)
 
 
 def _layer_axes(layer: Any) -> str:
+    """Return layer axes for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _layer_axes(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     axes = md.get("pft_layer_axes") or md.get("pft_axes")
     if isinstance(axes, str) and axes:
@@ -94,6 +142,17 @@ def _layer_axes(layer: Any) -> str:
 
 
 def _layer_scale(layer: Any) -> tuple[float, ...] | None:
+    """Return layer scale for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        tuple[float, ...] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _layer_scale(layer=...)
+    """
     scale = getattr(layer, "scale", None)
     if scale is None:
         return None
@@ -104,6 +163,19 @@ def _layer_scale(layer: Any) -> tuple[float, ...] | None:
 
 
 def _contrast_limits(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> tuple[float, float]:
+    """Return contrast limits for the supplied inputs.
+
+    Args:
+        data (np.ndarray): Array containing data.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _contrast_limits(data=image_array)
+    """
     x = np.asarray(data)
     if x.size == 0:
         return 0.0, 1.0
@@ -117,6 +189,19 @@ def _contrast_limits(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8)
 
 
 def _normalize_channel(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
+    """Normalize channel using the configured procedure.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_channel(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     lo, hi = _contrast_limits(x, p_low, p_high)
     y = (x - np.float32(lo)) / np.float32(hi - lo + 1e-8)
@@ -124,6 +209,20 @@ def _normalize_channel(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) 
 
 
 def _normalize_merged(arr: np.ndarray) -> np.ndarray:
+    """Normalize merged using the configured procedure.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_merged(arr=image_array)
+    """
     x = np.asarray(arr, dtype=np.float32)
     if x.ndim == 2:
         return _normalize_channel(x)
@@ -144,16 +243,50 @@ def _normalize_merged(arr: np.ndarray) -> np.ndarray:
 
 
 def _is_image_layer(layer: Any) -> bool:
+    """Determine whether image layer satisfies the stated condition.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_image_layer(layer=...)
+    """
     return hasattr(layer, "data") and hasattr(layer, "metadata") and layer.__class__.__name__.lower() != "labels"
 
 
 def _is_pft_layer(layer: Any) -> bool:
+    """Determine whether pft layer satisfies the stated condition.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_pft_layer(layer=...)
+    """
     name = str(getattr(layer, "name", ""))
     md = getattr(layer, "metadata", {}) or {}
     return name.startswith("PFT |") or any(str(k).startswith("pft_") for k in md)
 
 
 def _same_source(a: Any, b: Any) -> bool:
+    """Return same source for the supplied inputs.
+
+    Args:
+        a (Any): Value specifying a for the operation.
+        b (Any): Value specifying b for the operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _same_source(a=..., b=...)
+    """
     ma = getattr(a, "metadata", {}) or {}
     mb = getattr(b, "metadata", {}) or {}
     za = ma.get("pft_ome_zarr_path") or ma.get("pft_source_path")
@@ -162,6 +295,18 @@ def _same_source(a: Any, b: Any) -> bool:
 
 
 def _same_variant_and_step(a: Any, b: Any) -> bool:
+    """Return same variant and step for the supplied inputs.
+
+    Args:
+        a (Any): Value specifying a for the operation.
+        b (Any): Value specifying b for the operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _same_variant_and_step(a=..., b=...)
+    """
     ma = getattr(a, "metadata", {}) or {}
     mb = getattr(b, "metadata", {}) or {}
     return (
@@ -172,6 +317,17 @@ def _same_variant_and_step(a: Any, b: Any) -> bool:
 
 
 def _channel_index(layer: Any) -> int:
+    """Return channel index for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _channel_index(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     try:
         return int(md.get("pft_channel_index", 0))
@@ -180,11 +336,34 @@ def _channel_index(layer: Any) -> int:
 
 
 def _channel_name(layer: Any) -> str:
+    """Return channel name for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _channel_name(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     return str(md.get("pft_channel_name") or getattr(layer, "name", "channel"))
 
 
 def _infer_dataset(active_layer: Any, family_layers: list[Any]) -> str:
+    """Infer dataset from the supplied model inputs.
+
+    Args:
+        active_layer (Any): Value specifying active layer for the operation.
+        family_layers (list[Any]): Value specifying family layers for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _infer_dataset(active_layer=..., family_layers=[])
+    """
     axes = _layer_axes(active_layer)
     if "z" in axes:
         return "3d"
@@ -194,6 +373,21 @@ def _infer_dataset(active_layer: Any, family_layers: list[Any]) -> str:
 
 
 def _merge_for_segmentation(layers: list[tuple[str, np.ndarray, dict[str, Any]]], mode: str) -> np.ndarray:
+    """Merge for segmentation into a combined result.
+
+    Args:
+        layers (list[tuple[str, np.ndarray, dict[str, Any]]]): Array containing layers.
+        mode (str): Text value specifying mode.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _merge_for_segmentation(layers=image_array, mode="mode")
+    """
     arrays = [np.asarray(arr, dtype=np.float32) for _, arr, _ in layers]
     if not arrays:
         raise ValueError("No layers available for segmentation.")
@@ -219,6 +413,17 @@ def _merge_for_segmentation(layers: list[tuple[str, np.ndarray, dict[str, Any]]]
 
 
 def _build_cellpose_model(req: SegmentationRequest):
+    """Build cellpose model from the supplied inputs.
+
+    Args:
+        req (SegmentationRequest): Value specifying req for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _build_cellpose_model(req=...)
+    """
     from cellpose import models
 
     if req.custom_model_path is not None:
@@ -227,6 +432,18 @@ def _build_cellpose_model(req: SegmentationRequest):
 
 
 def _run_cellpose(req: SegmentationRequest, merged: np.ndarray) -> np.ndarray:
+    """Run cellpose using the supplied configuration.
+
+    Args:
+        req (SegmentationRequest): Value specifying req for the operation.
+        merged (np.ndarray): Array containing merged.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _run_cellpose(req=..., merged=image_array)
+    """
     model = _build_cellpose_model(req)
     diameter = None if req.diameter is None or req.diameter <= 0 else float(req.diameter)
     kwargs = dict(
@@ -253,6 +470,17 @@ def _run_cellpose(req: SegmentationRequest, merged: np.ndarray) -> np.ndarray:
 
 
 def _build_omnipose_model(req: SegmentationRequest):
+    """Build omnipose model from the supplied inputs.
+
+    Args:
+        req (SegmentationRequest): Value specifying req for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _build_omnipose_model(req=...)
+    """
     try:
         from cellpose_omni import models
     except Exception:
@@ -270,6 +498,18 @@ def _build_omnipose_model(req: SegmentationRequest):
 
 
 def _run_omnipose(req: SegmentationRequest, merged: np.ndarray) -> np.ndarray:
+    """Run omnipose using the supplied configuration.
+
+    Args:
+        req (SegmentationRequest): Value specifying req for the operation.
+        merged (np.ndarray): Array containing merged.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _run_omnipose(req=..., merged=image_array)
+    """
     model = _build_omnipose_model(req)
     diameter = None if req.diameter is None or req.diameter <= 0 else float(req.diameter)
 
@@ -320,7 +560,20 @@ def _run_omnipose(req: SegmentationRequest, merged: np.ndarray) -> np.ndarray:
 
 
 def _make_label_boundary_overlay(labels: np.ndarray) -> np.ndarray:
-    """Create a uint8 boundary overlay from a 2D or 3D label mask."""
+    """Create a uint8 boundary overlay from a 2D or 3D label mask.
+
+    Args:
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _make_label_boundary_overlay(labels=image_array)
+    """
     from skimage.segmentation import find_boundaries
 
     lab = np.asarray(labels)
@@ -336,6 +589,17 @@ def _make_label_boundary_overlay(labels: np.ndarray) -> np.ndarray:
     raise ValueError(f"Boundary overlay expects 2D or 3D labels. Got shape={lab.shape}")
 
 def _segmentation_worker(req: SegmentationRequest) -> Iterable[StepLayerResult]:
+    """Return segmentation worker for the supplied inputs.
+
+    Args:
+        req (SegmentationRequest): Value specifying req for the operation.
+
+    Returns:
+        Iterable[StepLayerResult]: Iterator yielding the generated or selected values.
+
+    Example:
+        >>> result = _segmentation_worker(req=...)
+    """
     merged = _merge_for_segmentation(req.layers, req.mode)
     axes = "yx" if req.mode == "2d" else "zyx"
 
@@ -412,7 +676,16 @@ def _segmentation_worker(req: SegmentationRequest) -> Iterable[StepLayerResult]:
 
 
 class PFTSegmentationWidget(QWidget):
+    """Represent pftsegmentation widget and its associated operations."""
     def __init__(self, napari_viewer):
+        """Initialize a ``PFTSegmentationWidget`` instance.
+
+        Args:
+            napari_viewer (Any): Value specifying napari viewer for the operation.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(napari_viewer=...)
+        """
         super().__init__()
         self.viewer = napari_viewer
         self.project_root = find_project_root(Path(__file__).resolve())
@@ -536,6 +809,12 @@ class PFTSegmentationWidget(QWidget):
         self._update_family_defaults(self.family_combo.currentText())
 
     def _browse_model(self) -> None:
+        """Return browse model for the supplied inputs.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._browse_model()
+        """
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select custom segmentation model",
@@ -546,6 +825,15 @@ class PFTSegmentationWidget(QWidget):
             self.custom_model_path.setText(path)
 
     def _update_family_defaults(self, family: str) -> None:
+        """Update family defaults using the supplied values.
+
+        Args:
+            family (str): Instance-segmentation model family to use, such as Cellpose, Omnipose, or StarDist.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._update_family_defaults(family="cellpose")
+        """
         self.model_type_combo.clear()
         if family.lower().startswith("omni"):
             self.model_type_combo.addItems(["cyto2_omni", "bact_phase_omni", "cyto"])
@@ -553,15 +841,46 @@ class PFTSegmentationWidget(QWidget):
             self.model_type_combo.addItems(["cpsam", "cyto2", "cyto"])
 
     def _show_error(self, title: str, message: str) -> None:
+        """Display error to the user.
+
+        Args:
+            title (str): Title displayed on the generated figure or report section.
+            message (str): Text value specifying message.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._show_error(title="title", message="message")
+        """
         QMessageBox.critical(self, title, message)
         self.status.setText(f"{title}: {message}")
 
     def _active_layer(self):
+        """Return active layer for the supplied inputs.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> result = instance._active_layer()
+        """
         if not self.viewer.layers:
             return None
         return self.viewer.layers.selection.active or self.viewer.layers[-1]
 
     def _collect_family_layers(self, active_layer: Any) -> list[Any]:
+        """Collect family layers from the available inputs.
+
+        Args:
+            active_layer (Any): Value specifying active layer for the operation.
+
+        Returns:
+            list[Any]: Collection containing the generated or selected values.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> result = instance._collect_family_layers(active_layer=...)
+        """
         if active_layer is None or not _is_image_layer(active_layer):
             return []
         md_active = getattr(active_layer, "metadata", {}) or {}
@@ -590,6 +909,18 @@ class PFTSegmentationWidget(QWidget):
         return unique
 
     def _build_request(self) -> SegmentationRequest:
+        """Build request from the supplied inputs.
+
+        Returns:
+            SegmentationRequest: Result produced by the operation.
+
+        Raises:
+            RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> result = instance._build_request()
+        """
         active = self._active_layer()
         if active is None or not _is_image_layer(active):
             raise RuntimeError("No active image layer is selected.")
@@ -645,6 +976,12 @@ class PFTSegmentationWidget(QWidget):
         )
 
     def run_segmentation(self) -> None:
+        """Run segmentation using the supplied configuration.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance.run_segmentation()
+        """
         try:
             req = self._build_request()
         except Exception as exc:
@@ -675,6 +1012,15 @@ class PFTSegmentationWidget(QWidget):
         worker.start()
 
     def _add_result_layer(self, result: StepLayerResult) -> None:
+        """Add result layer to the current data structure.
+
+        Args:
+            result (StepLayerResult): Value specifying result for the operation.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._add_result_layer(result=...)
+        """
         kwargs = dict(result.kwargs or {})
         name = kwargs.pop("name", result.name)
         if result.layer_type == "labels":
@@ -684,6 +1030,15 @@ class PFTSegmentationWidget(QWidget):
         self.status.setText(f"Added layer: {name}")
 
     def _worker_done(self, _value: Any) -> None:
+        """Return worker done for the supplied inputs.
+
+        Args:
+            _value (Any): Value to validate, transform, store, or forward.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._worker_done(_value=...)
+        """
         self.run_btn.setEnabled(True)
         self.status.setText(
             "Segmentation completed. The merged input and label mask are now visible as napari layers. "
@@ -691,12 +1046,27 @@ class PFTSegmentationWidget(QWidget):
         )
 
     def _worker_error(self, exc: Exception) -> None:
+        """Return worker error for the supplied inputs.
+
+        Args:
+            exc (Exception): Value specifying exc for the operation.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance._worker_error(exc=...)
+        """
         self.run_btn.setEnabled(True)
         if isinstance(exc, tuple) and len(exc) >= 2:
             exc = exc[1]
         self._show_error("Segmentation failed", f"{type(exc).__name__}: {exc}")
 
     def save_active_layer_as_omezarr(self) -> None:
+        """Save active layer as OME-Zarr to persistent storage.
+
+        Example:
+            >>> instance = PFTSegmentationWidget(...)
+            >>> instance.save_active_layer_as_omezarr()
+        """
         layer = self._active_layer()
         if layer is None or not hasattr(layer, "data"):
             self._show_error("Save failed", "No active layer is selected.")

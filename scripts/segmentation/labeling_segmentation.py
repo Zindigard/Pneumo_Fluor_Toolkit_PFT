@@ -1,4 +1,4 @@
-"""Create manual Cellpose/Omnipose instance masks in Napari.
+r"""Create manual Cellpose/Omnipose instance masks in Napari.
 
 Two annotation modes are available.
 
@@ -58,6 +58,24 @@ Open a specific sample in crop mode
         --dataset 2d_time `
         --source-mode filtered_unet `
         --sample "WT_HADA_NHS_20min_ROI1_SIM"
+
+
+Examples
+--------
+Interactive annotation selection:
+
+    python scripts/segmentation/labeling_segmentation.py
+
+Create a training crop for one prepared HADA sample:
+
+    python scripts/segmentation/labeling_segmentation.py \
+        --annotation-mode crop_then_label \
+        --crop-split train \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --sample WT_HADA_NHS_40min_ROI1_SIM \
+        --minimum-crop-size 64 \
+        --brush-size 15
 """
 
 from __future__ import annotations
@@ -80,6 +98,17 @@ CROP_SPLITS: tuple[str, ...] = ("train", "validation")
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -101,6 +130,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     if not values:
         raise ValueError(f"No values are available for: {title}")
     print(f"\n{title}")
@@ -113,14 +157,51 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _list_inputs(root: Path) -> list[Path]:
+    """List inputs available in the configured project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _list_inputs(root=Path("path/to/resource"))
+    """
     return sorted(root.glob("**/segmentation_input.ome.zarr"))
 
 
 def _sample_key(path: Path, input_root: Path) -> str:
+    """Return sample key for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        input_root (Path): Directory used for input.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _sample_key(path=Path("path/to/resource"), input_root=Path("path/to/resource"))
+    """
     return path.parent.relative_to(input_root).as_posix()
 
 
 def _load_prepared_yxc(path: Path) -> tuple[np.ndarray, str]:
+    """Load prepared yxc from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_prepared_yxc(path=Path("path/to/resource"))
+    """
     array, axes = load_ome_zarr(path, level=0, as_numpy=True)
     image = np.asarray(array, dtype=np.float32)
     axes = str(axes).lower()
@@ -153,7 +234,18 @@ def _load_prepared_yxc(path: Path) -> tuple[np.ndarray, str]:
 
 
 def _display_rgb(image_yxc: np.ndarray, dataset: str) -> np.ndarray:
-    """Build a display-only RGB composite from normalized numerical channels."""
+    """Build a display-only RGB composite from normalized numerical channels.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_rgb(image_yxc=image_array, dataset="2d_time")
+    """
     channels = image_yxc.shape[-1]
     rgb = np.zeros((*image_yxc.shape[:2], 3), dtype=np.float32)
     if dataset == "2d_time" or channels == 1:
@@ -172,6 +264,21 @@ def _display_rgb(image_yxc: np.ndarray, dataset: str) -> np.ndarray:
 
 
 def _load_existing_mask(mask_path: Path, expected_yx: tuple[int, int]) -> np.ndarray:
+    """Load existing mask from persistent storage.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_existing_mask(mask_path=Path("path/to/resource"), expected_yx=1)
+    """
     if not mask_path.is_file():
         return np.zeros(expected_yx, dtype=np.uint16)
     mask = np.asarray(tiff.imread(mask_path))
@@ -189,7 +296,20 @@ def _load_existing_mask(mask_path: Path, expected_yx: tuple[int, int]) -> np.nda
 
 
 def _add_channel_layers(viewer: Any, image_yxc: np.ndarray, dataset: str) -> None:
-    """Add hidden numerical channel layers for detailed inspection."""
+    """Add hidden numerical channel layers for detailed inspection.
+
+    Args:
+        viewer (Any): Napari viewer instance associated with the current graphical operation.
+        image_yxc (np.ndarray): Array containing image yxc.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> _add_channel_layers(
+        ...     viewer=...,
+        ...     image_yxc=image_array,
+        ...     dataset="2d_time",
+        ... )
+    """
     if image_yxc.shape[-1] == 1:
         viewer.add_image(
             image_yxc[..., 0],
@@ -223,7 +343,29 @@ def _select_crop_napari(
     title: str,
     minimum_size: int,
 ) -> tuple[int, int, int, int]:
-    """Let the user draw one rectangle and return integer YX crop bounds."""
+    """Let the user draw one rectangle and return integer YX crop bounds.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        title (str): Title displayed on the generated figure or report section.
+        minimum_size (int): Size parameter controlling minimum.
+
+    Returns:
+        tuple[int, int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_crop_napari(
+        ...     image_yxc=image_array,
+        ...     dataset="2d_time",
+        ...     title="title",
+        ...     minimum_size=1,
+        ... )
+    """
     import napari
 
     viewer = napari.Viewer(title=title)
@@ -284,6 +426,32 @@ def _annotate_napari(
     brush_size: int,
     annotation_scope: str,
 ) -> np.ndarray:
+    """Return annotate napari for the supplied inputs.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        initial_mask (np.ndarray): Array containing initial mask.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        title (str): Title displayed on the generated figure or report section.
+        brush_size (int): Size parameter controlling brush.
+        annotation_scope (str): Text value specifying annotation scope.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _annotate_napari(
+        ...     image_yxc=image_array,
+        ...     initial_mask=image_array,
+        ...     dataset="2d_time",
+        ...     title="title",
+        ...     brush_size=1,
+        ...     annotation_scope="annotation_scope",
+        ... )
+    """
     import napari
 
     viewer = napari.Viewer(title=title)
@@ -327,6 +495,22 @@ def _save_overlay(
     output_png: Path,
     dataset: str,
 ) -> None:
+    """Save overlay to persistent storage.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        output_png (Path): Filesystem path used for output PNG image.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> _save_overlay(
+        ...     image_yxc=image_array,
+        ...     mask=image_array,
+        ...     output_png=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     import matplotlib.pyplot as plt
 
     rgb = _display_rgb(image_yxc, dataset)
@@ -338,6 +522,20 @@ def _save_overlay(
 
 
 def _save_crop_preview(image_yxc: np.ndarray, output_png: Path, dataset: str) -> None:
+    """Save crop preview to persistent storage.
+
+    Args:
+        image_yxc (np.ndarray): Array containing image yxc.
+        output_png (Path): Filesystem path used for output PNG image.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> _save_crop_preview(
+        ...     image_yxc=image_array,
+        ...     output_png=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     import matplotlib.pyplot as plt
 
     output_png.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +543,20 @@ def _save_crop_preview(image_yxc: np.ndarray, output_png: Path, dataset: str) ->
 
 
 def _validate_annotation(result: np.ndarray) -> np.ndarray:
+    """Validate annotation against the required constraints.
+
+    Args:
+        result (np.ndarray): Array containing result.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_annotation(result=image_array)
+    """
     positive_ids = np.unique(result[result > 0])
     if positive_ids.size == 0:
         raise RuntimeError("Annotation contains no positive cell instance")
@@ -368,6 +580,35 @@ def _save_crop_input(
     bounds_yx: tuple[int, int, int, int],
     source_input: Path,
 ) -> Path:
+    """Save crop input to persistent storage.
+
+    Args:
+        crop_yxc (np.ndarray): Array containing crop yxc.
+        output_zarr (Path): Filesystem path used for output Zarr.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        sample_key (str): Canonical relative identifier of a sample within the selected dataset and source mode.
+        split (str): Text value specifying split.
+        crop_id (str): Text value specifying crop id.
+        bounds_yx (tuple[int, int, int, int]): Numerical value controlling bounds yx.
+        source_input (Path): Filesystem path used for source input.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_crop_input(
+        ...     crop_yxc=image_array,
+        ...     output_zarr=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     sample_key="sample_key",
+        ...     split="split",
+        ...     crop_id="crop_id",
+        ...     bounds_yx=1,
+        ...     source_input=Path("path/to/resource"),
+        ... )
+    """
     if crop_yxc.shape[-1] == 1:
         output_array = crop_yxc[..., 0].astype(np.float32, copy=False)
         output_axes = "yx"
@@ -409,6 +650,17 @@ def _save_crop_input(
 
 
 def _next_crop_id(split_root: Path) -> str:
+    """Return next crop id for the supplied inputs.
+
+    Args:
+        split_root (Path): Directory used for split.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _next_crop_id(split_root=Path("path/to/resource"))
+    """
     existing_numbers: list[int] = []
     for path in split_root.glob("crop_*"):
         if not path.is_dir():
@@ -420,6 +672,17 @@ def _next_crop_id(split_root: Path) -> str:
 
 
 def _existing_crop_choices(sample_dir: Path) -> list[tuple[str, Path, str]]:
+    """Return existing crop choices for the supplied inputs.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        list[tuple[str, Path, str]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _existing_crop_choices(sample_dir=Path("path/to/resource"))
+    """
     choices: list[tuple[str, Path, str]] = []
     crops_root = sample_dir / "crops"
     for split in CROP_SPLITS:
@@ -431,6 +694,18 @@ def _existing_crop_choices(sample_dir: Path) -> list[tuple[str, Path, str]]:
 
 
 def _write_crop_manifest(sample_dir: Path, row: dict[str, Any]) -> Path:
+    """Write crop manifest to persistent storage.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+        row (dict[str, Any]): Text value specifying row.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_crop_manifest(sample_dir=Path("path/to/resource"), row="row")
+    """
     manifest = sample_dir / "crops" / "crop_manifest.csv"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, str]] = []
@@ -461,6 +736,29 @@ def annotate_full_image(
     source_mode: str,
     brush_size: int,
 ) -> Path:
+    """Return annotate full image for the supplied inputs.
+
+    Args:
+        input_path (Path): Filesystem path to the input resource.
+        input_root (Path): Directory used for input.
+        output_root (Path): Directory used for output.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        brush_size (int): Size parameter controlling brush.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = annotate_full_image(
+        ...     input_path=Path("path/to/resource"),
+        ...     input_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     brush_size=1,
+        ... )
+    """
     sample_key = _sample_key(input_path, input_root)
     image_yxc, source_axes = _load_prepared_yxc(input_path)
     sample_dir = output_root / Path(sample_key)
@@ -517,6 +815,38 @@ def annotate_crop(
     crop_id: str | None,
     minimum_crop_size: int,
 ) -> Path:
+    """Return annotate crop for the supplied inputs.
+
+    Args:
+        input_path (Path): Filesystem path to the input resource.
+        input_root (Path): Directory used for input.
+        output_root (Path): Directory used for output.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        brush_size (int): Size parameter controlling brush.
+        split (str): Text value specifying split.
+        crop_id (str | None): Text value specifying crop id.
+        minimum_crop_size (int): Size parameter controlling minimum crop.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = annotate_crop(
+        ...     input_path=Path("path/to/resource"),
+        ...     input_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     brush_size=1,
+        ...     split="split",
+        ...     crop_id="crop_id",
+        ...     minimum_crop_size=1,
+        ... )
+    """
     sample_key = _sample_key(input_path, input_root)
     sample_dir = output_root / Path(sample_key)
     sample_dir.mkdir(parents=True, exist_ok=True)
@@ -665,6 +995,17 @@ def annotate_crop(
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Create full-image or crop-based unique-cell instance masks in Napari."

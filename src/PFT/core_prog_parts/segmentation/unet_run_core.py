@@ -160,7 +160,17 @@ class UNetRunConfig:
 
 
 def validate_run_config(cfg: UNetRunConfig) -> None:
-    """Validate inference parameters before loading the model or data."""
+    """Validate inference parameters before loading the model or data.
+
+    Args:
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_run_config(cfg=config)
+    """
     if cfg.patch <= 0 or cfg.patch % 16 != 0:
         raise ValueError("patch must be a positive multiple of 16 for the trained U-Net")
     if not 0.0 <= cfg.threshold <= 1.0:
@@ -175,6 +185,7 @@ def validate_run_config(cfg: UNetRunConfig) -> None:
 
 @dataclass(frozen=True)
 class UNetInferenceOutput:
+    """Store validated configuration or result data for U-Net result inference output."""
     dataset: str
     sample: str
     input_zarr: Path
@@ -186,34 +197,117 @@ class UNetInferenceOutput:
 
 
 def find_omezarr_dirs(root: Path) -> list[Path]:
-    """Return sample image.ome.zarr folders below a selected input root."""
+    """Return sample image.ome.zarr folders below a selected input root.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_omezarr_dirs(root=Path("path/to/resource"))
+    """
     root = Path(root)
     direct = sorted(p for p in root.glob("*/image.ome.zarr") if p.is_dir())
     return direct if direct else sorted(p for p in root.rglob("*.ome.zarr") if p.is_dir())
 
 
 def default_model_path(project_root: Path, dataset: str) -> Path:
+    """Return default model path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_model_path(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "models" / f"u_net_{dataset}" / f"u_net_{dataset}_best.keras"
 
 
 def default_input_root(project_root: Path, dataset: str) -> Path:
+    """Return default input root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_input_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return default_filtered_root(project_root, dataset)
 
 
 def default_out_root(project_root: Path, dataset: str) -> Path:
+    """Return default out root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_out_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "results" / "U-net" / dataset
 
 
 def default_raw_root(project_root: Path, dataset: str) -> Path:
+    """Return default raw root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_raw_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "results" / "img" / dataset
 
 
 def default_mask_root(project_root: Path, dataset: str) -> Path:
+    """Return default mask root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = default_mask_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / "results" / "training_files" / "U-net" / dataset
 
 
 def load_unet_model(model_path: Path) -> tf.keras.Model:
-    """Load a trained U-Net with all custom loss and metric objects."""
+    """Load a trained U-Net with all custom loss and metric objects.
+
+    Args:
+        model_path (Path): Filesystem path associated with model.
+
+    Returns:
+        tf.keras.Model: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_unet_model(model_path=Path("path/to/resource"))
+    """
     if not model_path.is_file():
         raise FileNotFoundError(f"Model not found: {model_path}")
     return tf.keras.models.load_model(
@@ -229,7 +323,18 @@ def load_unet_model(model_path: Path) -> tf.keras.Model:
 
 
 def pad_to_patch(img_hwc: np.ndarray, patch: int) -> tuple[np.ndarray, tuple[int, int]]:
-    """Reflect-pad an HWC image to exact multiples of the patch size."""
+    """Reflect-pad an HWC image to exact multiples of the patch size.
+
+    Args:
+        img_hwc (np.ndarray): Array containing img hwc.
+        patch (int): Numerical value controlling patch.
+
+    Returns:
+        tuple[np.ndarray, tuple[int, int]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = pad_to_patch(img_hwc=image_array, patch=1)
+    """
     height, width, _ = img_hwc.shape
     pad_h = (patch - height % patch) % patch
     pad_w = (patch - width % patch) % patch
@@ -251,6 +356,21 @@ def predict_2d_tiled_probability(
     ``cfg.patch`` must match the trained model input shape. The returned array is
     continuous in ``[0, 1]`` and can therefore be re-thresholded later without
     repeating neural-network inference.
+
+    Args:
+        model (tf.keras.Model): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        img_hwc (np.ndarray): Array containing img hwc.
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = predict_2d_tiled_probability(
+        ...     model="model_name",
+        ...     img_hwc=image_array,
+        ...     cfg=config,
+        ... )
     """
     image_normalized = normalize_image01(img_hwc, cfg.normalize).astype(np.float32)
     padded, (pad_h, pad_w) = pad_to_patch(image_normalized, cfg.patch)
@@ -286,33 +406,112 @@ def predict_2d_tiled(model: tf.keras.Model, img_hwc: np.ndarray, cfg: UNetRunCon
     Decrease the threshold to include weaker foreground probabilities; increase
     it to require stronger confidence. Threshold changes do not require
     retraining when a probability map is available.
+
+    Args:
+        model (tf.keras.Model): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        img_hwc (np.ndarray): Array containing img hwc.
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = predict_2d_tiled(
+        ...     model="model_name",
+        ...     img_hwc=image_array,
+        ...     cfg=config,
+        ... )
     """
     return (predict_2d_tiled_probability(model, img_hwc, cfg) >= cfg.threshold).astype(np.uint8)
 
 
 def _sample_name_from_zarr(zarr_path: Path) -> str:
+    """Return sample name from Zarr for the supplied inputs.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _sample_name_from_zarr(zarr_path=Path("path/to/resource"))
+    """
     return zarr_path.parent.name if zarr_path.name == "image.ome.zarr" else zarr_path.stem.replace(".ome", "")
 
 
 def _load_array_and_axes(path: Path, level: int) -> tuple[np.ndarray, str]:
+    """Load array and axes from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _load_array_and_axes(path=Path("path/to/resource"), level=1)
+    """
     array, axes = load_ome_zarr(path, level=level, as_numpy=True)
     return np.asarray(array), normalize_axes(axes)
 
 
 def _mask_stack_and_axes(masks: list[np.ndarray]) -> tuple[np.ndarray, str]:
+    """Return mask stack and axes for the supplied inputs.
+
+    Args:
+        masks (list[np.ndarray]): Sequence or batch of binary or labeled segmentation masks.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _mask_stack_and_axes(masks=image_array)
+    """
     if len(masks) == 1:
         return masks[0].astype(np.uint8), "yx"
     return np.stack(masks, axis=0).astype(np.uint8), "tyx"
 
 
 def _probability_stack_and_axes(probabilities: list[np.ndarray]) -> tuple[np.ndarray, str]:
+    """Return probability stack and axes for the supplied inputs.
+
+    Args:
+        probabilities (list[np.ndarray]): Array containing probabilities.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _probability_stack_and_axes(probabilities=image_array)
+    """
     if len(probabilities) == 1:
         return probabilities[0].astype(np.float32), "yx"
     return np.stack(probabilities, axis=0).astype(np.float32), "tyx"
 
 
 def _broadcast_masks_to_input(mask_stack: np.ndarray, input_axes: str, input_shape: tuple[int, ...]) -> np.ndarray:
-    """Broadcast YX or TYX predictions over the channel axis of the input array."""
+    """Broadcast YX or TYX predictions over the channel axis of the input array.
+
+    Args:
+        mask_stack (np.ndarray): Array containing mask stack.
+        input_axes (str): Text value specifying input axes.
+        input_shape (tuple[int, ...]): Numerical value controlling input shape.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _broadcast_masks_to_input(
+        ...     mask_stack=image_array,
+        ...     input_axes="input_axes",
+        ...     input_shape=1,
+        ... )
+    """
     input_axes = normalize_axes(input_axes)
     if "y" not in input_axes or "x" not in input_axes:
         raise ValueError(f"Input axes do not contain YX: {input_axes}")
@@ -365,17 +564,24 @@ def apply_foreground_mask_to_input(
     floating dtype. Consequently, the saved OME-Zarr has the same axes and dtype
     as the filtered source rather than the temporary normalized U-Net tensor.
 
-    Parameters
-    ----------
-    input_array:
-        Original filtered image array loaded from OME-Zarr.
-    input_axes:
-        Axis order associated with ``input_array``.
-    masks:
-        One predicted binary YX mask per input frame.
-    outside_mask_depletion:
-        Removed fraction outside the mask. ``0`` leaves the image unchanged,
-        ``0.98`` leaves 2%, and ``1`` sets outside-mask pixels to zero.
+    Args:
+        input_array (np.ndarray): Original filtered image array loaded from OME-Zarr.
+        input_axes (str): Axis order associated with ``input_array``.
+        masks (list[np.ndarray]): One predicted binary YX mask per input frame.
+        outside_mask_depletion (float): Removed fraction outside the mask. ``0`` leaves the image unchanged, ``0.98`` leaves 2%, and ``1`` sets outside-mask pixels to zero.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_foreground_mask_to_input(
+        ...     input_array=image_array,
+        ...     input_axes="input_axes",
+        ...     masks=image_array,
+        ... )
     """
     if not 0.0 <= outside_mask_depletion <= 1.0:
         raise ValueError("outside_mask_depletion must be in [0,1]")
@@ -396,6 +602,19 @@ def apply_foreground_mask_to_input(
 
 
 def binary_iou(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 1e-12) -> float:
+    """Return binary iou for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = binary_iou(reference=image_array, prediction=image_array)
+    """
     reference = np.asarray(reference, dtype=bool)
     prediction = np.asarray(prediction, dtype=bool)
     intersection = int(np.count_nonzero(reference & prediction))
@@ -404,6 +623,19 @@ def binary_iou(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 1
 
 
 def binary_dice(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 1e-12) -> float:
+    """Return binary dice for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = binary_dice(reference=image_array, prediction=image_array)
+    """
     reference = np.asarray(reference, dtype=bool)
     prediction = np.asarray(prediction, dtype=bool)
     intersection = int(np.count_nonzero(reference & prediction))
@@ -424,6 +656,21 @@ def roi_snr(
     The same hand-labelled reference mask must define both regions for every
     compared image. ``epsilon`` remains a numerical safeguard only; it must not
     turn a zero-variance background into an enormous finite SNR.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        reference_mask (np.ndarray): Array containing reference mask.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+        relative_sd_floor (float): Numerical value controlling relative sd floor. Defaults to ``1e-8``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = roi_snr(image=image_array, reference_mask=image_array)
     """
     image = np.asarray(image, dtype=np.float64)
     reference_mask = np.asarray(reference_mask, dtype=bool)
@@ -474,6 +721,21 @@ def _normalized_hwc_with_reference(
     zeroed background can make P99.8 of the sparse final image equal zero.
     Deriving limits from the filtered input prevents the valid foreground from
     being displayed as an entirely black panel.
+
+    Args:
+        target_hwc (np.ndarray): Array containing target hwc.
+        reference_hwc (np.ndarray): Array containing reference hwc.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalized_hwc_with_reference(target_hwc=image_array, reference_hwc=image_array)
     """
     target = np.asarray(target_hwc, dtype=np.float32)
     reference = np.asarray(reference_hwc, dtype=np.float32)
@@ -509,7 +771,17 @@ def _normalized_hwc_with_reference(
 
 
 def _display_from_normalized_hwc(normalized_hwc: np.ndarray) -> np.ndarray:
-    """Compose an already normalized HWC fluorescence image for display."""
+    """Compose an already normalized HWC fluorescence image for display.
+
+    Args:
+        normalized_hwc (np.ndarray): Array containing normalized hwc.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_from_normalized_hwc(normalized_hwc=image_array)
+    """
     normalized = np.asarray(normalized_hwc, dtype=np.float32)
     if normalized.ndim == 2:
         return normalized
@@ -524,6 +796,17 @@ def _display_from_normalized_hwc(normalized_hwc: np.ndarray) -> np.ndarray:
 
 
 def _display_image(hwc: np.ndarray) -> np.ndarray:
+    """Return display image for the supplied inputs.
+
+    Args:
+        hwc (np.ndarray): Array containing hwc.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_image(hwc=image_array)
+    """
     return _display_from_normalized_hwc(normalize_image01(hwc, "percentile"))
 
 
@@ -531,7 +814,18 @@ def _display_image_with_reference(
     target_hwc: np.ndarray,
     reference_hwc: np.ndarray,
 ) -> np.ndarray:
-    """Display target with percentile limits derived from reference."""
+    """Display target with percentile limits derived from reference.
+
+    Args:
+        target_hwc (np.ndarray): Array containing target hwc.
+        reference_hwc (np.ndarray): Array containing reference hwc.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_image_with_reference(target_hwc=image_array, reference_hwc=image_array)
+    """
     return _display_from_normalized_hwc(
         _normalized_hwc_with_reference(target_hwc, reference_hwc)
     )
@@ -554,6 +848,33 @@ def _save_preview(
     the saved OME-Zarr or the arrays used for SNR calculation. For the one-channel
     2d_time dataset, every image, probability, and mask panel uses a black-to-blue
     fluorescence colour map. No grayscale or magma panel is used in that QC figure.
+
+    Args:
+        raw_hwc (np.ndarray | None): Array containing raw hwc.
+        filtered_hwc (np.ndarray): Array containing filtered hwc.
+        probability (np.ndarray): Array containing probability.
+        prediction (np.ndarray): Array containing prediction.
+        suppressed_hwc (np.ndarray): Array containing suppressed hwc.
+        reference (np.ndarray | None): Array containing reference.
+        outside_mask_depletion (float): Numerical value controlling outside mask depletion.
+        path (Path): Filesystem path to the required input or output resource.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_preview(
+        ...     raw_hwc=image_array,
+        ...     filtered_hwc=image_array,
+        ...     probability=image_array,
+        ...     prediction=image_array,
+        ...     suppressed_hwc=image_array,
+        ...     reference=image_array,
+        ...     outside_mask_depletion=0.5,
+        ...     path=Path("path/to/resource"),
+        ...     sample="sample",
+        ... )
     """
     figure, axes = plt.subplots(2, 4, figsize=(17, 8), dpi=160)
     depletion_percent = 100.0 * outside_mask_depletion
@@ -628,6 +949,15 @@ def _save_preview(
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("status\nno_rows\n", encoding="utf-8")
@@ -644,6 +974,17 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _mean_std(values: list[float]) -> tuple[float, float]:
+    """Return mean std for the supplied inputs.
+
+    Args:
+        values (list[float]): Numerical value controlling values.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _mean_std(values=0.5)
+    """
     if not values:
         return float("nan"), float("nan")
     return float(np.mean(values)), float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
@@ -668,6 +1009,22 @@ def run_2d_unet_on_omezarr(
 
     The attenuated output is excluded from SNR because outside-mask suppression
     changes the background distribution and can create artificial SNR inflation.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+        model (tf.keras.Model | None): Model identifier or filesystem path to the pretrained or fine-tuned model. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[UNetInferenceOutput, list[dict[str, Any]]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_2d_unet_on_omezarr(zarr_path=Path("path/to/resource"), cfg=config)
     """
     zarr_path = Path(zarr_path)
     sample = _sample_name_from_zarr(zarr_path)
@@ -952,6 +1309,19 @@ def run_2d_unet_on_omezarr(
 def run_2d_time_unet_on_omezarr(
     zarr_path: Path, cfg: UNetRunConfig, model: tf.keras.Model | None = None
 ) -> Path:
+    """Run two-dimensional data time U-Net result on OME-Zarr using the supplied configuration.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+        model (tf.keras.Model | None): Model identifier or filesystem path to the pretrained or fine-tuned model. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_2d_time_unet_on_omezarr(zarr_path=Path("path/to/resource"), cfg=config)
+    """
     cfg.dataset = "2d_time"
     output, _ = run_2d_unet_on_omezarr(zarr_path, cfg, model=model)
     return output.mask_zarr
@@ -960,6 +1330,19 @@ def run_2d_time_unet_on_omezarr(
 def run_2d_wga_dapi_unet_on_omezarr(
     zarr_path: Path, cfg: UNetRunConfig, model: tf.keras.Model | None = None
 ) -> Path:
+    """Run two-dimensional data wga dapi U-Net result on OME-Zarr using the supplied configuration.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+        model (tf.keras.Model | None): Model identifier or filesystem path to the pretrained or fine-tuned model. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_2d_wga_dapi_unet_on_omezarr(zarr_path=Path("path/to/resource"), cfg=config)
+    """
     cfg.dataset = "2d_wga_dapi"
     output, _ = run_2d_unet_on_omezarr(zarr_path, cfg, model=model)
     return output.mask_zarr
@@ -971,7 +1354,23 @@ def run_dataset(
     process_all: bool = True,
     selected_zarrs: list[Path] | None = None,
 ) -> list[UNetInferenceOutput]:
-    """Run one, selected, or all 2D samples and save dataset-level metrics."""
+    """Run one, selected, or all 2D samples and save dataset-level metrics.
+
+    Args:
+        cfg (UNetRunConfig): Value specifying cfg for the operation.
+        process_all (bool): Boolean flag controlling process all. Defaults to ``True``.
+        selected_zarrs (list[Path] | None): Filesystem path used for selected zarrs. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[UNetInferenceOutput]: Collection containing the generated or selected values.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_dataset(cfg=config)
+    """
     cfg.dataset = cfg.dataset.strip().lower()
     validate_run_config(cfg)
     if cfg.dataset not in DATASETS_2D:

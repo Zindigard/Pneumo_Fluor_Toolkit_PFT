@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for denoise widget."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
 @dataclass
 class StepLayerResult:
+    """Store validated configuration or result data for step layer result."""
     data: np.ndarray
     name: str
     layer_type: str = "image"
@@ -40,6 +43,7 @@ class StepLayerResult:
 
 @dataclass
 class DenoiseRequest:
+    """Store validated configuration or result data for denoise request."""
     mode: str
     dataset: str
     project_root: Path
@@ -64,10 +68,32 @@ class DenoiseRequest:
 
 
 def make_denoise_widget(napari_viewer):
+    """Create denoise widget from the supplied inputs.
+
+    Args:
+        napari_viewer (Any): Value specifying napari viewer for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_denoise_widget(napari_viewer=...)
+    """
     return PFTDenoiseWidget(napari_viewer)
 
 
 def _safe_name(text: str) -> str:
+    """Return safe name for the supplied inputs.
+
+    Args:
+        text (str): Text value specifying text.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _safe_name(text="text")
+    """
     bad = r'<>:"/\\|?*• '
     cleaned = "".join("_" if ch in bad else ch for ch in str(text))
     while "__" in cleaned:
@@ -76,12 +102,34 @@ def _safe_name(text: str) -> str:
 
 
 def _as_numpy(data: Any) -> np.ndarray:
+    """Return as numpy for the supplied inputs.
+
+    Args:
+        data (Any): Value specifying data for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _as_numpy(data=image_array)
+    """
     if hasattr(data, "compute"):
         data = data.compute()
     return np.asarray(data)
 
 
 def _layer_axes(layer: Any) -> str:
+    """Return layer axes for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _layer_axes(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     axes = md.get("pft_layer_axes") or md.get("pft_axes")
     if isinstance(axes, str) and axes:
@@ -97,6 +145,17 @@ def _layer_axes(layer: Any) -> str:
 
 
 def _layer_scale(layer: Any) -> tuple[float, ...] | None:
+    """Return layer scale for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        tuple[float, ...] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _layer_scale(layer=...)
+    """
     scale = getattr(layer, "scale", None)
     if scale is None:
         return None
@@ -107,6 +166,19 @@ def _layer_scale(layer: Any) -> tuple[float, ...] | None:
 
 
 def _contrast_limits(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> tuple[float, float]:
+    """Return contrast limits for the supplied inputs.
+
+    Args:
+        data (np.ndarray): Array containing data.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _contrast_limits(data=image_array)
+    """
     x = np.asarray(data)
     if x.size == 0:
         return 0.0, 1.0
@@ -121,6 +193,19 @@ def _contrast_limits(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8)
 
 
 def _robust_normalize(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> tuple[np.ndarray, float, float]:
+    """Return robust normalize for the supplied inputs.
+
+    Args:
+        data (np.ndarray): Array containing data.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        tuple[np.ndarray, float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _robust_normalize(data=image_array)
+    """
     x = np.asarray(data, dtype=np.float32)
     lo, hi = _contrast_limits(x, p_low=p_low, p_high=p_high)
     y = (x - np.float32(lo)) / np.float32(hi - lo + 1e-8)
@@ -129,6 +214,23 @@ def _robust_normalize(data: np.ndarray, p_low: float = 1.0, p_high: float = 99.8
 
 
 def _denormalize(data_norm: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """Return denormalize for the supplied inputs.
+
+    Args:
+        data_norm (np.ndarray): Array containing data norm.
+        lo (float): Numerical value controlling lo.
+        hi (float): Numerical value controlling hi.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _denormalize(
+        ...     data_norm=image_array,
+        ...     lo=0.5,
+        ...     hi=0.5,
+        ... )
+    """
     y = np.asarray(data_norm, dtype=np.float32)
     out = y * np.float32(hi - lo) + np.float32(lo)
     out = np.clip(out, np.float32(lo), np.float32(hi))
@@ -136,12 +238,36 @@ def _denormalize(data_norm: np.ndarray, lo: float, hi: float) -> np.ndarray:
 
 
 def _default_model_path(project_root: Path, dataset: str) -> Path:
+    """Return default model path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_model_path(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     if dataset == "3d_25d":
         return project_root / "models" / "u_net_3d_25d" / "u_net_3d_25d_best.keras"
     return project_root / "models" / f"u_net_{dataset}" / f"u_net_{dataset}_best.keras"
 
 
 def _infer_dataset_from_layers(active_layer: Any, sibling_layers: list[Any]) -> str:
+    """Infer dataset from layers from the supplied model inputs.
+
+    Args:
+        active_layer (Any): Value specifying active layer for the operation.
+        sibling_layers (list[Any]): Value specifying sibling layers for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _infer_dataset_from_layers(active_layer=..., sibling_layers=[])
+    """
     axes = _layer_axes(active_layer)
     if "z" in axes:
         return "3d_25d"
@@ -151,16 +277,50 @@ def _infer_dataset_from_layers(active_layer: Any, sibling_layers: list[Any]) -> 
 
 
 def _is_image_layer(layer: Any) -> bool:
+    """Determine whether image layer satisfies the stated condition.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_image_layer(layer=...)
+    """
     return hasattr(layer, "data") and hasattr(layer, "metadata") and layer.__class__.__name__.lower() != "labels"
 
 
 def _is_pft_layer(layer: Any) -> bool:
+    """Determine whether pft layer satisfies the stated condition.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_pft_layer(layer=...)
+    """
     name = str(getattr(layer, "name", ""))
     md = getattr(layer, "metadata", {}) or {}
     return name.startswith("PFT |") or any(str(k).startswith("pft_") for k in md)
 
 
 def _same_source(a: Any, b: Any) -> bool:
+    """Return same source for the supplied inputs.
+
+    Args:
+        a (Any): Value specifying a for the operation.
+        b (Any): Value specifying b for the operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _same_source(a=..., b=...)
+    """
     ma = getattr(a, "metadata", {}) or {}
     mb = getattr(b, "metadata", {}) or {}
     za = ma.get("pft_ome_zarr_path") or ma.get("pft_source_path")
@@ -169,6 +329,17 @@ def _same_source(a: Any, b: Any) -> bool:
 
 
 def _channel_index(layer: Any) -> int:
+    """Return channel index for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _channel_index(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     try:
         return int(md.get("pft_channel_index", 0))
@@ -177,11 +348,34 @@ def _channel_index(layer: Any) -> int:
 
 
 def _channel_name(layer: Any) -> str:
+    """Return channel name for the supplied inputs.
+
+    Args:
+        layer (Any): Image, labels, shapes, or points layer used by the graphical operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _channel_name(layer=...)
+    """
     md = getattr(layer, "metadata", {}) or {}
     return str(md.get("pft_channel_name") or getattr(layer, "name", "channel"))
 
 
 def _guess_wavelength_nm(channel_name: str | None, channel_index: int | None) -> int:
+    """Return guess wavelength nm for the supplied inputs.
+
+    Args:
+        channel_name (str | None): Text value specifying channel name.
+        channel_index (int | None): Zero-based index selecting channel.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _guess_wavelength_nm(channel_name="channel_name", channel_index=1)
+    """
     text = (channel_name or "").lower()
     if any(k in text for k in ("405", "dapi", "hada", "t1", "blue")):
         return 405
@@ -193,6 +387,26 @@ def _guess_wavelength_nm(channel_name: str | None, channel_index: int | None) ->
 
 
 def _find_psf_path(project_root: Path, *, psf_model: str, channel_name: str | None, channel_index: int | None, level: int = 0) -> Path | None:
+    """Find point-spread function path in the available data or project structure.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        psf_model (str): Text value specifying point-spread function model.
+        channel_name (str | None): Text value specifying channel name.
+        channel_index (int | None): Zero-based index selecting channel.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _find_psf_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     psf_model="psf_model",
+        ...     channel_name="channel_name",
+        ...     channel_index=1,
+        ... )
+    """
     psf_dir = project_root / "results" / "psf" / "generated"
     if not psf_dir.exists():
         return None
@@ -210,6 +424,20 @@ def _find_psf_path(project_root: Path, *, psf_model: str, channel_name: str | No
 
 
 def _normalize_psf(psf: np.ndarray) -> np.ndarray:
+    """Normalize point-spread function using the configured procedure.
+
+    Args:
+        psf (np.ndarray): Array containing point-spread function.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_psf(psf=image_array)
+    """
     psf = np.asarray(psf, dtype=np.float32)
     if psf.ndim != 3:
         raise ValueError(f"PSF must be 3D (Z,Y,X). Got shape={psf.shape}")
@@ -223,6 +451,28 @@ def _normalize_psf(psf: np.ndarray) -> np.ndarray:
 
 
 def _richardson_lucy_volume(image_zyx: np.ndarray, psf_path: Path, *, iterations: int, background: float) -> np.ndarray:
+    """Return richardson lucy volume for the supplied inputs.
+
+    Args:
+        image_zyx (np.ndarray): Array containing image zyx.
+        psf_path (Path): Filesystem path associated with point-spread function.
+        iterations (int): Numerical value controlling iterations.
+        background (float): Numerical value controlling background.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _richardson_lucy_volume(
+        ...     image_zyx=image_array,
+        ...     psf_path=Path("path/to/resource"),
+        ...     iterations=1,
+        ...     background=0.5,
+        ... )
+    """
     import tifffile as tiff
     from skimage.restoration import richardson_lucy
 
@@ -238,6 +488,21 @@ def _richardson_lucy_volume(image_zyx: np.ndarray, psf_path: Path, *, iterations
 
 
 def _filter_2d_or_time(data: np.ndarray, high_percentile: float) -> np.ndarray:
+    """Filter two-dimensional data or time according to the configured criteria.
+
+    Args:
+        data (np.ndarray): Array containing data.
+        high_percentile (float): Numerical value controlling high percentile.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _filter_2d_or_time(data=image_array, high_percentile=0.5)
+    """
     from PFT.core_prog_parts.denoiser import LocalHighThresholdSpec, apply_local_high_threshold_single
 
     spec = LocalHighThresholdSpec(high_percentile=float(high_percentile))
@@ -255,6 +520,32 @@ def _filter_2d_or_time(data: np.ndarray, high_percentile: float) -> np.ndarray:
 
 
 def _run_unet_2d_or_time(data_hwc_or_thwc: np.ndarray, *, model_path: Path, dataset: str, threshold: float, patch: int, project_root: Path) -> np.ndarray:
+    """Run U-Net result two-dimensional data or time using the supplied configuration.
+
+    Args:
+        data_hwc_or_thwc (np.ndarray): Array containing data hwc or thwc.
+        model_path (Path): Filesystem path associated with model.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        threshold (float): Numerical decision threshold used by the operation.
+        patch (int): Numerical value controlling patch.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _run_unet_2d_or_time(
+        ...     data_hwc_or_thwc=image_array,
+        ...     model_path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     threshold=0.5,
+        ...     patch=1,
+        ...     project_root=Path("path/to/resource"),
+        ... )
+    """
     from PFT.core_prog_parts.unet_run_core import UNetRunConfig, load_unet_model, predict_2d_tiled
 
     cfg = UNetRunConfig(project_root=project_root, dataset=dataset, threshold=float(threshold), patch=int(patch), model_path=Path(model_path))
@@ -271,6 +562,30 @@ def _run_unet_2d_or_time(data_hwc_or_thwc: np.ndarray, *, model_path: Path, data
 
 
 def _run_unet_3d_25d(img_czyx: np.ndarray, *, model_path: Path, threshold: float, patch: int, project_root: Path) -> np.ndarray:
+    """Run U-Net result three-dimensional data 25d using the supplied configuration.
+
+    Args:
+        img_czyx (np.ndarray): Array containing img czyx.
+        model_path (Path): Filesystem path associated with model.
+        threshold (float): Numerical decision threshold used by the operation.
+        patch (int): Numerical value controlling patch.
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _run_unet_3d_25d(
+        ...     img_czyx=image_array,
+        ...     model_path=Path("path/to/resource"),
+        ...     threshold=0.5,
+        ...     patch=1,
+        ...     project_root=Path("path/to/resource"),
+        ... )
+    """
     from PFT.core_prog_parts.unet_run_core import UNetRunConfig, load_unet_model, predict_2d_tiled
     from PFT.core_prog_parts.unet_train_3d_25d_core import make_25d_input_slice
 
@@ -295,6 +610,21 @@ def _run_unet_3d_25d(img_czyx: np.ndarray, *, model_path: Path, threshold: float
 
 
 def _prepare_2d_stack(layers: list[tuple[str, np.ndarray, dict[str, Any]]], high_percentile: float):
+    """Prepare two-dimensional data stack for downstream processing.
+
+    Args:
+        layers (list[tuple[str, np.ndarray, dict[str, Any]]]): Array containing layers.
+        high_percentile (float): Numerical value controlling high percentile.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prepare_2d_stack(layers=image_array, high_percentile=0.5)
+    """
     prepared = []
     filtered_norm_arrays: list[np.ndarray] = []
     for name, arr, md in layers:
@@ -317,6 +647,21 @@ def _prepare_2d_stack(layers: list[tuple[str, np.ndarray, dict[str, Any]]], high
 
 
 def _denoise_pipeline_worker(req: DenoiseRequest) -> Iterable[StepLayerResult]:
+    """Return denoise pipeline worker for the supplied inputs.
+
+    Args:
+        req (DenoiseRequest): Value specifying req for the operation.
+
+    Returns:
+        Iterable[StepLayerResult]: Iterator yielding the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _denoise_pipeline_worker(req=...)
+    """
     if not req.layers:
         raise ValueError("No image layers were selected for processing.")
     model_path = req.model_path or _default_model_path(req.project_root, req.dataset)
@@ -498,7 +843,16 @@ def _denoise_pipeline_worker(req: DenoiseRequest) -> Iterable[StepLayerResult]:
 
 
 class PFTDenoiseWidget(QWidget):
+    """Represent pftdenoise widget and its associated operations."""
     def __init__(self, napari_viewer):
+        """Initialize a ``PFTDenoiseWidget`` instance.
+
+        Args:
+            napari_viewer (Any): Value specifying napari viewer for the operation.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(napari_viewer=...)
+        """
         super().__init__()
         self.viewer = napari_viewer
         self.project_root = find_project_root(Path(__file__).resolve())
@@ -624,16 +978,37 @@ class PFTDenoiseWidget(QWidget):
         self.layout().addWidget(self.status)
 
     def _browse_model(self) -> None:
+        """Return browse model for the supplied inputs.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._browse_model()
+        """
         path, _ = QFileDialog.getOpenFileName(self, "Select U-Net model", str(self.project_root / "models"), "Keras model (*.keras *.h5);;All files (*)")
         if path:
             self.model_path.setText(path)
 
     def _browse_psf(self) -> None:
+        """Return browse point-spread function for the supplied inputs.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._browse_psf()
+        """
         path, _ = QFileDialog.getOpenFileName(self, "Select PSF file", str(self.project_root / "results" / "psf" / "generated"), "TIFF files (*.tif *.tiff);;All files (*)")
         if path:
             self.psf_path.setText(path)
 
     def _set_ndisplay(self, ndisplay: int) -> None:
+        """Set ndisplay on the current object or configuration.
+
+        Args:
+            ndisplay (int): Numerical value controlling ndisplay.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._set_ndisplay(ndisplay=1)
+        """
         self.viewer.dims.ndisplay = int(ndisplay)
         if int(ndisplay) == 2:
             self.status.setText("3D data are now shown slice-by-slice. Move through Z with the slider or mouse wheel.")
@@ -641,15 +1016,46 @@ class PFTDenoiseWidget(QWidget):
             self.status.setText("3D data are now shown in volume rendering mode.")
 
     def _show_error(self, title: str, message: str) -> None:
+        """Display error to the user.
+
+        Args:
+            title (str): Title displayed on the generated figure or report section.
+            message (str): Text value specifying message.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._show_error(title="title", message="message")
+        """
         QMessageBox.critical(self, title, message)
         self.status.setText(f"{title}: {message}")
 
     def _active_layer(self):
+        """Return active layer for the supplied inputs.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> result = instance._active_layer()
+        """
         if not self.viewer.layers:
             return None
         return self.viewer.layers.selection.active or self.viewer.layers[-1]
 
     def _processing_family_layers(self, active_layer: Any) -> list[Any]:
+        """Return processing family layers for the supplied inputs.
+
+        Args:
+            active_layer (Any): Value specifying active layer for the operation.
+
+        Returns:
+            list[Any]: Collection containing the generated or selected values.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> result = instance._processing_family_layers(active_layer=...)
+        """
         out = []
         for layer in self.viewer.layers:
             if not _is_image_layer(layer) or not _is_pft_layer(layer):
@@ -670,6 +1076,18 @@ class PFTDenoiseWidget(QWidget):
         return unique
 
     def _normalization_family_layers(self, active_layer: Any) -> list[Any]:
+        """Return normalization family layers for the supplied inputs.
+
+        Args:
+            active_layer (Any): Value specifying active layer for the operation.
+
+        Returns:
+            list[Any]: Collection containing the generated or selected values.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> result = instance._normalization_family_layers(active_layer=...)
+        """
         active_md = getattr(active_layer, "metadata", {}) or {}
         active_step = active_md.get("pft_step")
         out = []
@@ -696,6 +1114,18 @@ class PFTDenoiseWidget(QWidget):
         return unique
 
     def _build_request(self) -> DenoiseRequest:
+        """Build request from the supplied inputs.
+
+        Returns:
+            DenoiseRequest: Result produced by the operation.
+
+        Raises:
+            RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> result = instance._build_request()
+        """
         active = self._active_layer()
         if active is None or not hasattr(active, "data"):
             raise RuntimeError("No active image layer is selected.")
@@ -752,6 +1182,12 @@ class PFTDenoiseWidget(QWidget):
         )
 
     def run_denoising(self) -> None:
+        """Run denoising using the supplied configuration.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance.run_denoising()
+        """
         try:
             req = self._build_request()
         except Exception as exc:
@@ -782,6 +1218,15 @@ class PFTDenoiseWidget(QWidget):
         worker.start()
 
     def _add_result_layer(self, result: StepLayerResult) -> None:
+        """Add result layer to the current data structure.
+
+        Args:
+            result (StepLayerResult): Value specifying result for the operation.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._add_result_layer(result=...)
+        """
         kwargs = dict(result.kwargs or {})
         name = kwargs.pop("name", result.name)
         if result.layer_type == "labels":
@@ -791,6 +1236,15 @@ class PFTDenoiseWidget(QWidget):
         self.status.setText(f"Added layer: {name}")
 
     def _worker_done(self, _value: Any) -> None:
+        """Return worker done for the supplied inputs.
+
+        Args:
+            _value (Any): Value to validate, transform, store, or forward.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._worker_done(_value=...)
+        """
         self.run_btn.setEnabled(True)
         self.status.setText(
             "Denoising completed. Results are shown in raw intensity scale. "
@@ -798,12 +1252,27 @@ class PFTDenoiseWidget(QWidget):
         )
 
     def _worker_error(self, exc: Exception) -> None:
+        """Return worker error for the supplied inputs.
+
+        Args:
+            exc (Exception): Value specifying exc for the operation.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance._worker_error(exc=...)
+        """
         self.run_btn.setEnabled(True)
         if isinstance(exc, tuple) and len(exc) >= 2:
             exc = exc[1]
         self._show_error("Denoising failed", f"{type(exc).__name__}: {exc}")
 
     def show_normalized_variants(self) -> None:
+        """Display normalized variants to the user.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance.show_normalized_variants()
+        """
         active = self._active_layer()
         if active is None or not _is_image_layer(active):
             self._show_error("Normalization failed", "Select an image layer first.")
@@ -846,6 +1315,12 @@ class PFTDenoiseWidget(QWidget):
         self.status.setText(f"Added {created} normalized layer(s). Raw layers remain unchanged.")
 
     def save_active_layer_as_omezarr(self) -> None:
+        """Save active layer as OME-Zarr to persistent storage.
+
+        Example:
+            >>> instance = PFTDenoiseWidget(...)
+            >>> instance.save_active_layer_as_omezarr()
+        """
         layer = self._active_layer()
         if layer is None or not hasattr(layer, "data"):
             self._show_error("Save failed", "No active layer is selected.")

@@ -4,6 +4,21 @@ Without ``--zarr``, one mapped source stack from each acquisition directory is
 checked. Each stack is sampled at its configured U-Net target slice. Optional
 Richardson-Lucy testing applies the same target-specific QC as
 ``deconvolve_3d_v2.py``.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/check_random_omezarr_psf.py --help
+
+Representative execution:
+
+    python scripts/denoising/check_random_omezarr_psf.py \
+        --model BW \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --root results/img/3d_data \
+        --report-root results/noise_analysis/3d/example_check \
+        --run-deconvolution
 """
 
 from __future__ import annotations
@@ -22,6 +37,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -48,7 +74,17 @@ from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
 
 
 def _find_zarrs(root: Path) -> list[Path]:
-    """Return source image stores, excluding derived mask/deconvolution stores."""
+    """Return source image stores, excluding derived mask/deconvolution stores.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _find_zarrs(root=Path("path/to/resource"))
+    """
     root = root.expanduser().resolve()
     if root.name == "image.ome.zarr" and root.is_dir():
         return [root]
@@ -65,6 +101,20 @@ def _find_zarrs(root: Path) -> list[Path]:
 
 
 def _parse_slices(value: str) -> tuple[int, ...]:
+    """Parse slices into a validated representation.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        tuple[int, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _parse_slices(value="value")
+    """
     slices = tuple(sorted({int(item) for item in value.replace(",", " ").split()}))
     if not slices or any(item < 1 for item in slices):
         raise ValueError("Sample slices must be positive one-based indices")
@@ -72,6 +122,20 @@ def _parse_slices(value: str) -> tuple[int, ...]:
 
 
 def _selected_level0_array(zarr_dir: Path) -> tuple[zarr.Array, dict[str, Any]]:
+    """Return selected level0 array for the supplied inputs.
+
+    Args:
+        zarr_dir (Path): Directory used for Zarr.
+
+    Returns:
+        tuple[zarr.Array, dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _selected_level0_array(zarr_dir=Path("path/to/resource"))
+    """
     meta = extract_ome_zarr_meta_for_compare(zarr_dir, level=0)
     axes = str(meta.get("axes") or "").lower()
     if axes != "czyx":
@@ -94,7 +158,22 @@ def _sample_data_statistics(
     slices_1based: Sequence[int],
     target_xy_samples: int = 256,
 ) -> tuple[list[dict[str, Any]], tuple[int, ...]]:
-    """Read sparse planes and calculate channel statistics without full loading."""
+    """Read sparse planes and calculate channel statistics without full loading.
+
+    Args:
+        array (zarr.Array): Array containing array.
+        slices_1based (Sequence[int]): Numerical value controlling slices 1based.
+        target_xy_samples (int): Numerical value controlling target xy samples. Defaults to ``256``.
+
+    Returns:
+        tuple[list[dict[str, Any]], tuple[int, ...]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _sample_data_statistics(array=image_array, slices_1based=1)
+    """
     z_size = int(array.shape[1])
     valid_slices = tuple(value for value in slices_1based if 1 <= value <= z_size)
     if not valid_slices:
@@ -145,6 +224,18 @@ def _sample_data_statistics(
 
 
 def _report_paths(output_root: Path, sample: str) -> tuple[Path, Path]:
+    """Return report paths for the supplied inputs.
+
+    Args:
+        output_root (Path): Directory used for output.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        tuple[Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _report_paths(output_root=Path("path/to/resource"), sample="sample")
+    """
     output_root.mkdir(parents=True, exist_ok=True)
     safe_sample = "".join(character if character.isalnum() or character in "-_" else "_" for character in sample)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -170,6 +261,40 @@ def _write_compatibility_report(
     readiness_report_txt: Path,
     readiness_report_json: Path,
 ) -> None:
+    """Write compatibility report to persistent storage.
+
+    Args:
+        txt_path (Path): Filesystem path associated with txt.
+        json_path (Path): Filesystem path associated with JSON data.
+        selected_zarr (Path): Filesystem path used for selected Zarr.
+        discovery_root (Path): Directory used for discovery.
+        candidate_count (int): Number of candidate used by the operation.
+        seed (int | None): Random seed used to make sampling, splitting, or initialization reproducible.
+        meta (dict[str, Any]): Text value specifying meta.
+        sampled_slices (Sequence[int]): Numerical value controlling sampled slices.
+        data_statistics (Sequence[dict[str, Any]]): Text value specifying data statistics.
+        matches (Sequence[Any]): Value specifying matches for the operation.
+        master_metadata (dict[str, Any]): Text value specifying master metadata.
+        readiness_report_txt (Path): Filesystem path used for readiness report txt.
+        readiness_report_json (Path): Filesystem path used for readiness report JSON data.
+
+    Example:
+        >>> _write_compatibility_report(
+        ...     txt_path=Path("path/to/resource"),
+        ...     json_path=Path("path/to/resource"),
+        ...     selected_zarr=Path("path/to/resource"),
+        ...     discovery_root=Path("path/to/resource"),
+        ...     candidate_count=1,
+        ...     seed=1,
+        ...     meta="meta",
+        ...     sampled_slices=1,
+        ...     data_statistics="data_statistics",
+        ...     matches=[],
+        ...     master_metadata="master_metadata",
+        ...     readiness_report_txt=Path("path/to/resource"),
+        ...     readiness_report_json=Path("path/to/resource"),
+        ... )
+    """
     generated = datetime.now(timezone.utc).isoformat()
     mappings = [
         {
@@ -264,6 +389,18 @@ def _write_compatibility_report(
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Check one configured source stack from each acquisition directory "

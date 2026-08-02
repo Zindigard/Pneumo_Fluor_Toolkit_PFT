@@ -75,7 +75,20 @@ SCRIPT_PATH = Path(__file__).resolve()
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """Return the repository root containing ``scripts`` and ``src/PFT``."""
+    """Return the repository root containing ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     current = (start or SCRIPT_PATH).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -104,7 +117,17 @@ class OmePlane:
 
 
 def require_zarr():
-    """Import zarr with an environment-specific error message."""
+    """Import zarr with an environment-specific error message.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = require_zarr()
+    """
     try:
         import zarr
     except Exception as exc:
@@ -116,7 +139,17 @@ def require_zarr():
 
 
 def is_ome_zarr(path: Path) -> bool:
-    """Return True when a path appears to be an OME-Zarr store."""
+    """Return True when a path appears to be an OME-Zarr store.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = is_ome_zarr(path=Path("path/to/resource"))
+    """
     return path.is_dir() and (
         path.name.lower().endswith(".ome.zarr")
         or any((path / marker).exists() for marker in (".zgroup", ".zattrs", "zarr.json"))
@@ -124,7 +157,18 @@ def is_ome_zarr(path: Path) -> bool:
 
 
 def axes_string(value: Any, ndim: int) -> str:
-    """Convert OME-NGFF axes metadata into a lowercase axis string."""
+    """Convert OME-NGFF axes metadata into a lowercase axis string.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = axes_string(value=..., ndim=1)
+    """
     if isinstance(value, str) and len(value) == ndim:
         return value.lower()
     if isinstance(value, list):
@@ -148,7 +192,26 @@ def read_level_metadata(
     level: int,
     provisional_ndim: int,
 ) -> tuple[str, str, dict[str, float]]:
-    """Read axes, level path, and physical scales from OME-NGFF metadata."""
+    """Read axes, level path, and physical scales from OME-NGFF metadata.
+
+    Args:
+        attrs (dict[str, Any]): Attribute mapping read from or written to the associated data resource.
+        level (int): Numerical value controlling level.
+        provisional_ndim (int): Numerical value controlling provisional ndim.
+
+    Returns:
+        tuple[str, str, dict[str, float]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_level_metadata(
+        ...     attrs="attrs",
+        ...     level=1,
+        ...     provisional_ndim=1,
+        ... )
+    """
     axes = ""
     level_path = str(level)
     scales: dict[str, float] = {}
@@ -187,7 +250,29 @@ def read_level_metadata(
 
 
 def select_cyx(array: Any, axes: str, *, time_index: int, z_index: int) -> np.ndarray:
-    """Read one plane and return it in C,Y,X order."""
+    """Read one plane and return it in C,Y,X order.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        time_index (int): Zero-based time-point index selected from a time series.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = select_cyx(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     time_index=1,
+        ...     z_index=1,
+        ... )
+    """
     if "y" not in axes or "x" not in axes:
         raise ValueError(f"OME-Zarr axes must contain y and x; received '{axes}'.")
 
@@ -231,7 +316,29 @@ def open_ome_plane(
     time_index: int,
     z_index: int,
 ) -> OmePlane:
-    """Open one OME-Zarr image plane and its physical metadata."""
+    """Open one OME-Zarr image plane and its physical metadata.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        level (int): Numerical value controlling level.
+        time_index (int): Zero-based time-point index selected from a time series.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume.
+
+    Returns:
+        OmePlane: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = open_ome_plane(
+        ...     path=Path("path/to/resource"),
+        ...     level=1,
+        ...     time_index=1,
+        ...     z_index=1,
+        ... )
+    """
     zarr = require_zarr()
     path = path.expanduser().resolve()
     if not is_ome_zarr(path):
@@ -278,7 +385,23 @@ def open_ome_plane(
 
 
 def percentile_limits(array: np.ndarray, p_low: float, p_high: float) -> tuple[float, float]:
-    """Return robust finite display limits."""
+    """Return robust finite display limits.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = percentile_limits(
+        ...     array=image_array,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ... )
+    """
     values = np.asarray(array, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -298,7 +421,28 @@ def normalize_pair_from_raw(
     p_low: float,
     p_high: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Normalize raw and processed channels using limits derived only from raw."""
+    """Normalize raw and processed channels using limits derived only from raw.
+
+    Args:
+        raw_cyx (np.ndarray): Array containing raw cyx.
+        processed_cyx (np.ndarray): Array containing processed cyx.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_pair_from_raw(
+        ...     raw_cyx=image_array,
+        ...     processed_cyx=image_array,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ... )
+    """
     raw = np.asarray(raw_cyx)
     processed = np.asarray(processed_cyx)
     if raw.shape != processed.shape:
@@ -318,7 +462,21 @@ def normalize_pair_from_raw(
 
 
 def single_channel_rgb(channel_yx: np.ndarray, color: str) -> np.ndarray:
-    """Map one normalized channel to blue or green RGB."""
+    """Map one normalized channel to blue or green RGB.
+
+    Args:
+        channel_yx (np.ndarray): Array containing channel yx.
+        color (str): Text value specifying color.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = single_channel_rgb(channel_yx=image_array, color="color")
+    """
     plane = np.clip(np.asarray(channel_yx, dtype=np.float32), 0.0, 1.0)
     rgb = np.zeros((*plane.shape, 3), dtype=np.float32)
     if color == "blue":
@@ -331,7 +489,21 @@ def single_channel_rgb(channel_yx: np.ndarray, color: str) -> np.ndarray:
 
 
 def merged_rgb(cyx01: np.ndarray, dataset: str) -> np.ndarray:
-    """Compose the dataset-specific merged fluorescence display."""
+    """Compose the dataset-specific merged fluorescence display.
+
+    Args:
+        cyx01 (np.ndarray): Array containing cyx01.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = merged_rgb(cyx01=image_array, dataset="2d_time")
+    """
     data = np.asarray(cyx01, dtype=np.float32)
     height, width = data.shape[-2:]
     rgb = np.zeros((height, width, 3), dtype=np.float32)
@@ -357,7 +529,25 @@ def add_scalebar(
     image_shape_yx: tuple[int, int],
     bar_um: float,
 ) -> None:
-    """Draw a white micrometre scale bar with a black outline."""
+    """Draw a white micrometre scale bar with a black outline.
+
+    Args:
+        axis (Any): Array axis along which the operation is performed.
+        pixel_size_um_x (float): Numerical value controlling pixel size um x.
+        image_shape_yx (tuple[int, int]): Numerical value controlling image shape yx.
+        bar_um (float): Numerical value controlling bar um.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> add_scalebar(
+        ...     axis=...,
+        ...     pixel_size_um_x=0.5,
+        ...     image_shape_yx=1,
+        ...     bar_um=0.5,
+        ... )
+    """
     import matplotlib.patheffects as path_effects
 
     if pixel_size_um_x <= 0 or bar_um <= 0:
@@ -392,7 +582,17 @@ def add_scalebar(
 
 
 def safe_sample_name(value: str) -> str:
-    """Return a filesystem-safe sample identifier."""
+    """Return a filesystem-safe sample identifier.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = safe_sample_name(value="value")
+    """
     return re.sub(r"[^A-Za-z0-9_.²-]+", "_", value).strip("_") or "sample"
 
 
@@ -402,7 +602,25 @@ def save_figure(
     output_format: str,
     dpi: int,
 ) -> list[Path]:
-    """Save a figure in PNG, PDF, or both formats."""
+    """Save a figure in PNG, PDF, or both formats.
+
+    Args:
+        figure (Any): Value specifying figure for the operation.
+        output_base (Path): Filesystem path used for output base.
+        output_format (str): Text value specifying output format.
+        dpi (int): Resolution of a generated figure in dots per inch.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_figure(
+        ...     figure=...,
+        ...     output_base=Path("path/to/resource"),
+        ...     output_format="output_format",
+        ...     dpi=1,
+        ... )
+    """
     suffixes = ("png", "pdf") if output_format == "both" else (output_format,)
     outputs: list[Path] = []
     output_base.parent.mkdir(parents=True, exist_ok=True)
@@ -433,7 +651,54 @@ def plot_sample(
     original_label: str,
     processed_label: str,
 ) -> tuple[list[Path], float]:
-    """Create one publication-ready before/after figure."""
+    """Create one publication-ready before/after figure.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        raw_path (Path): Filesystem path associated with raw.
+        processed_path (Path): Filesystem path associated with processed.
+        output_root (Path): Directory used for output.
+        view (str): Text value specifying view.
+        level (int): Numerical value controlling level.
+        time_index (int): Zero-based time-point index selected from a time series.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume.
+        p_low (float): Numerical value controlling p low.
+        p_high (float): Numerical value controlling p high.
+        scale_bar_um (float): Numerical value controlling scale bar um.
+        pixel_size_override (float | None): Numerical value controlling pixel size override.
+        output_format (str): Text value specifying output format.
+        dpi (int): Resolution of a generated figure in dots per inch.
+        original_label (str): Text value specifying original label.
+        processed_label (str): Text value specifying processed label.
+
+    Returns:
+        tuple[list[Path], float]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = plot_sample(
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     raw_path=Path("path/to/resource"),
+        ...     processed_path=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     view="view",
+        ...     level=1,
+        ...     time_index=1,
+        ...     z_index=1,
+        ...     p_low=0.5,
+        ...     p_high=0.5,
+        ...     scale_bar_um=0.5,
+        ...     pixel_size_override=0.5,
+        ...     output_format="output_format",
+        ...     dpi=1,
+        ...     original_label="original_label",
+        ...     processed_label="processed_label",
+        ... )
+    """
     import matplotlib
 
     matplotlib.use("Agg", force=True)
@@ -570,7 +835,21 @@ def plot_sample(
 
 
 def choose_number(title: str, options: Sequence[str]) -> int:
-    """Prompt for one numbered item."""
+    """Prompt for one numbered item.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        options (Sequence[str]): Text value specifying options.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_number(title="title", options="options")
+    """
     if not options:
         raise RuntimeError(f"No options are available for {title}.")
     print(f"\n{title}")
@@ -589,7 +868,17 @@ def choose_number(title: str, options: Sequence[str]) -> int:
 
 
 def discover_inference_roots(dataset: str) -> list[Path]:
-    """Find U-Net inference roots containing completed sample outputs."""
+    """Find U-Net inference roots containing completed sample outputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_inference_roots(dataset="2d_time")
+    """
     if not UNET_ROOT.exists():
         return []
     candidates: list[Path] = []
@@ -602,7 +891,18 @@ def discover_inference_roots(dataset: str) -> list[Path]:
 
 
 def discover_samples(dataset: str, inference_root: Path) -> list[str]:
-    """Return samples having both original and processed OME-Zarr images."""
+    """Return samples having both original and processed OME-Zarr images.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        inference_root (Path): Directory used for inference.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = discover_samples(dataset="2d_time", inference_root=Path("path/to/resource"))
+    """
     raw_dataset_root = RAW_ROOT / dataset
     samples: list[str] = []
     if not inference_root.exists():
@@ -616,7 +916,14 @@ def discover_samples(dataset: str, inference_root: Path) -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create command-line arguments."""
+    """Create command-line arguments.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Create original-versus-U-Net-filtered figures with physical scale bars."
     )
@@ -652,7 +959,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_configuration(args: argparse.Namespace) -> tuple[str, Path, list[str], Path]:
-    """Resolve dataset, inference root, samples, and output root."""
+    """Resolve dataset, inference root, samples, and output root.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        tuple[str, Path, list[str], Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_configuration(args=...)
+    """
     dataset = args.dataset
     if dataset is None:
         if args.non_interactive:
@@ -710,7 +1031,14 @@ def resolve_configuration(args: argparse.Namespace) -> tuple[str, Path, list[str
 
 
 def main() -> int:
-    """Run the plotting workflow."""
+    """Run the plotting workflow.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = build_parser()
     args = parser.parse_args()
 

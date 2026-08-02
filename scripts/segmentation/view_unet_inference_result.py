@@ -50,7 +50,17 @@ EXPECTED_FILTER_PERCENTILE = {
 
 
 def find_project_root() -> Path:
-    """Locate the repository root containing ``scripts`` and ``src/PFT``."""
+    """Locate the repository root containing ``scripts`` and ``src/PFT``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     for candidate in (SCRIPT_PATH.parent, *SCRIPT_PATH.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -70,7 +80,21 @@ from PFT.core_prog_parts.decoder_omezar import (  # noqa: E402
 
 
 def prompt_choice(label: str, options: Sequence[str]) -> str:
-    """Request one numbered terminal selection."""
+    """Request one numbered terminal selection.
+
+    Args:
+        label (str): Label value or label image used to identify a segmented object.
+        options (Sequence[str]): Text value specifying options.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prompt_choice(label="label", options="options")
+    """
     if not options:
         raise ValueError(f"No options are available for: {label}")
     print(f"\n{label}")
@@ -89,7 +113,21 @@ def prompt_choice(label: str, options: Sequence[str]) -> str:
 
 
 def filtered_root(dataset: str) -> Path:
-    """Resolve the production intensity-preserving local-threshold folder."""
+    """Resolve the production intensity-preserving local-threshold folder.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = filtered_root(dataset="2d_time")
+    """
     base = (
         PROJECT_ROOT
         / "results"
@@ -120,7 +158,17 @@ def filtered_root(dataset: str) -> Path:
 
 
 def discover_inference_roots(dataset: str) -> list[Path]:
-    """Return completed inference roots matching one dataset."""
+    """Return completed inference roots matching one dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = discover_inference_roots(dataset="2d_time")
+    """
     base = PROJECT_ROOT / "results" / "U-net"
     if not base.is_dir():
         return []
@@ -139,7 +187,20 @@ def discover_inference_roots(dataset: str) -> list[Path]:
 
 
 def discover_samples(output_root: Path) -> dict[str, Path]:
-    """Return completed sample folders containing the saved U-Net result."""
+    """Return completed sample folders containing the saved U-Net result.
+
+    Args:
+        output_root (Path): Directory used for output.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = discover_samples(output_root=Path("path/to/resource"))
+    """
     if not output_root.is_dir():
         raise FileNotFoundError(f"Inference output root does not exist: {output_root}")
     samples = {
@@ -161,14 +222,51 @@ def select_axis(
     axis: str,
     index: int,
 ) -> tuple[np.ndarray, str]:
-    """Select one index and remove the corresponding axis label."""
+    """Select one index and remove the corresponding axis label.
+
+    Args:
+        array (np.ndarray): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        axis (str): Array axis along which the operation is performed.
+        index (int): Zero-based index of the selected element.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = select_axis(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     axis="axis",
+        ...     index=1,
+        ... )
+    """
     position = axes.index(axis)
     array = np.take(array, int(index), axis=position)
     return array, axes[:position] + axes[position + 1 :]
 
 
 def load_hwc_frames(zarr_path: Path, dataset: str, level: int) -> list[np.ndarray]:
-    """Load all frames as HWC arrays without changing stored intensity values."""
+    """Load all frames as HWC arrays without changing stored intensity values.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_hwc_frames(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     level=1,
+        ... )
+    """
     array, axes = load_ome_zarr(zarr_path, level=level, as_numpy=True)
     array = np.asarray(array)
     axes = normalize_axes(axes)
@@ -229,7 +327,22 @@ def percentile_limits_per_channel(
     p_low: float = 1.0,
     p_high: float = 99.8,
 ) -> list[tuple[float, float]]:
-    """Calculate complete-image percentile limits for each channel."""
+    """Calculate complete-image percentile limits for each channel.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        list[tuple[float, float]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = percentile_limits_per_channel(image=image_array)
+    """
     image = np.asarray(image, dtype=np.float32)
     if image.ndim == 2:
         image = image[..., None]
@@ -259,7 +372,21 @@ def apply_channel_limits(
     image: np.ndarray,
     limits: Sequence[tuple[float, float]],
 ) -> np.ndarray:
-    """Map an image to [0,1] using externally supplied per-channel limits."""
+    """Map an image to [0,1] using externally supplied per-channel limits.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        limits (Sequence[tuple[float, float]]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_channel_limits(image=image_array, limits=0.5)
+    """
     image = np.asarray(image, dtype=np.float32)
     if image.ndim == 2:
         image = image[..., None]
@@ -283,13 +410,33 @@ def apply_channel_limits(
 
 
 def normalize_image01(image: np.ndarray) -> np.ndarray:
-    """Apply complete-image, per-channel P1-P99.8 normalization."""
+    """Apply complete-image, per-channel P1-P99.8 normalization.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = normalize_image01(image=image_array)
+    """
     limits = percentile_limits_per_channel(image)
     return apply_channel_limits(image, limits)
 
 
 def normalize_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
-    """Normalize every complete frame independently, matching U-Net inference."""
+    """Normalize every complete frame independently, matching U-Net inference.
+
+    Args:
+        frames (list[np.ndarray]): Array containing frames.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = normalize_frames(frames=image_array)
+    """
     return [normalize_image01(frame) for frame in frames]
 
 
@@ -302,6 +449,19 @@ def normalize_target_with_reference(
     This is required for zero-outside-mask results. Independently calculating
     P1-P99.8 on a sparse result can produce P99.8 == 0 and therefore a completely
     black display, even when foreground intensities are stored correctly.
+
+    Args:
+        reference_frames (list[np.ndarray]): Array containing reference frames.
+        target_frames (list[np.ndarray]): Array containing target frames.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_target_with_reference(reference_frames=image_array, target_frames=image_array)
     """
     if len(reference_frames) != len(target_frames):
         raise ValueError(
@@ -322,13 +482,37 @@ def normalize_target_with_reference(
 
 
 def stack_channel(frames: list[np.ndarray], channel: int) -> np.ndarray:
-    """Convert HWC frame lists to YX or TYX napari arrays."""
+    """Convert HWC frame lists to YX or TYX napari arrays.
+
+    Args:
+        frames (list[np.ndarray]): Array containing frames.
+        channel (int): Channel index or channel identifier selected for processing.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = stack_channel(frames=image_array, channel=1)
+    """
     planes = [np.asarray(frame[..., channel]) for frame in frames]
     return planes[0] if len(planes) == 1 else np.stack(planes, axis=0)
 
 
 def make_wga_dapi_merged(frame: np.ndarray) -> np.ndarray:
-    """Create one RGB merged frame with DAPI in blue and WGA in green."""
+    """Create one RGB merged frame with DAPI in blue and WGA in green.
+
+    Args:
+        frame (np.ndarray): Array containing frame.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_wga_dapi_merged(frame=image_array)
+    """
     frame = np.asarray(frame, dtype=np.float32)
     if frame.ndim != 3 or frame.shape[-1] < 2:
         raise ValueError(
@@ -341,13 +525,33 @@ def make_wga_dapi_merged(frame: np.ndarray) -> np.ndarray:
 
 
 def stack_merged(frames: list[np.ndarray]) -> np.ndarray:
-    """Convert WGA-DAPI frame lists to merged RGB napari arrays."""
+    """Convert WGA-DAPI frame lists to merged RGB napari arrays.
+
+    Args:
+        frames (list[np.ndarray]): Array containing frames.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = stack_merged(frames=image_array)
+    """
     planes = [make_wga_dapi_merged(frame) for frame in frames]
     return planes[0] if len(planes) == 1 else np.stack(planes, axis=0)
 
 
 def array_statistics(frames: list[np.ndarray]) -> tuple[str, tuple[int, ...], float, float]:
-    """Return dtype, frame shape, finite minimum, and finite maximum."""
+    """Return dtype, frame shape, finite minimum, and finite maximum.
+
+    Args:
+        frames (list[np.ndarray]): Array containing frames.
+
+    Returns:
+        tuple[str, tuple[int, ...], float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = array_statistics(frames=image_array)
+    """
     sample = np.asarray(frames[0])
     finite_parts = [np.asarray(frame)[np.isfinite(frame)] for frame in frames]
     finite_parts = [part for part in finite_parts if part.size]
@@ -372,7 +576,29 @@ def add_source_layers(
     include_merged: bool = False,
     merged_visible: bool = False,
 ) -> None:
-    """Add one single-channel or two-channel source using biological colours."""
+    """Add one single-channel or two-channel source using biological colours.
+
+    Args:
+        viewer (Any): Napari viewer instance associated with the current graphical operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        label (str): Label value or label image used to identify a segmented object.
+        frames (list[np.ndarray]): Array containing frames.
+        visible (bool): Boolean flag controlling visible.
+        metadata (dict[str, object]): Metadata mapping associated with the image, model, or generated result.
+        contrast_limits (tuple[float, float] | None): Numerical value controlling contrast limits. ``None`` selects the function's default behavior.
+        include_merged (bool): Boolean flag controlling whether to merged. Defaults to ``False``.
+        merged_visible (bool): Boolean flag controlling merged visible. Defaults to ``False``.
+
+    Example:
+        >>> add_source_layers(
+        ...     viewer=...,
+        ...     dataset="2d_time",
+        ...     label="label",
+        ...     frames=image_array,
+        ...     visible=True,
+        ...     metadata="metadata",
+        ... )
+    """
     common_kwargs: dict[str, object] = {
         "visible": visible,
         "metadata": metadata,
@@ -417,7 +643,20 @@ def add_source_layers(
 
 
 def add_optional_mask_layers(viewer, sample_dir: Path, level: int) -> None:
-    """Add predicted mask and probability layers when available."""
+    """Add predicted mask and probability layers when available.
+
+    Args:
+        viewer (Any): Napari viewer instance associated with the current graphical operation.
+        sample_dir (Path): Directory used for sample.
+        level (int): Numerical value controlling level.
+
+    Example:
+        >>> add_optional_mask_layers(
+        ...     viewer=...,
+        ...     sample_dir=Path("path/to/resource"),
+        ...     level=1,
+        ... )
+    """
     mask_path = sample_dir / "pred_mask.ome.zarr"
     if mask_path.is_dir():
         mask_array, mask_axes = load_ome_zarr(mask_path, level=level, as_numpy=True)
@@ -461,7 +700,33 @@ def open_result(
     view: str,
     grid: bool,
 ) -> None:
-    """Load selected sources and open them in one napari viewer."""
+    """Load selected sources and open them in one napari viewer.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        output_root (Path): Directory used for output.
+        sample (str): Text value specifying sample.
+        filtered_root_override (Path | None): Filesystem path used for filtered root override.
+        level (int): Numerical value controlling level.
+        view (str): Text value specifying view.
+        grid (bool): Boolean flag controlling grid.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> open_result(
+        ...     dataset="2d_time",
+        ...     output_root=Path("path/to/resource"),
+        ...     sample="sample",
+        ...     filtered_root_override=Path("path/to/resource"),
+        ...     level=1,
+        ...     view="view",
+        ...     grid=True,
+        ... )
+    """
     try:
         import napari
     except ImportError as exc:
@@ -686,6 +951,14 @@ def open_result(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Open one completed 2D U-Net inference result and compare the raw image, "
@@ -733,6 +1006,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
 
     dataset = args.dataset or prompt_choice("Choose dataset", DATASETS)

@@ -72,6 +72,19 @@ def relative_volume_path(image_zarr: str | Path, image_root: str | Path | None =
     When ``image_root`` is omitted, the nearest ancestor named ``3d_data`` is
     used. Falling back to the sample folder keeps the helper usable for custom
     external inputs.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = relative_volume_path(image_zarr="image_zarr")
     """
     image_zarr = Path(image_zarr).resolve()
     sample_dir = image_zarr.parent
@@ -94,7 +107,18 @@ def relative_volume_path(image_zarr: str | Path, image_root: str | Path | None =
 
 
 def volume_key(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
-    """Return a unique forward-slash experiment/sample identifier."""
+    """Return a unique forward-slash experiment/sample identifier.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = volume_key(image_zarr="image_zarr")
+    """
     return relative_volume_path(image_zarr, image_root).as_posix()
 
 
@@ -102,7 +126,21 @@ def target_slice_for_volume(
     image_zarr: str | Path,
     image_root: str | Path | None = None,
 ) -> int:
-    """Return the configured one-based target slice for one source volume."""
+    """Return the configured one-based target slice for one source volume.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = target_slice_for_volume(image_zarr="image_zarr")
+    """
     key = volume_key(image_zarr, image_root)
     try:
         return int(TARGET_SLICE_BY_VOLUME_KEY[key])
@@ -117,13 +155,37 @@ def target_context_for_volume(
     image_zarr: str | Path,
     image_root: str | Path | None = None,
 ) -> tuple[int, int, int]:
-    """Return the one-based Z-1/Z/Z+1 context for the configured target."""
+    """Return the one-based Z-1/Z/Z+1 context for the configured target.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = target_context_for_volume(image_zarr="image_zarr")
+    """
     target = target_slice_for_volume(image_zarr, image_root)
     return target - 1, target, target + 1
 
 
 def configured_test_zarrs(image_root: str | Path) -> list[Path]:
-    """Resolve the fixed four-stack deconvolution test cohort."""
+    """Resolve the fixed four-stack deconvolution test cohort.
+
+    Args:
+        image_root (str | Path): Directory used for image.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = configured_test_zarrs(image_root=Path("path/to/resource"))
+    """
     root = Path(image_root).resolve()
     paths: list[Path] = []
     missing: list[Path] = []
@@ -142,7 +204,18 @@ def configured_test_zarrs(image_root: str | Path) -> list[Path]:
 
 
 def volume_file_id(image_zarr: str | Path, image_root: str | Path | None = None) -> str:
-    """Return a filesystem-safe identifier for reports and QC filenames."""
+    """Return a filesystem-safe identifier for reports and QC filenames.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = volume_file_id(image_zarr="image_zarr")
+    """
     return "__".join(relative_volume_path(image_zarr, image_root).parts)
 
 
@@ -151,7 +224,19 @@ def annotation_sample_dir(
     image_zarr: str | Path,
     image_root: str | Path | None = None,
 ) -> Path:
-    """Return the collision-free manual-mask folder for one source volume."""
+    """Return the collision-free manual-mask folder for one source volume.
+
+    Args:
+        mask_root (str | Path): Directory used for mask.
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        image_root (str | Path | None): Directory used for image. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = annotation_sample_dir(mask_root=Path("path/to/resource"), image_zarr="image_zarr")
+    """
     return Path(mask_root) / relative_volume_path(image_zarr, image_root)
 
 
@@ -175,21 +260,59 @@ class ReadinessReport:
 
     @property
     def passed(self) -> bool:
+        """Return passed for the supplied inputs.
+
+        Returns:
+            bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+        Example:
+            >>> instance = ReadinessReport(...)
+            >>> value = instance.passed
+        """
         return not any(item.status == "FAIL" for item in self.checks)
 
     @property
     def has_warnings(self) -> bool:
+        """Return has warnings for the supplied inputs.
+
+        Returns:
+            bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+        Example:
+            >>> instance = ReadinessReport(...)
+            >>> value = instance.has_warnings
+        """
         return any(item.status == "WARN" for item in self.checks)
 
     @property
     def status(self) -> str:
+        """Return status for the supplied inputs.
+
+        Returns:
+            str: Generated or resolved text value.
+
+        Example:
+            >>> instance = ReadinessReport(...)
+            >>> value = instance.status
+        """
         if not self.passed:
             return "FAIL"
         return "PASS_WITH_WARNINGS" if self.has_warnings else "PASS"
 
 
 def find_slice_mask(mask_sample_dir: Path, slice_1based: int) -> Path | None:
-    """Find one binary target-slice mask using supported standard names."""
+    """Find one binary target-slice mask using supported standard names.
+
+    Args:
+        mask_sample_dir (Path): Directory used for mask sample.
+        slice_1based (int): Numerical value controlling slice 1based.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_slice_mask(mask_sample_dir=Path("path/to/resource"), slice_1based=1)
+    """
     names = (
         f"z{slice_1based:03d}_mask.tif",
         f"z{slice_1based:03d}_mask.tiff",
@@ -206,6 +329,18 @@ def find_slice_mask(mask_sample_dir: Path, slice_1based: int) -> Path | None:
 
 
 def _small_spatial_sample(array: zarr.Array, axes: str) -> np.ndarray:
+    """Return small spatial sample for the supplied inputs.
+
+    Args:
+        array (zarr.Array): Array containing array.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _small_spatial_sample(array=image_array, axes="axes")
+    """
     index: list[Any] = []
     for axis, size_value in zip(axes, array.shape):
         size = int(size_value)
@@ -221,6 +356,17 @@ def _small_spatial_sample(array: zarr.Array, axes: str) -> np.ndarray:
 
 
 def _check_validation_report(image_zarr: Path) -> CheckItem:
+    """Check validation report for validity and expected structure.
+
+    Args:
+        image_zarr (Path): Filesystem path used for image Zarr.
+
+    Returns:
+        CheckItem: Result produced by the operation.
+
+    Example:
+        >>> result = _check_validation_report(image_zarr=Path("path/to/resource"))
+    """
     report = image_zarr.parent / "ome_zarr_validation.txt"
     if not report.is_file():
         return CheckItem("source OME-Zarr validation report", "WARN", f"missing: {report}")
@@ -238,7 +384,25 @@ def check_3d_sample(
     expected_channels: int = 3,
     require_masks: bool = True,
 ) -> ReadinessReport:
-    """Validate one 3D OME-Zarr and warn when a manual target mask is absent."""
+    """Validate one 3D OME-Zarr and warn when a manual target mask is absent.
+
+    Args:
+        image_zarr (str | Path): Filesystem path used for image Zarr.
+        level (int): Numerical value controlling level.
+        mask_root (str | Path | None): Directory used for mask. ``None`` selects the function's default behavior.
+        training_slices_1based (Sequence[int] | None): Numerical value controlling training slices 1based. ``None`` selects the function's default behavior.
+        expected_channels (int): Numerical value controlling expected channels. Defaults to ``3``.
+        require_masks (bool): Boolean flag controlling whether to masks. Defaults to ``True``.
+
+    Returns:
+        ReadinessReport: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = check_3d_sample(image_zarr="image_zarr", level=1)
+    """
     image_zarr = Path(image_zarr).resolve()
     sample = volume_key(image_zarr)
     if training_slices_1based is None:
@@ -353,7 +517,18 @@ def check_3d_sample(
 
 
 def write_readiness_report(report: ReadinessReport, output_dir: str | Path) -> tuple[Path, Path]:
-    """Write human-readable TXT and machine-readable JSON reports."""
+    """Write human-readable TXT and machine-readable JSON reports.
+
+    Args:
+        report (ReadinessReport): Value specifying report for the operation.
+        output_dir (str | Path): Directory where generated resources are written.
+
+    Returns:
+        tuple[Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = write_readiness_report(report=..., output_dir=Path("path/to/resource"))
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     status = report.status

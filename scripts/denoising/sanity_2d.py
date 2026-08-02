@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for sanity two-dimensional data.
+
+Examples
+--------
+Run the configured two-dimensional OME-Zarr sanity check:
+
+    python scripts/denoising/sanity_2d.py
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +22,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -58,14 +79,36 @@ OMEZARR_PATH = Path(
 
 
 def percentile_norm01(x: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
-    """Compatibility wrapper around the shared percentile normalization helper."""
+    """Compatibility wrapper around the shared percentile normalization helper.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = percentile_norm01(x=image_array)
+    """
     return normalize01_percentile(x, p_lo=p_low, p_hi=p_high)
 
 
 def load_highest_res_array(zarr_path: Path) -> np.ndarray:
-    """
-    Loads highest-res dataset.
-    Typical NGFF layout: root['0'] is the full-res array.
+    """Loads highest-res dataset. Typical NGFF layout: root['0'] is the full-res array.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_highest_res_array(zarr_path=Path("path/to/resource"))
     """
     root = zarr.open(str(zarr_path), mode="r")
 
@@ -86,11 +129,21 @@ def load_highest_res_array(zarr_path: Path) -> np.ndarray:
 
 
 def choose_random_2d_slice(arr: np.ndarray) -> np.ndarray:
-    """
-    Returns a 3D array with channels + 2D spatial image:
-      either (C,Y,X) or (Y,X,C)
+    """Returns a 3D array with channels + 2D spatial image: either (C,Y,X) or (Y,X,C).
 
     If arr has extra dims (T/Z), it picks random indices for those dims.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_random_2d_slice(arr=image_array)
     """
     a = np.asarray(arr)
 
@@ -124,8 +177,19 @@ def choose_random_2d_slice(arr: np.ndarray) -> np.ndarray:
 
 
 def split_channels(a3: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Extract channel 0 and 1 from either (C,Y,X) or (Y,X,C).
+    """Extract channel 0 and 1 from either (C,Y,X) or (Y,X,C).
+
+    Args:
+        a3 (np.ndarray): Array containing a3.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = split_channels(a3=image_array)
     """
     if a3.shape[0] <= 4:  # (C,Y,X)
         if a3.shape[0] < 2:
@@ -141,6 +205,14 @@ def split_channels(a3: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     if not OMEZARR_PATH.exists():
         raise FileNotFoundError(f"OME-Zarr not found: {OMEZARR_PATH}")
 

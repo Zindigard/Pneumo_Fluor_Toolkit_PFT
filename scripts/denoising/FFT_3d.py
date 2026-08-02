@@ -1,3 +1,21 @@
+r"""Provide command-line and programmatic utilities for Fourier-transform result three-dimensional data.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/FFT_3d.py --help
+
+Representative execution:
+
+    python scripts/denoising/FFT_3d.py \
+        --root results/img/3d_data \
+        --level 0 \
+        --out results/example_output \
+        --repo . \
+        --time 0
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +31,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -60,6 +90,15 @@ def _import_pft_decoder(repo_root: Path):
 
     The ``repo_root`` argument is retained for compatibility with existing
     callers. Repository imports are configured once at module startup.
+
+    Args:
+        repo_root (Path): Directory used for repo.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _import_pft_decoder(repo_root=Path("path/to/resource"))
     """
     del repo_root
     from PFT.core_prog_parts.decoder_omezar import decode_omezarr_volume
@@ -68,6 +107,17 @@ def _import_pft_decoder(repo_root: Path):
 
 
 def find_omezarr_store(sample_dir: Path) -> Optional[Path]:
+    """Find OME-Zarr store in the available data or project structure.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Optional[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_omezarr_store(sample_dir=Path("path/to/resource"))
+    """
     preferred = sample_dir / "image.ome.zarr"
     if preferred.is_dir():
         return preferred
@@ -81,6 +131,23 @@ def find_omezarr_store(sample_dir: Path) -> Optional[Path]:
 
 
 def pick_evenly_spaced_slices(s0: int, s1: int, n: int) -> List[int]:
+    """Return pick evenly spaced slices for the supplied inputs.
+
+    Args:
+        s0 (int): Numerical value controlling s0.
+        s1 (int): Numerical value controlling s1.
+        n (int): Numerical value controlling n.
+
+    Returns:
+        List[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = pick_evenly_spaced_slices(
+        ...     s0=1,
+        ...     s1=1,
+        ...     n=1,
+        ... )
+    """
     if s1 < s0:
         s0, s1 = s1, s0
     if s0 == s1:
@@ -112,6 +179,19 @@ def pick_evenly_spaced_slices(s0: int, s1: int, n: int) -> List[int]:
 
 
 def percentile_norm_uint16(img: np.ndarray, p_low=1.0, p_high=99.8) -> np.ndarray:
+    """Return percentile norm uint16 for the supplied inputs.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        p_low (Any): Value specifying p low for the operation. Defaults to ``1.0``.
+        p_high (Any): Value specifying p high for the operation. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = percentile_norm_uint16(img=image_array)
+    """
     x = img.astype(np.float32, copy=False)
     lo = float(np.percentile(x, p_low))
     hi = float(np.percentile(x, p_high))
@@ -124,10 +204,38 @@ def percentile_norm_uint16(img: np.ndarray, p_low=1.0, p_high=99.8) -> np.ndarra
 
 def rgb_composite_uint16(c0, c1, c2) -> np.ndarray:
     # R=c2, G=c1, B=c0
+    """Return RGB representation composite uint16 for the supplied inputs.
+
+    Args:
+        c0 (Any): Value specifying c0 for the operation.
+        c1 (Any): Value specifying c1 for the operation.
+        c2 (Any): Value specifying c2 for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = rgb_composite_uint16(
+        ...     c0=...,
+        ...     c1=...,
+        ...     c2=...,
+        ... )
+    """
     return np.stack([c2, c1, c0], axis=-1).astype(np.uint16, copy=False)
 
 
 def fft_image_uint16(img: np.ndarray) -> np.ndarray:
+    """Return Fourier-transform result image uint16 for the supplied inputs.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = fft_image_uint16(img=image_array)
+    """
     x = img.astype(np.float32, copy=False)
     F = np.fft.fftshift(np.fft.fft2(x))
     mag = np.log1p(np.abs(F))
@@ -139,6 +247,18 @@ def fft_image_uint16(img: np.ndarray) -> np.ndarray:
 
 
 def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
+    """Return safe corr for the supplied inputs.
+
+    Args:
+        a (np.ndarray): Array containing a.
+        b (np.ndarray): Array containing b.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _safe_corr(a=image_array, b=image_array)
+    """
     a = a.ravel().astype(np.float32, copy=False)
     b = b.ravel().astype(np.float32, copy=False)
     sa = float(np.std(a))
@@ -150,6 +270,17 @@ def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def neighbor_corr(img: np.ndarray) -> float:
+    """Return neighbor corr for the supplied inputs.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = neighbor_corr(img=image_array)
+    """
     if img.shape[0] < 2 or img.shape[1] < 2:
         return 0.0
     return 0.5 * (
@@ -159,6 +290,17 @@ def neighbor_corr(img: np.ndarray) -> float:
 
 
 def fft_peak_score(img: np.ndarray) -> float:
+    """Return Fourier-transform result peak score for the supplied inputs.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = fft_peak_score(img=image_array)
+    """
     x = img.astype(np.float32, copy=False)
     F = np.fft.fftshift(np.fft.fft2(x))
     mag = np.abs(F)
@@ -174,10 +316,16 @@ def fft_peak_score(img: np.ndarray) -> float:
 
 
 def fft_directionality(img: np.ndarray) -> Tuple[float, float]:
-    """
+    """Returns: score in [0..1] (higher => more directional/anisotropic in frequency domain), angle_deg (dominant direction, 180°-periodic).
+
+    Args:
+        img (np.ndarray): Array containing img.
+
     Returns:
-      score in [0..1] (higher => more directional/anisotropic in frequency domain),
-      angle_deg (dominant direction, 180°-periodic).
+        Tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = fft_directionality(img=image_array)
     """
     x = img.astype(np.float32, copy=False)
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -214,8 +362,17 @@ def fft_directionality(img: np.ndarray) -> Tuple[float, float]:
 
 
 def _get_channel_safe(vol_czyx: np.ndarray, c: int) -> np.ndarray:
-    """
-    Return vol[c] if exists else zeros with shape (Z,Y,X).
+    """Return vol[c] if exists else zeros with shape (Z,Y,X).
+
+    Args:
+        vol_czyx (np.ndarray): Array containing vol czyx.
+        c (int): Numerical value controlling c.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _get_channel_safe(vol_czyx=image_array, c=1)
     """
     C, Z, H, W = vol_czyx.shape
     if 0 <= c < C:
@@ -224,6 +381,14 @@ def _get_channel_safe(vol_czyx: np.ndarray, c: int) -> np.ndarray:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser()
 
     

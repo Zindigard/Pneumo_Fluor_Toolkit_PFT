@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for cellpose finetune two-dimensional data time core."""
+
 
 from __future__ import annotations
 
@@ -16,10 +18,33 @@ from PFT.core_prog_parts.omezarr_utils import save_ome_zarr
 
 
 def _center_index(n: int) -> int:
+    """Return center index for the supplied inputs.
+
+    Args:
+        n (int): Numerical value controlling n.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _center_index(n=1)
+    """
     return max(0, int(n) // 2)
 
 
 def _take_first_time(arr: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
+    """Return take first time for the supplied inputs.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _take_first_time(arr=image_array, axes="axes")
+    """
     axes = axes.lower()
     if 't' not in axes:
         return arr, axes
@@ -28,6 +53,21 @@ def _take_first_time(arr: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _move_yx_last(arr: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
+    """Return move yx last for the supplied inputs.
+
+    Args:
+        arr (np.ndarray): Array containing arr.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _move_yx_last(arr=image_array, axes="axes")
+    """
     axes = axes.lower()
     if axes.endswith('yx'):
         return arr, axes
@@ -39,6 +79,19 @@ def _move_yx_last(arr: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _normalize_float32(img: np.ndarray, p_low: float = 1.0, p_high: float = 99.8) -> np.ndarray:
+    """Normalize float32 using the configured procedure.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        p_low (float): Numerical value controlling p low. Defaults to ``1.0``.
+        p_high (float): Numerical value controlling p high. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_float32(img=image_array)
+    """
     x = np.asarray(img, dtype=np.float32)
     if x.size == 0:
         return x
@@ -51,6 +104,17 @@ def _normalize_float32(img: np.ndarray, p_low: float = 1.0, p_high: float = 99.8
 
 
 def _mask_candidates(sample_dir: Path) -> Iterable[Path]:
+    """Return mask candidates for the supplied inputs.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Iterable[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _mask_candidates(sample_dir=Path("path/to/resource"))
+    """
     names = [
         'mask.tif', 'mask.tiff', 'masks.tif', 'masks.tiff',
         'label.tif', 'label.tiff', 'labels.tif', 'labels.tiff',
@@ -66,22 +130,75 @@ def _mask_candidates(sample_dir: Path) -> Iterable[Path]:
 
 
 def _finetune_mask_root(project_root: Path, dataset: str) -> Path:
+    """Return finetune mask root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _finetune_mask_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     return project_root / 'results' / 'segmentation_finetuning_masks' / normalize_dataset_name(dataset)
 
 
 def _model_dir(project_root: Path, dataset: str) -> Path:
+    """Return model dir for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _model_dir(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     out = project_root / 'models' / f'cellpose_{normalize_dataset_name(dataset)}'
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
 def _prediction_root(project_root: Path, dataset: str) -> Path:
+    """Return prediction root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _prediction_root(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     out = project_root / 'results' / 'segmentation_cellpose' / normalize_dataset_name(dataset)
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
 def _candidate_image_paths(project_root: Path, dataset: str, sample: str) -> list[Path]:
+    """Return candidate image paths for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _candidate_image_paths(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     ds = normalize_dataset_name(dataset)
     return [
         project_root / 'results' / 'denoised_images' / ds / sample / 'image.ome.zarr',
@@ -96,6 +213,26 @@ def _candidate_image_paths(project_root: Path, dataset: str, sample: str) -> lis
 
 
 def _resolve_image(project_root: Path, dataset: str, sample: str) -> Path:
+    """Resolve image from the supplied configuration.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _resolve_image(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     for p in _candidate_image_paths(project_root, dataset, sample):
         if p.exists():
             return p
@@ -103,6 +240,21 @@ def _resolve_image(project_root: Path, dataset: str, sample: str) -> Path:
 
 
 def _list_input_images(project_root: Path, dataset: str) -> list[Path]:
+    """List input images available in the configured project structure.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _list_input_images(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     ds = normalize_dataset_name(dataset)
     roots = [
         project_root / 'results' / 'denoised_images' / ds,
@@ -129,6 +281,17 @@ def _list_input_images(project_root: Path, dataset: str) -> list[Path]:
 
 
 def _load_ome(path: Path) -> tuple[np.ndarray, str]:
+    """Load ome from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _load_ome(path=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(path, level=0, as_numpy=False)
     arr = np.asarray(arr)
     axes = str(axes).lower()
@@ -137,6 +300,21 @@ def _load_ome(path: Path) -> tuple[np.ndarray, str]:
 
 
 def _extract_2d_image(path: Path, *, channels: tuple[int, ...]) -> np.ndarray:
+    """Extract two-dimensional data image from the supplied data.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        channels (tuple[int, ...]): Channel indices or identifiers selected for processing.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _extract_2d_image(path=Path("path/to/resource"), channels=1)
+    """
     arr, axes = _load_ome(path)
     arr, axes = _move_yx_last(arr, axes)
     if 'z' in axes:
@@ -161,6 +339,20 @@ def _extract_2d_image(path: Path, *, channels: tuple[int, ...]) -> np.ndarray:
 
 
 def _load_2d_mask(mask_path: Path) -> np.ndarray:
+    """Load two-dimensional data mask from persistent storage.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_2d_mask(mask_path=Path("path/to/resource"))
+    """
     m = np.asarray(tiff.imread(mask_path))
     if m.ndim == 3:
         m = m[_center_index(m.shape[0])]
@@ -170,6 +362,21 @@ def _load_2d_mask(mask_path: Path) -> np.ndarray:
 
 
 def _extract_3d_volume_as_slices(path: Path, *, channels: tuple[int, ...]) -> np.ndarray:
+    """Extract three-dimensional data volume as slices from the supplied data.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        channels (tuple[int, ...]): Channel indices or identifiers selected for processing.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _extract_3d_volume_as_slices(path=Path("path/to/resource"), channels=1)
+    """
     arr, axes = _load_ome(path)
     arr, axes = ensure_czyx(arr, axes)
     arr = np.asarray(arr)
@@ -186,6 +393,20 @@ def _extract_3d_volume_as_slices(path: Path, *, channels: tuple[int, ...]) -> np
 
 
 def _load_3d_mask(mask_path: Path) -> np.ndarray:
+    """Load three-dimensional data mask from persistent storage.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_3d_mask(mask_path=Path("path/to/resource"))
+    """
     m = np.asarray(tiff.imread(mask_path))
     if m.ndim == 4:
         # If mask accidentally has channel axis, keep first channel.
@@ -196,6 +417,22 @@ def _load_3d_mask(mask_path: Path) -> np.ndarray:
 
 
 def _collect_training_pairs(project_root: Path, dataset: str) -> list[tuple[Path, Path, str]]:
+    """Collect training pairs from the available inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[tuple[Path, Path, str]]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _collect_training_pairs(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     root = _finetune_mask_root(project_root, dataset)
     if not root.exists():
         raise FileNotFoundError(f"Fine-tuning mask folder not found: {root}")
@@ -215,6 +452,21 @@ def _collect_training_pairs(project_root: Path, dataset: str) -> list[tuple[Path
 
 
 def _find_default_model(project_root: Path, dataset: str) -> Path:
+    """Find default model in the available data or project structure.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_default_model(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     root = _model_dir(project_root, dataset)
     candidates = []
     for pattern in ('**/*.pth', '**/*cellpose*', '**/*_best*', '**/*'):
@@ -228,6 +480,23 @@ def _find_default_model(project_root: Path, dataset: str) -> Path:
 
 
 def _save_labels_omezarr_and_tiff(out_dir: Path, labels: np.ndarray, axes: str) -> Path:
+    """Save labels OME-Zarr and TIFF data to persistent storage.
+
+    Args:
+        out_dir (Path): Directory used for out.
+        labels (np.ndarray): Integer label image in which each positive value identifies one segmented object.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_labels_omezarr_and_tiff(
+        ...     out_dir=Path("path/to/resource"),
+        ...     labels=image_array,
+        ...     axes="axes",
+        ... )
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     labels = np.asarray(labels).astype(np.uint16 if np.max(labels) <= np.iinfo(np.uint16).max else np.uint32)
     tiff.imwrite(out_dir / 'labels.tif', labels)
@@ -239,6 +508,7 @@ def _save_labels_omezarr_and_tiff(out_dir: Path, labels: np.ndarray, axes: str) 
 
 @dataclass
 class CellposeFineTune2DTimeConfig:
+    """Store validated configuration or result data for cellpose fine tune2 dtime config."""
     project_root: Path | None = None
     dataset: str = '2d_time'
     pretrained_model: str = 'cpsam'
@@ -256,13 +526,52 @@ class CellposeFineTune2DTimeConfig:
     model_name: str = 'cellpose_2d_time'
 
     def root(self) -> Path:
+        """Return root for the supplied inputs.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = CellposeFineTune2DTimeConfig(...)
+            >>> result = instance.root()
+        """
         return self.project_root or find_project_root()
 
     def run_dir(self) -> Path:
+        """Run dir using the supplied configuration.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = CellposeFineTune2DTimeConfig(...)
+            >>> result = instance.run_dir()
+        """
         return _model_dir(self.root(), self.dataset)
 
 
 def _split_train_val(images: list[np.ndarray], labels: list[np.ndarray], names: list[str], fraction: float, seed: int):
+    """Split train val into the requested subsets.
+
+    Args:
+        images (list[np.ndarray]): Sequence or batch of input image arrays to process.
+        labels (list[np.ndarray]): Integer label image in which each positive value identifies one segmented object.
+        names (list[str]): Text value specifying names.
+        fraction (float): Numerical value controlling fraction.
+        seed (int): Random seed used to make sampling, splitting, or initialization reproducible.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _split_train_val(
+        ...     images=image_array,
+        ...     labels=image_array,
+        ...     names="names",
+        ...     fraction=0.5,
+        ...     seed=1,
+        ... )
+    """
     idx = list(range(len(images)))
     random.Random(seed).shuffle(idx)
     n_val = max(1, int(round(len(idx) * fraction))) if len(idx) > 1 else 0
@@ -277,6 +586,20 @@ def _split_train_val(images: list[np.ndarray], labels: list[np.ndarray], names: 
 
 
 def finetune_cellpose(cfg: CellposeFineTune2DTimeConfig) -> Path:
+    """Return finetune cellpose for the supplied inputs.
+
+    Args:
+        cfg (CellposeFineTune2DTimeConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = finetune_cellpose(cfg=config)
+    """
     from cellpose import models, train
 
     project_root = cfg.root()

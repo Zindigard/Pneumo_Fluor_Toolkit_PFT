@@ -21,22 +21,44 @@ from PFT.core_prog_parts.omezarr_utils import save_ome_zarr_next_to_outputs
 
 
 def _repo_root() -> Path:
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _repo_root()
+    """
     return find_project_root()
 
 
 def _dataset_dir(dataset: str) -> Path:
-    """
-    Supported dataset names:
-      - "2d_time" (blue only)
-      - "2d_wga_dapi" (2 channels)
-      - also accepts typo aliases: "2d_dpa_wagi", "2d_dpa_wga", "2d_dpa_wagi"
+    """Supported dataset names: - "2d_time" (blue only) - "2d_wga_dapi" (2 channels) - also accepts typo aliases: "2d_dpa_wagi", "2d_dpa_wga", "2d_dpa_wagi".
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _dataset_dir(dataset="2d_time")
     """
     return dataset_img_dir(normalize_dataset_name(dataset), _repo_root())
 
 
 def list_omezarr_images(dataset: str) -> list[Path]:
-    """List available inputs for this workflow."""
+    """List available inputs for this workflow.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_omezarr_images(dataset="2d_time")
+    """
     ds_dir = _dataset_dir(dataset)
     if not ds_dir.exists():
         return []
@@ -66,7 +88,15 @@ class NotchParams:
     smooth: bool = True
 
     def validate(self) -> None:
-        """Raise ``ValueError`` when the notch definition is invalid."""
+        """Raise ``ValueError`` when the notch definition is invalid.
+
+        Raises:
+            ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+        Example:
+            >>> instance = NotchParams(...)
+            >>> instance.validate()
+        """
         if not self.angles_deg:
             raise ValueError("angles_deg must contain at least one angle")
         if self.half_width_deg <= 0.0 or self.half_width_deg > 90.0:
@@ -81,7 +111,17 @@ class NotchParams:
 
 def _to_numpy(a) -> np.ndarray:
     # load_ome_zarr may return dask arrays; enforce numpy
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        a (Any): Value specifying a for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _to_numpy(a=...)
+    """
     try:
         import dask.array as da  # type: ignore
         if isinstance(a, da.Array):
@@ -92,9 +132,20 @@ def _to_numpy(a) -> np.ndarray:
 
 
 def _ensure_cyx(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
-    """
-    Return array where spatial dims are last (.., y, x). The writer already saves yx last,
-    but this makes the logic robust if user provides other arrays.
+    """Return array where spatial dims are last (.., y, x). The writer already saves yx last, but this makes the logic robust if user provides other arrays.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _ensure_cyx(x=image_array, axes="axes")
     """
     if "y" in axes and "x" in axes and axes.endswith("yx"):
         return x, axes
@@ -108,7 +159,17 @@ def _ensure_cyx(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _fft2_logmag(img2d: np.ndarray) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _fft2_logmag(img2d=image_array)
+    """
     x = img2d.astype(np.float32, copy=False)
     x = x - float(np.mean(x))
     F = np.fft.fftshift(np.fft.fft2(x))
@@ -117,7 +178,18 @@ def _fft2_logmag(img2d: np.ndarray) -> np.ndarray:
 
 
 def _angle_grid(h: int, w: int) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        h (int): Numerical value controlling h.
+        w (int): Numerical value controlling w.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _angle_grid(h=1, w=1)
+    """
     cy = float(h // 2)
     cx = float(w // 2)
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -126,7 +198,18 @@ def _angle_grid(h: int, w: int) -> np.ndarray:
 
 
 def _radius_grid(h: int, w: int) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        h (int): Numerical value controlling h.
+        w (int): Numerical value controlling w.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _radius_grid(h=1, w=1)
+    """
     cy = float(h // 2)
     cx = float(w // 2)
     yy, xx = np.indices((h, w), dtype=np.float32)
@@ -140,6 +223,19 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
     The returned array equals one outside the selected angular and radial
     regions. Inside each selected wedge it is attenuated according to ``depth``
     and ``smooth``.
+
+    Args:
+        shape_hw (tuple[int, int]): Numerical value controlling shape hw.
+        p (NotchParams): Filesystem path to the resource being processed.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = build_wedge_mask(shape_hw=1, p=...)
     """
     p.validate()
     h, w = shape_hw
@@ -153,7 +249,18 @@ def build_wedge_mask(shape_hw: tuple[int, int], p: NotchParams) -> np.ndarray:
 
     # angular distance helper: smallest absolute difference modulo 360
     def ang_dist(a: np.ndarray, a0: float) -> np.ndarray:
-        """Helper function used by this module."""
+        """Helper function used by this module.
+
+        Args:
+            a (np.ndarray): Array containing a.
+            a0 (float): Numerical value controlling a0.
+
+        Returns:
+            np.ndarray: Array containing the processed result.
+
+        Example:
+            >>> result = ang_dist(a=image_array, a0=0.5)
+        """
         d = (a - a0 + 180.0) % 360.0 - 180.0
         return np.abs(d)
 
@@ -190,6 +297,19 @@ def apply_notch_filter_2d(img2d: np.ndarray, p: NotchParams) -> tuple[np.ndarray
     """Apply directional Fourier attenuation to one ``(Y, X)`` image plane.
 
     Returns the filtered ``float32`` image and the transfer function used.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+        p (NotchParams): Filesystem path to the resource being processed.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = apply_notch_filter_2d(img2d=image_array, p=...)
     """
     p.validate()
     x = np.asarray(img2d, dtype=np.float32)
@@ -222,6 +342,28 @@ def run_notch_on_dataset(
 
     ``apply=False`` performs dataset discovery and output preparation without
     changing pixel values. The function returns the output directory.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        params (NotchParams): Value specifying params for the operation.
+        apply (bool): Boolean flag controlling apply.
+        channel_mode (Literal["auto", "blue", "green"]): Value specifying channel mode for the operation. Defaults to ``"auto"``.
+        image_index (int | None): Zero-based index selecting image. ``None`` selects the function's default behavior.
+        out_subdir_name (str | None): Text value specifying out subdir name. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_notch_on_dataset(
+        ...     dataset="2d_time",
+        ...     params=...,
+        ...     apply=True,
+        ... )
     """
     zarrs = list_omezarr_images(dataset)
     if not zarrs:
@@ -249,7 +391,14 @@ def run_notch_on_dataset(
         n_c = 1
 
     def _pick_channels() -> list[int]:
-        """Internal helper used by this module."""
+        """Internal helper used by this module.
+
+        Returns:
+            list[int]: Collection containing the generated or selected values.
+
+        Example:
+            >>> result = _pick_channels()
+        """
         if channel_mode == "blue":
             return [0]
         if channel_mode == "green":

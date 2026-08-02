@@ -1,4 +1,4 @@
-"""
+r"""
 Interactive manual labeling for PFT 2D and sparse 2.5D U-Net training.
 
 The script supports two independent annotation workflows.
@@ -37,11 +37,30 @@ Open the 3D selector directly
 
 Open a specific OME-Zarr at its configured target
 --------------------------------------------------
-    python scripts/segmentation/labeling.py \
-        --mode 3d \
-        --zarr "results/img/3d_data/<experiment>/<sample>/image.ome.zarr"
+    python scripts/segmentation/labeling.py         --mode 3d         --zarr "results/img/3d_data/<experiment>/<sample>/image.ome.zarr"
 
 The target slice and output ``zNNN_mask.tif`` name are resolved automatically.
+
+
+Examples
+--------
+Interactive workflow selection:
+
+    python scripts/segmentation/labeling.py
+
+Open one two-dimensional sample for binary U-Net labeling:
+
+    python scripts/segmentation/labeling.py \
+        --mode 2d \
+        --dataset 2d_time \
+        --sample WT_HADA_NHS_40min_ROI1_SIM
+
+Open one three-dimensional stack at its configured target slice:
+
+    python scripts/segmentation/labeling.py \
+        --mode 3d \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --level 0
 """
 
 from __future__ import annotations
@@ -107,7 +126,20 @@ class Composite3D:
 
 
 def find_project_root(start: Path) -> Path:
-    """Find the PFT repository root by searching parent directories."""
+    """Find the PFT repository root by searching parent directories.
+
+    Args:
+        start (Path): Filesystem path used for start.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root(start=Path("path/to/resource"))
+    """
     resolved = start.resolve()
     for candidate in (resolved, *resolved.parents):
         if (candidate / "pyproject.toml").exists() and (candidate / "results").exists():
@@ -124,7 +156,22 @@ def choose_number(
     *,
     allow_exit: bool = True,
 ) -> int | None:
-    """Display a numbered terminal menu and return a zero-based selection."""
+    """Display a numbered terminal menu and return a zero-based selection.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        options (Sequence[str]): Text value specifying options.
+        allow_exit (bool): Boolean flag controlling whether to exit. Defaults to ``True``.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_number(title="title", options="options")
+    """
     if not options:
         raise RuntimeError(f"No options are available for: {title}")
 
@@ -154,7 +201,20 @@ def choose_number(
 
 
 def image_spatial_shape(image: np.ndarray) -> tuple[int, int]:
-    """Return Y and X dimensions of a grayscale or RGB annotation image."""
+    """Return Y and X dimensions of a grayscale or RGB annotation image.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        tuple[int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = image_spatial_shape(image=image_array)
+    """
     if image.ndim == 2:
         return int(image.shape[0]), int(image.shape[1])
     if image.ndim == 3 and image.shape[-1] in {3, 4}:
@@ -163,7 +223,21 @@ def image_spatial_shape(image: np.ndarray) -> tuple[int, int]:
 
 
 def load_existing_mask(mask_path: Path, expected_shape: tuple[int, int]) -> np.ndarray:
-    """Load an existing mask for correction or return an empty mask."""
+    """Load an existing mask for correction or return an empty mask.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+        expected_shape (tuple[int, int]): Numerical value controlling expected shape.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_existing_mask(mask_path=Path("path/to/resource"), expected_shape=1)
+    """
     if not mask_path.exists():
         return np.zeros(expected_shape, dtype=np.uint8)
 
@@ -180,7 +254,20 @@ def load_existing_mask(mask_path: Path, expected_shape: tuple[int, int]) -> np.n
 
 
 def to_rgb_uint8(image: np.ndarray) -> np.ndarray:
-    """Convert a grayscale or RGB microscopy image to display-ready RGB uint8."""
+    """Convert a grayscale or RGB microscopy image to display-ready RGB uint8.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = to_rgb_uint8(image=image_array)
+    """
     array = np.asarray(image)
     if array.ndim == 2:
         array = np.stack([array, array, array], axis=-1)
@@ -217,6 +304,25 @@ def annotate_with_napari(
     For 3D sparse annotation, previous and next composites are added as hidden
     context layers. The labels layer always corresponds only to the visible
     middle target slice.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        initial_mask (np.ndarray): Array containing initial mask.
+        title (str): Title displayed on the generated figure or report section.
+        brush_size (int): Size parameter controlling brush.
+        previous_image (np.ndarray | None): Array containing previous image. ``None`` selects the function's default behavior.
+        next_image (np.ndarray | None): Array containing next image. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = annotate_with_napari(
+        ...     image=image_array,
+        ...     initial_mask=image_array,
+        ...     title="title",
+        ...     brush_size=1,
+        ... )
     """
     import napari
 
@@ -262,13 +368,36 @@ def annotate_with_napari(
 
 
 def create_outline(mask: np.ndarray, thickness: int = 3) -> np.ndarray:
-    """Create a dilated outer boundary for visual quality control."""
+    """Create a dilated outer boundary for visual quality control.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        thickness (int): Numerical value controlling thickness. Defaults to ``3``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = create_outline(mask=image_array)
+    """
     boundaries = find_boundaries(mask.astype(bool), mode="outer")
     return binary_dilation(boundaries, disk(int(thickness)))
 
 
 def create_overlay(image: np.ndarray, mask: np.ndarray, thickness: int = 3) -> np.ndarray:
-    """Create RGB image with the mask boundary drawn in yellow."""
+    """Create RGB image with the mask boundary drawn in yellow.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        thickness (int): Numerical value controlling thickness. Defaults to ``3``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = create_overlay(image=image_array, mask=image_array)
+    """
     rgb = to_rgb_uint8(image)
     outline = create_outline(mask, thickness=thickness)
     output = rgb.copy()
@@ -284,7 +413,22 @@ def save_triptych(
     thickness: int = 3,
     original_title: str = "Original",
 ) -> None:
-    """Save original, outline overlay, and binary-mask quality-control panel."""
+    """Save original, outline overlay, and binary-mask quality-control panel.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        output_path (Path): Filesystem path where the generated result is written.
+        thickness (int): Numerical value controlling thickness. Defaults to ``3``.
+        original_title (str): Text value specifying original title. Defaults to ``"Original"``.
+
+    Example:
+        >>> save_triptych(
+        ...     image=image_array,
+        ...     mask=image_array,
+        ...     output_path=Path("path/to/resource"),
+        ... )
+    """
     import matplotlib.pyplot as plt
 
     rgb = to_rgb_uint8(image)
@@ -304,7 +448,18 @@ def save_triptych(
 
 
 def validate_binary_mask(mask: np.ndarray, expected_shape: tuple[int, int]) -> None:
-    """Validate shape, binary values, foreground, and background content."""
+    """Validate shape, binary values, foreground, and background content.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        expected_shape (tuple[int, int]): Numerical value controlling expected shape.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> validate_binary_mask(mask=image_array, expected_shape=1)
+    """
     if mask.shape != expected_shape:
         raise ValueError(
             f"Mask shape {mask.shape} does not match image shape {expected_shape}."
@@ -321,7 +476,17 @@ def validate_binary_mask(mask: np.ndarray, expected_shape: tuple[int, int]) -> N
 
 
 def confirm_existing_mask(mask_path: Path) -> bool:
-    """Ask whether an existing mask should be reopened and overwritten."""
+    """Ask whether an existing mask should be reopened and overwritten.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = confirm_existing_mask(mask_path=Path("path/to/resource"))
+    """
     if not mask_path.exists():
         return True
     response = input(
@@ -337,18 +502,86 @@ def confirm_existing_mask(mask_path: Path) -> bool:
 
 
 def sample_image_dir(project_root: Path, dataset: str, sample: str) -> Path:
+    """Return sample image dir for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = sample_image_dir(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     return project_root / "results" / "img" / dataset / sample
 
 
 def sample_mask_dir(project_root: Path, dataset: str, sample: str) -> Path:
+    """Return sample mask dir for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = sample_mask_dir(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     return project_root / "results" / "training_files" / "U-net" / dataset / sample
 
 
 def mask_path_for_sample(project_root: Path, dataset: str, sample: str) -> Path:
+    """Return mask path for sample for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = mask_path_for_sample(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     return sample_mask_dir(project_root, dataset, sample) / "mask.tif"
 
 
 def status_for_sample(project_root: Path, dataset: str, sample: str) -> str:
+    """Return status for sample for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = status_for_sample(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     image_dir = sample_image_dir(project_root, dataset, sample)
     mask_path = mask_path_for_sample(project_root, dataset, sample)
     if not image_dir.is_dir():
@@ -357,7 +590,20 @@ def status_for_sample(project_root: Path, dataset: str, sample: str) -> str:
 
 
 def list_candidate_images(sample_dir: Path) -> list[Path]:
-    """Find suitable normalized TIFF or PNG files for 2D annotation."""
+    """Find suitable normalized TIFF or PNG files for 2D annotation.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_candidate_images(sample_dir=Path("path/to/resource"))
+    """
     if not sample_dir.is_dir():
         raise FileNotFoundError(f"Processed sample directory not found: {sample_dir}")
 
@@ -387,7 +633,20 @@ def list_candidate_images(sample_dir: Path) -> list[Path]:
 
 
 def read_annotation_image(path: Path) -> np.ndarray:
-    """Read a 2D annotation image from YX, YXC, or CYX data."""
+    """Read a 2D annotation image from YX, YXC, or CYX data.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_annotation_image(path=Path("path/to/resource"))
+    """
     if path.suffix.lower() in {".tif", ".tiff"}:
         image = np.asarray(tiff.imread(str(path)))
     else:
@@ -407,6 +666,17 @@ def read_annotation_image(path: Path) -> np.ndarray:
 
 
 def choose_dataset_interactively(project_root: Path) -> str | None:
+    """Choose dataset interactively according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_dataset_interactively(project_root=Path("path/to/resource"))
+    """
     labels = []
     datasets = list(MISSING_MASK_SAMPLES)
     for dataset in datasets:
@@ -428,6 +698,23 @@ def choose_sample_2d_interactively(
     *,
     include_completed: bool,
 ) -> str | None:
+    """Choose sample two-dimensional data interactively according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        include_completed (bool): Boolean flag controlling whether to completed.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_sample_2d_interactively(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     include_completed=True,
+        ... )
+    """
     samples = list(MISSING_MASK_SAMPLES[dataset])
     if not include_completed:
         samples = [
@@ -447,6 +734,20 @@ def choose_sample_2d_interactively(
 
 
 def choose_image_interactively(sample_dir: Path) -> Path:
+    """Choose image interactively according to the configured criteria.
+
+    Args:
+        sample_dir (Path): Directory used for sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        KeyboardInterrupt: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_image_interactively(sample_dir=Path("path/to/resource"))
+    """
     candidates = list_candidate_images(sample_dir)
     if len(candidates) == 1:
         print(f"Using annotation image: {candidates[0].name}")
@@ -467,6 +768,31 @@ def save_annotation_outputs_2d(
     *,
     outline_thickness: int,
 ) -> Path:
+    """Save annotation outputs two-dimensional data to persistent storage.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        source_image_path (Path): Filesystem path associated with source image.
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        outline_thickness (int): Numerical value controlling outline thickness.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_annotation_outputs_2d(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     zarr_path=Path("path/to/resource"),
+        ...     source_image_path=Path("path/to/resource"),
+        ...     image=image_array,
+        ...     mask=image_array,
+        ...     outline_thickness=1,
+        ... )
+    """
     output_dir = sample_mask_dir(project_root, dataset, sample)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_mask = output_dir / "mask.tif"
@@ -510,6 +836,31 @@ def process_one_sample_2d(
     brush_size: int,
     outline_thickness: int,
 ) -> Path | None:
+    """Process one sample two-dimensional data using the configured workflow.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        brush_size (int): Size parameter controlling brush.
+        outline_thickness (int): Numerical value controlling outline thickness.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_one_sample_2d(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     brush_size=1,
+        ...     outline_thickness=1,
+        ... )
+    """
     if dataset not in MISSING_MASK_SAMPLES:
         raise ValueError(f"Unsupported dataset: {dataset}")
     if sample not in MISSING_MASK_SAMPLES[dataset]:
@@ -553,7 +904,20 @@ def process_one_sample_2d(
 
 
 def find_3d_zarrs(project_root: Path) -> list[Path]:
-    """Find all source 3D image.ome.zarr stores."""
+    """Find all source 3D image.ome.zarr stores.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_3d_zarrs(project_root=Path("path/to/resource"))
+    """
     image_root = project_root / "results" / "img" / "3d_data"
     if not image_root.is_dir():
         raise FileNotFoundError(f"3D image root does not exist: {image_root}")
@@ -564,12 +928,36 @@ def find_3d_zarrs(project_root: Path) -> list[Path]:
 
 
 def sample_name_for_zarr(zarr_path: Path) -> str:
-    """Return the leaf sample folder name for display."""
+    """Return the leaf sample folder name for display.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = sample_name_for_zarr(zarr_path=Path("path/to/resource"))
+    """
     return zarr_path.parent.name
 
 
 def relative_volume_path_3d(project_root: Path, zarr_path: Path) -> Path:
-    """Return the collision-free experiment/sample path below results/img/3d_data."""
+    """Return the collision-free experiment/sample path below results/img/3d_data.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = relative_volume_path_3d(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     image_root = (project_root / "results" / "img" / "3d_data").resolve()
     sample_dir = Path(zarr_path).resolve().parent
     try:
@@ -587,12 +975,34 @@ def relative_volume_path_3d(project_root: Path, zarr_path: Path) -> Path:
 
 
 def volume_key_3d(project_root: Path, zarr_path: Path) -> str:
-    """Return a unique experiment/sample identifier for display and splitting."""
+    """Return a unique experiment/sample identifier for display and splitting.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = volume_key_3d(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     return relative_volume_path_3d(project_root, zarr_path).as_posix()
 
 
 def configured_target_slice_3d(project_root: Path, zarr_path: Path) -> int:
-    """Resolve the single mapped target slice from the shared 3D configuration."""
+    """Resolve the single mapped target slice from the shared 3D configuration.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = configured_target_slice_3d(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     source_root = project_root / "src"
     if str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))
@@ -603,6 +1013,18 @@ def configured_target_slice_3d(project_root: Path, zarr_path: Path) -> int:
 
 
 def mask_dir_3d(project_root: Path, zarr_path: Path) -> Path:
+    """Return mask dir three-dimensional data for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = mask_dir_3d(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     return (
         project_root
         / "results"
@@ -614,15 +1036,56 @@ def mask_dir_3d(project_root: Path, zarr_path: Path) -> Path:
 
 
 def mask_path_3d(project_root: Path, zarr_path: Path, slice_1based: int) -> Path:
+    """Return mask path three-dimensional data for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        slice_1based (int): Numerical value controlling slice 1based.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = mask_path_3d(
+        ...     project_root=Path("path/to/resource"),
+        ...     zarr_path=Path("path/to/resource"),
+        ...     slice_1based=1,
+        ... )
+    """
     return mask_dir_3d(project_root, zarr_path) / f"z{slice_1based:03d}_mask.tif"
 
 
 def completed_target_count(project_root: Path, zarr_path: Path) -> int:
+    """Return completed target count for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = completed_target_count(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     target = configured_target_slice_3d(project_root, zarr_path)
     return int(mask_path_3d(project_root, zarr_path, target).exists())
 
 
 def relative_zarr_label(project_root: Path, zarr_path: Path) -> str:
+    """Return relative Zarr label for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = relative_zarr_label(project_root=Path("path/to/resource"), zarr_path=Path("path/to/resource"))
+    """
     return volume_key_3d(project_root, zarr_path)
 
 
@@ -631,6 +1094,18 @@ def choose_zarr_3d_interactively(
     *,
     include_completed: bool,
 ) -> Path | None:
+    """Choose Zarr three-dimensional data interactively according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        include_completed (bool): Boolean flag controlling whether to completed.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = choose_zarr_3d_interactively(project_root=Path("path/to/resource"), include_completed=True)
+    """
     stores = find_3d_zarrs(project_root)
     visible: list[Path] = []
     labels: list[str] = []
@@ -658,6 +1133,23 @@ def choose_target_slice_interactively(
     *,
     include_completed: bool,
 ) -> int | None:
+    """Choose target slice interactively according to the configured criteria.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        include_completed (bool): Boolean flag controlling whether to completed.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = choose_target_slice_interactively(
+        ...     project_root=Path("path/to/resource"),
+        ...     zarr_path=Path("path/to/resource"),
+        ...     include_completed=True,
+        ... )
+    """
     target = configured_target_slice_3d(project_root, zarr_path)
     exists = mask_path_3d(project_root, zarr_path, target).exists()
     if exists and not include_completed:
@@ -670,7 +1162,20 @@ def choose_target_slice_interactively(
 
 
 def _resolve_rgb_assignment(wavelength_nm: float) -> tuple[int, str]:
-    """Map wavelength to the nearest fixed RGB display channel."""
+    """Map wavelength to the nearest fixed RGB display channel.
+
+    Args:
+        wavelength_nm (float): Numerical value controlling wavelength nm.
+
+    Returns:
+        tuple[int, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _resolve_rgb_assignment(wavelength_nm=0.5)
+    """
     wavelength, rgb_index, colour = min(
         WAVELENGTH_TO_RGB,
         key=lambda item: abs(float(wavelength_nm) - item[0]),
@@ -686,7 +1191,20 @@ def _resolve_rgb_assignment(wavelength_nm: float) -> tuple[int, str]:
 def _normalize_channel_context(
     channel_zyx: np.ndarray,
 ) -> tuple[np.ndarray, float, float]:
-    """Normalize three context planes together for consistent display."""
+    """Normalize three context planes together for consistent display.
+
+    Args:
+        channel_zyx (np.ndarray): Array containing channel zyx.
+
+    Returns:
+        tuple[np.ndarray, float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_channel_context(channel_zyx=image_array)
+    """
     values = np.asarray(channel_zyx, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -706,7 +1224,27 @@ def load_3d_composite_context(
     level: int,
     slice_1based: int,
 ) -> Composite3D:
-    """Load Z-1/Z/Z+1 only and construct wavelength-aware RGB composites."""
+    """Load Z-1/Z/Z+1 only and construct wavelength-aware RGB composites.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        level (int): Numerical value controlling level.
+        slice_1based (int): Numerical value controlling slice 1based.
+
+    Returns:
+        Composite3D: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_3d_composite_context(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     level=1,
+        ...     slice_1based=1,
+        ... )
+    """
     import zarr
 
     from PFT.core_prog_parts.decoder_omezar import extract_ome_zarr_meta_for_compare
@@ -805,7 +1343,31 @@ def save_annotation_outputs_3d(
     *,
     outline_thickness: int,
 ) -> Path:
-    """Save one sparse 2.5D target mask and slice-specific QC files."""
+    """Save one sparse 2.5D target mask and slice-specific QC files.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        slice_1based (int): Numerical value controlling slice 1based.
+        level (int): Numerical value controlling level.
+        composite (Composite3D): Value specifying composite for the operation.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        outline_thickness (int): Numerical value controlling outline thickness.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_annotation_outputs_3d(
+        ...     project_root=Path("path/to/resource"),
+        ...     zarr_path=Path("path/to/resource"),
+        ...     slice_1based=1,
+        ...     level=1,
+        ...     composite=...,
+        ...     mask=image_array,
+        ...     outline_thickness=1,
+        ... )
+    """
     sample = volume_key_3d(project_root, zarr_path)
     output_dir = mask_dir_3d(project_root, zarr_path)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -876,7 +1438,29 @@ def process_one_sample_3d(
     brush_size: int,
     outline_thickness: int,
 ) -> Path | None:
-    """Open one OME-Zarr target slice in napari and save its binary mask."""
+    """Open one OME-Zarr target slice in napari and save its binary mask.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        slice_1based (int): Numerical value controlling slice 1based.
+        level (int): Numerical value controlling level.
+        brush_size (int): Size parameter controlling brush.
+        outline_thickness (int): Numerical value controlling outline thickness.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = process_one_sample_3d(
+        ...     project_root=Path("path/to/resource"),
+        ...     zarr_path=Path("path/to/resource"),
+        ...     slice_1based=1,
+        ...     level=1,
+        ...     brush_size=1,
+        ...     outline_thickness=1,
+        ... )
+    """
     zarr_path = Path(zarr_path).resolve()
     sample = volume_key_3d(project_root, zarr_path)
 
@@ -938,6 +1522,14 @@ def process_one_sample_3d(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Create or correct PFT 2D masks and sparse 3D/2.5D masks in napari. "
@@ -998,6 +1590,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def infer_mode(args: argparse.Namespace) -> str | None:
+    """Infer mode from the supplied model inputs.
+
+    Args:
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Returns:
+        str | None: Generated or resolved text value.
+
+    Example:
+        >>> result = infer_mode(args=...)
+    """
     if args.mode:
         return str(args.mode)
     if args.zarr is not None or args.slice_1based is not None:
@@ -1017,6 +1620,18 @@ def infer_mode(args: argparse.Namespace) -> str | None:
 
 
 def run_2d_mode(project_root: Path, args: argparse.Namespace) -> None:
+    """Run two-dimensional data mode using the supplied configuration.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> run_2d_mode(project_root=Path("path/to/resource"), args=...)
+    """
     if args.zarr is not None or args.slice_1based is not None:
         raise SystemExit("--zarr and --slice are valid only in 3D mode.")
     if args.sample and not args.dataset:
@@ -1063,6 +1678,18 @@ def run_2d_mode(project_root: Path, args: argparse.Namespace) -> None:
 
 
 def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
+    """Run three-dimensional data mode using the supplied configuration.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        args (argparse.Namespace): Additional positional arguments forwarded to the underlying callable.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> run_3d_mode(project_root=Path("path/to/resource"), args=...)
+    """
     if args.dataset is not None or args.sample is not None:
         raise SystemExit("--dataset and --sample are valid only in 2D mode.")
     if args.level < 0:
@@ -1132,6 +1759,11 @@ def run_3d_mode(project_root: Path, args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args()
     project_root = find_project_root(Path(__file__))
     mode = infer_mode(args)

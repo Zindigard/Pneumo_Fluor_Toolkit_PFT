@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for damp meta.
+
+Examples
+--------
+Extract and inspect the configured CZI metadata:
+
+    python scripts/denoising/damp_meta.py
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +22,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -52,6 +73,7 @@ import czifile
 
 @dataclass(frozen=True)
 class Paths:
+    """Store validated configuration or result data for paths."""
     data_2d_time: Path = Path(r"E:\2D_data_time")
     data_2d_wga_dapi: Path = Path(r"E:\2D_data_WGA_DAPI_DNA")
     data_3d: Path = Path(r"E:\20220225_HADA_NADA_TADA_40min")
@@ -61,11 +83,33 @@ PATHS = Paths()
 
 
 def repo_results_img_dir() -> Path:
+    """Return repo results img dir for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = repo_results_img_dir()
+    """
     repo_root = _pft_project_root(Path(__file__).resolve())
     return repo_root / "results" / "img"
 
 
 def list_czi_files(folder: Path) -> list[Path]:
+    """List czi files available in the configured project structure.
+
+    Args:
+        folder (Path): Filesystem path used for folder.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_czi_files(folder=Path("path/to/resource"))
+    """
     files = sorted(folder.glob("*.czi"))
     if not files:
         raise FileNotFoundError(f"No .czi files found in: {folder}")
@@ -73,10 +117,32 @@ def list_czi_files(folder: Path) -> list[Path]:
 
 
 def pick_one_file(folder: Path) -> Path:
+    """Return pick one file for the supplied inputs.
+
+    Args:
+        folder (Path): Filesystem path used for folder.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = pick_one_file(folder=Path("path/to/resource"))
+    """
     return list_czi_files(folder)[0]
 
 
 def read_czi_header_and_xml(czi_path: Path) -> tuple[str | None, tuple[int, ...] | None, str | None]:
+    """Read czi header and xml from persistent storage.
+
+    Args:
+        czi_path (Path): Filesystem path associated with czi.
+
+    Returns:
+        tuple[str | None, tuple[int, ...] | None, str | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = read_czi_header_and_xml(czi_path=Path("path/to/resource"))
+    """
     with czifile.CziFile(str(czi_path)) as czi:
         axes = getattr(czi, "axes", None)
         shape = getattr(czi, "shape", None)
@@ -90,6 +156,17 @@ def read_czi_header_and_xml(czi_path: Path) -> tuple[str | None, tuple[int, ...]
 
 
 def read_czi_array_squeezed(czi_path: Path) -> np.ndarray:
+    """Read czi array squeezed from persistent storage.
+
+    Args:
+        czi_path (Path): Filesystem path associated with czi.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = read_czi_array_squeezed(czi_path=Path("path/to/resource"))
+    """
     with czifile.CziFile(str(czi_path)) as czi:
         arr = czi.asarray()
     return np.squeeze(arr)
@@ -102,6 +179,27 @@ def format_summary(
     shape_full: tuple[int, ...] | None,
     arr: np.ndarray,
 ) -> str:
+    """Format summary for reporting or downstream processing.
+
+    Args:
+        dataset_name (str): Text value specifying dataset name.
+        czi_path (Path): Filesystem path associated with czi.
+        axes_full (str | None): Text value specifying axes full.
+        shape_full (tuple[int, ...] | None): Numerical value controlling shape full.
+        arr (np.ndarray): Array containing arr.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = format_summary(
+        ...     dataset_name="dataset_name",
+        ...     czi_path=Path("path/to/resource"),
+        ...     axes_full="axes_full",
+        ...     shape_full=1,
+        ...     arr=image_array,
+        ... )
+    """
     lines: list[str] = []
     lines.append(f"=== Pneumo-Fluor-Toolkit | CZI METADATA DUMP ===")
     lines.append(f"Dataset: {dataset_name}")
@@ -126,6 +224,20 @@ def format_summary(
 
 
 def dump_one(dataset_name: str, folder: Path, out_base: Path) -> None:
+    """Return dump one for the supplied inputs.
+
+    Args:
+        dataset_name (str): Text value specifying dataset name.
+        folder (Path): Filesystem path used for folder.
+        out_base (Path): Filesystem path used for out base.
+
+    Example:
+        >>> dump_one(
+        ...     dataset_name="dataset_name",
+        ...     folder=Path("path/to/resource"),
+        ...     out_base=Path("path/to/resource"),
+        ... )
+    """
     czi_path = pick_one_file(folder)
 
     axes_full, shape_full, xml = read_czi_header_and_xml(czi_path)
@@ -155,6 +267,11 @@ def dump_one(dataset_name: str, folder: Path, out_base: Path) -> None:
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     out_base = repo_results_img_dir()
 
     dump_one("2d_time", PATHS.data_2d_time, out_base)

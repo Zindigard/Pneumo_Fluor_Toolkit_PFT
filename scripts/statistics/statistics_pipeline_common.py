@@ -1,3 +1,14 @@
+r"""Provide command-line and programmatic utilities for statistics pipeline common.
+
+Examples
+--------
+Programmatic use:
+
+    from scripts.statistics.statistics_pipeline_common import find_project_root
+
+    result = find_project_root(...)
+"""
+
 from __future__ import annotations
 
 """Shared dataset discovery and selection utilities for the statistics pipeline."""
@@ -14,6 +25,7 @@ DATASETS: tuple[str, ...] = ("2d_time", "2d_wga_dapi", "3d_mip")
 
 @dataclass(frozen=True)
 class DatasetConfig:
+    """Store validated configuration or result data for dataset config."""
     name: str
     default_source_mode: str
     channel_names: tuple[str, ...]
@@ -52,6 +64,22 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
 
 
 def find_project_root(script_file: Path, explicit: Path | None = None) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        script_file (Path): Filesystem path associated with script.
+        explicit (Path | None): Filesystem path used for explicit. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root(script_file=Path("path/to/resource"))
+    """
     if explicit is not None:
         root = explicit.expanduser().resolve()
         if not (root / "scripts").is_dir():
@@ -67,6 +95,20 @@ def find_project_root(script_file: Path, explicit: Path | None = None) -> Path:
 
 
 def selected_datasets(value: str) -> tuple[str, ...]:
+    """Return selected datasets for the supplied inputs.
+
+    Args:
+        value (str): Value to validate, transform, store, or forward.
+
+    Returns:
+        tuple[str, ...]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = selected_datasets(value="value")
+    """
     if value == "all":
         return DATASETS
     if value not in DATASET_CONFIGS:
@@ -75,6 +117,26 @@ def selected_datasets(value: str) -> tuple[str, ...]:
 
 
 def source_mode_for(dataset: str, source_mode: str | None, dataset_argument: str) -> str:
+    """Return source mode for for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str | None): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        dataset_argument (str): Text value specifying dataset argument.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = source_mode_for(
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     dataset_argument="dataset_argument",
+        ... )
+    """
     if source_mode is not None:
         if dataset_argument == "all":
             raise ValueError(
@@ -86,6 +148,21 @@ def source_mode_for(dataset: str, source_mode: str | None, dataset_argument: str
 
 
 def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, object]]:
+    """Infer condition from the supplied model inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample_name (str): Text value specifying sample name.
+
+    Returns:
+        tuple[str, dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = infer_condition(dataset="2d_time", sample_name="sample_name")
+    """
     upper = sample_name.upper()
     medium = "THY" if "THY" in upper else "NHS" if "NHS" in upper else "UNKNOWN"
     metadata: dict[str, object] = {"medium": medium}
@@ -112,6 +189,18 @@ def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, obje
 
 
 def condition_sort_key(dataset: str, condition: str) -> tuple[int, str]:
+    """Return condition sort key for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        condition (str): Text value specifying condition.
+
+    Returns:
+        tuple[int, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = condition_sort_key(dataset="2d_time", condition="condition")
+    """
     order = DATASET_CONFIGS[dataset].condition_order
     try:
         return order.index(condition), condition
@@ -120,11 +209,31 @@ def condition_sort_key(dataset: str, condition: str) -> tuple[int, str]:
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
+    """Read CSV data from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = read_csv(path=Path("path/to/resource"))
+    """
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
 
 
 def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (Sequence[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -141,6 +250,18 @@ def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
 
 
 def integer_value(row: dict[str, str], *keys: str) -> int:
+    """Return integer value for the supplied inputs.
+
+    Args:
+        row (dict[str, str]): Text value specifying row.
+        *keys (str): Text value specifying keys.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = integer_value(row="row")
+    """
     for key in keys:
         value = row.get(key)
         if value not in (None, ""):
@@ -159,6 +280,22 @@ def filter_manifest_rows(
     sample_filters: Sequence[str] | None = None,
     include_failed_pairs: bool = False,
 ) -> list[dict[str, object]]:
+    """Filter manifest rows according to the configured criteria.
+
+    Args:
+        rows (Iterable[dict[str, str]]): Text value specifying rows.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        include (str): Text value specifying include. Defaults to ``"full"``.
+        excluded_times (set[int] | None): Numerical value controlling excluded times. ``None`` selects the function's default behavior.
+        sample_filters (Sequence[str] | None): Text value specifying sample filters. ``None`` selects the function's default behavior.
+        include_failed_pairs (bool): Boolean flag controlling whether to failed pairs. Defaults to ``False``.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = filter_manifest_rows(rows="rows", dataset="2d_time")
+    """
     excluded_times = excluded_times or set()
     selected_samples = {item.strip() for item in sample_filters or () if item.strip()}
     output: list[dict[str, object]] = []
@@ -208,6 +345,25 @@ def select_one_per_condition(
     preferred_min_cells: int,
     max_cells: int | None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Select one per condition according to the configured criteria.
+
+    Args:
+        rows (Sequence[dict[str, object]]): Text value specifying rows.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        preferred_min_cells (int): Numerical value controlling preferred min cells.
+        max_cells (int | None): Maximum permitted value of cells.
+
+    Returns:
+        tuple[list[dict[str, object]], list[dict[str, object]]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = select_one_per_condition(
+        ...     rows="rows",
+        ...     dataset="2d_time",
+        ...     preferred_min_cells=1,
+        ...     max_cells=1,
+        ... )
+    """
     grouped: dict[str, list[dict[str, object]]] = {}
     for row in rows:
         if str(row.get("annotation_type", "full")) != "full":
@@ -263,6 +419,23 @@ def select_one_per_condition(
 
 
 def manifest_path(project_root: Path, dataset: str, source_mode: str) -> Path:
+    """Return manifest path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = manifest_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     return (
         project_root
         / "results"
@@ -275,6 +448,23 @@ def manifest_path(project_root: Path, dataset: str, source_mode: str) -> Path:
 
 
 def mask_summary_path(project_root: Path, dataset: str, source_mode: str) -> Path:
+    """Return mask summary path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = mask_summary_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ... )
+    """
     return (
         project_root
         / "results"
@@ -292,6 +482,25 @@ def pca_output_path(
     source_mode: str,
     example: bool,
 ) -> Path:
+    """Return principal-component analysis result output path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        example (bool): Boolean flag controlling example.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = pca_output_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     example=True,
+        ... )
+    """
     stage = "pca_aligned_example" if example else "pca_aligned"
     return project_root / "results" / "statistics_preparation" / stage / dataset / source_mode
 
@@ -302,6 +511,25 @@ def normalization_output_path(
     source_mode: str,
     example: bool,
 ) -> Path:
+    """Return normalization output path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        example (bool): Boolean flag controlling example.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = normalization_output_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     example=True,
+        ... )
+    """
     stage = "normalized_cells_example" if example else "normalized_cells"
     return project_root / "results" / "statistics_preparation" / stage / dataset / source_mode
 
@@ -312,5 +540,24 @@ def graph_output_path(
     source_mode: str,
     example: bool,
 ) -> Path:
+    """Return graph output path for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        example (bool): Boolean flag controlling example.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = graph_output_path(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     example=True,
+        ... )
+    """
     stage = "graphs_example" if example else "graphs"
     return project_root / "results" / "statistics" / stage / dataset / source_mode

@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for omnipose finetune two-dimensional data wga dapi core."""
+
 from __future__ import annotations
 
 import shutil
@@ -21,6 +23,7 @@ FAMILY = "omnipose"
 
 @dataclass
 class OmniposeFineTuneConfig:
+    """Store validated configuration or result data for omnipose fine tune config."""
     project_root: Path
     pretrained_model: str = "cyto2_omni"
     learning_rate: float = 0.1
@@ -31,14 +34,43 @@ class OmniposeFineTuneConfig:
     channels: tuple[int, ...] | None = None
 
     def __post_init__(self):
+        """Return post init for the supplied inputs.
+
+        Example:
+            >>> instance = OmniposeFineTuneConfig(...)
+            >>> instance.__post_init__()
+        """
         if self.channels is None:
             self.channels = (0, 1) if DATASET == "2d_wga_dapi" else (0,)
 
     def model_dir(self) -> Path:
+        """Return model dir for the supplied inputs.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = OmniposeFineTuneConfig(...)
+            >>> result = instance.model_dir()
+        """
         return model_root(self.project_root, FAMILY, DATASET)
 
 
 def _prepare_folder(cfg: OmniposeFineTuneConfig) -> Path:
+    """Prepare folder for downstream processing.
+
+    Args:
+        cfg (OmniposeFineTuneConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prepare_folder(cfg=config)
+    """
     out = cfg.model_dir() / "prepared_training_data"
     if out.exists():
         shutil.rmtree(out)
@@ -66,6 +98,17 @@ def _prepare_folder(cfg: OmniposeFineTuneConfig) -> Path:
 
 
 def finetune_omnipose_2d_wga_dapi(cfg: OmniposeFineTuneConfig | None = None) -> Path:
+    """Return finetune omnipose two-dimensional data wga dapi for the supplied inputs.
+
+    Args:
+        cfg (OmniposeFineTuneConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = finetune_omnipose_2d_wga_dapi()
+    """
     if cfg is None:
         cfg = OmniposeFineTuneConfig(project_root=find_project_root())
     data_dir = _prepare_folder(cfg)

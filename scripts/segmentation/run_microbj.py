@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for run microbj.
+
+Examples
+--------
+Run the script using its configured inputs:
+
+    python scripts/segmentation/run_microbj.py
+"""
+
 from __future__ import annotations
 
 # Configure imports for direct execution from the repository source tree.
@@ -13,6 +22,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -58,6 +79,22 @@ Interactive runner for MicrobeJ on TIFF files.
 
 
 def _ask_path(prompt: str, default: Path | None = None, allow_empty: bool = False) -> Path | None:
+    """Return ask path for the supplied inputs.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (Path | None): Filesystem path used for default. ``None`` selects the function's default behavior.
+        allow_empty (bool): Boolean flag controlling whether to empty. Defaults to ``False``.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _ask_path(prompt="prompt")
+    """
     if default is not None:
         s = input(f"{prompt}\n[{default}]: ").strip()
         if s == "":
@@ -73,6 +110,18 @@ def _ask_path(prompt: str, default: Path | None = None, allow_empty: bool = Fals
 
 
 def _ask_yes_no(prompt: str, default: bool = False) -> bool:
+    """Return ask yes no for the supplied inputs.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (bool): Boolean flag controlling default. Defaults to ``False``.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _ask_yes_no(prompt="prompt")
+    """
     d = "Y/n" if default else "y/N"
     s = input(f"{prompt} [{d}]: ").strip().lower()
     if s == "":
@@ -81,12 +130,31 @@ def _ask_yes_no(prompt: str, default: bool = False) -> bool:
 
 
 def _print_images(images: list[Path]) -> None:
+    """Print images in a readable format.
+
+    Args:
+        images (list[Path]): Sequence or batch of input image arrays to process.
+
+    Example:
+        >>> _print_images(images=Path("path/to/resource"))
+    """
     print("\nSelected TIFF images:")
     for i, p in enumerate(images, start=1):
         print(f"  {i:03d}. {p}")
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     project_root = find_project_root(Path(__file__).resolve())
 
     print("\nMicrobeJ TIFF runner")

@@ -38,7 +38,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def find_project_root() -> Path:
-    """Locate the repository root containing ``scripts`` and ``src/PFT``."""
+    """Locate the repository root containing ``scripts`` and ``src/PFT``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
 
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
@@ -87,7 +97,23 @@ class InputRecord:
 
 
 def _axis_size(axes: str, shape: Sequence[int], axis: str) -> int:
-    """Return an axis length, treating an absent channel/time axis as one."""
+    """Return an axis length, treating an absent channel/time axis as one.
+
+    Args:
+        axes (str): Axis specification describing the dimensional order of the image data.
+        shape (Sequence[int]): Target or observed array shape.
+        axis (str): Array axis along which the operation is performed.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _axis_size(
+        ...     axes="axes",
+        ...     shape=1,
+        ...     axis="axis",
+        ... )
+    """
 
     return int(shape[axes.index(axis)]) if axis in axes else 1
 
@@ -98,6 +124,21 @@ def sample_selected_values(zarr_path: Path, spec: N2VModelSpec, max_side: int = 
     Non-spatial dimensions are fixed at index zero except for the requested
     channel.  Y and X are sampled with a stride so this check does not load the
     complete microscopy image into memory.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        max_side (int): Maximum permitted value of side. Defaults to ``256``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = sample_selected_values(zarr_path=Path("path/to/resource"), spec=...)
     """
 
     try:
@@ -133,7 +174,18 @@ def sample_selected_values(zarr_path: Path, spec: N2VModelSpec, max_side: int = 
 
 
 def validate_one_input(zarr_path: Path, spec: N2VModelSpec) -> InputRecord:
-    """Validate canonical location, metadata, channels, and sampled values."""
+    """Validate canonical location, metadata, channels, and sampled values.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+
+    Returns:
+        InputRecord: Result produced by the operation.
+
+    Example:
+        >>> result = validate_one_input(zarr_path=Path("path/to/resource"), spec=...)
+    """
 
     failures: list[str] = []
     warnings: list[str] = []
@@ -200,7 +252,21 @@ def validate_one_input(zarr_path: Path, spec: N2VModelSpec) -> InputRecord:
 
 
 def check_training_manifest(spec: N2VModelSpec, discovered: Sequence[Path]) -> list[str]:
-    """Check an existing image-level split manifest for completeness and overlap."""
+    """Check an existing image-level split manifest for completeness and overlap.
+
+    Args:
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        discovered (Sequence[Path]): Filesystem path used for discovered.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Raises:
+        TypeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = check_training_manifest(spec=..., discovered=Path("path/to/resource"))
+    """
 
     issues: list[str] = []
     manifest = models_root(PROJECT_ROOT) / spec.model_name / "pft_training" / "sample_split.json"
@@ -220,7 +286,17 @@ def check_training_manifest(spec: N2VModelSpec, discovered: Sequence[Path]) -> l
             issues.append("FAIL: manifest contains no validation images")
 
         def resolve_manifest_path(value: str) -> Path:
-            """Resolve one manifest path relative to the repository when needed."""
+            """Resolve one manifest path relative to the repository when needed.
+
+            Args:
+                value (str): Value to validate, transform, store, or forward.
+
+            Returns:
+                Path: Resolved or generated filesystem path.
+
+            Example:
+                >>> result = resolve_manifest_path(value="value")
+            """
 
             path = Path(value)
             return path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
@@ -239,7 +315,23 @@ def check_training_manifest(spec: N2VModelSpec, discovered: Sequence[Path]) -> l
 
 
 def save_report(records: Sequence[InputRecord], spec: N2VModelSpec, manifest_issues: Sequence[str]) -> Path:
-    """Write TXT, CSV, and JSON reports for the selected model inputs."""
+    """Write TXT, CSV, and JSON reports for the selected model inputs.
+
+    Args:
+        records (Sequence[InputRecord]): Value specifying records for the operation.
+        spec (N2VModelSpec): Value specifying spec for the operation.
+        manifest_issues (Sequence[str]): Text value specifying manifest issues.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_report(
+        ...     records=[],
+        ...     spec=...,
+        ...     manifest_issues="manifest_issues",
+        ... )
+    """
 
     report_dir = n2v_results_root(PROJECT_ROOT) / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -295,7 +387,14 @@ def save_report(records: Sequence[InputRecord], spec: N2VModelSpec, manifest_iss
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser for model-specific input checks."""
+    """Create the command-line parser for model-specific input checks.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
 
     parser = argparse.ArgumentParser(
         description="Check the original OME-Zarr images and channels supplied to one 2D N2V model.",
@@ -306,7 +405,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Validate all canonical inputs and return nonzero only for blocking failures."""
+    """Validate all canonical inputs and return nonzero only for blocking failures.
+
+    Args:
+        argv (list[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
 
     args = build_parser().parse_args(argv)
     model_key = args.model or choose_model_key_interactive("Choose the N2V model input set to check")

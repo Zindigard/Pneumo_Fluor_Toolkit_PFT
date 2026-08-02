@@ -60,6 +60,17 @@ CHECKER_VERSION = "2026-07-31-v4-2d-time-channel0"
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -84,6 +95,21 @@ from PFT.core_prog_parts.segmentation.segmentation_input_core import (  # noqa: 
 
 
 def _choose(title: str, values: Sequence[str]) -> str:
+    """Choose the requested operation according to the configured criteria.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        values (Sequence[str]): Text value specifying values.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose(title="title", values="values")
+    """
     print(f"\n{title}")
     for index, value in enumerate(values, start=1):
         print(f"  [{index}] {value}")
@@ -94,6 +120,17 @@ def _choose(title: str, values: Sequence[str]) -> str:
 
 
 def _root_attrs(path: Path) -> dict[str, Any]:
+    """Return root attrs for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _root_attrs(path=Path("path/to/resource"))
+    """
     try:
         import zarr
 
@@ -103,6 +140,17 @@ def _root_attrs(path: Path) -> dict[str, Any]:
 
 
 def _coordinate_scale(path: Path) -> list[float] | None:
+    """Return coordinate scale for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _coordinate_scale(path=Path("path/to/resource"))
+    """
     attrs = _root_attrs(path)
     try:
         transforms = attrs["multiscales"][0]["datasets"][0].get(
@@ -117,6 +165,21 @@ def _coordinate_scale(path: Path) -> list[float] | None:
 
 
 def _inspect_zarr(path: Path, *, load_values: bool = False) -> dict[str, Any]:
+    """Return inspect Zarr for the supplied inputs.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        load_values (bool): Boolean flag controlling load values. Defaults to ``False``.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _inspect_zarr(path=Path("path/to/resource"))
+    """
     if not path.is_dir():
         raise FileNotFoundError(path)
     array, axes = load_ome_zarr(path, level=0, as_numpy=load_values)
@@ -142,6 +205,18 @@ def _inspect_zarr(path: Path, *, load_values: bool = False) -> dict[str, Any]:
 
 
 def _axis_size(info: dict[str, Any], axis: str) -> int | None:
+    """Return axis size for the supplied inputs.
+
+    Args:
+        info (dict[str, Any]): Text value specifying info.
+        axis (str): Array axis along which the operation is performed.
+
+    Returns:
+        int | None: Computed numerical result.
+
+    Example:
+        >>> result = _axis_size(info="info", axis="axis")
+    """
     axes = info["axes"]
     if axis not in axes:
         return None
@@ -149,6 +224,18 @@ def _axis_size(info: dict[str, Any], axis: str) -> int | None:
 
 
 def _axis_scale(info: dict[str, Any], axis: str) -> float | None:
+    """Return axis scale for the supplied inputs.
+
+    Args:
+        info (dict[str, Any]): Text value specifying info.
+        axis (str): Array axis along which the operation is performed.
+
+    Returns:
+        float | None: Computed numerical result.
+
+    Example:
+        >>> result = _axis_scale(info="info", axis="axis")
+    """
     scale = info.get("scale")
     axes = info["axes"]
     if scale is None or axis not in axes or len(scale) != len(axes):
@@ -162,17 +249,54 @@ def _add(
     check: str,
     message: str,
 ) -> None:
+    """Add the requested operation to the current data structure.
+
+    Args:
+        issues (list[dict[str, str]]): Text value specifying issues.
+        severity (str): Text value specifying severity.
+        check (str): Text value specifying check.
+        message (str): Text value specifying message.
+
+    Example:
+        >>> _add(
+        ...     issues="issues",
+        ...     severity="severity",
+        ...     check="check",
+        ...     message="message",
+        ... )
+    """
     issues.append({"severity": severity, "check": check, "message": message})
 
 
 def _channel_count(info: dict[str, Any]) -> int:
-    """Return the stored numerical channel count, treating YX as one channel."""
+    """Return the stored numerical channel count, treating YX as one channel.
+
+    Args:
+        info (dict[str, Any]): Text value specifying info.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _channel_count(info="info")
+    """
     size = _axis_size(info, "c")
     return 1 if size is None else int(size)
 
 
 def _effective_channel_count(info: dict[str, Any], dataset: str) -> int:
-    """Return the channel count after applying the dataset channel policy."""
+    """Return the channel count after applying the dataset channel policy.
+
+    Args:
+        info (dict[str, Any]): Text value specifying info.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _effective_channel_count(info="info", dataset="2d_time")
+    """
     observed = _channel_count(info)
     if dataset == "2d_time":
         return 1 if observed >= 1 else 0
@@ -187,7 +311,24 @@ def _compare_channel_count(
     dataset: str,
     check_prefix: str,
 ) -> None:
-    """Compare effective channels after applying the dataset channel policy."""
+    """Compare effective channels after applying the dataset channel policy.
+
+    Args:
+        left (dict[str, Any]): Text value specifying left.
+        right (dict[str, Any]): Text value specifying right.
+        issues (list[dict[str, str]]): Text value specifying issues.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        check_prefix (str): Text value specifying check prefix.
+
+    Example:
+        >>> _compare_channel_count(
+        ...     left="left",
+        ...     right="right",
+        ...     issues="issues",
+        ...     dataset="2d_time",
+        ...     check_prefix="check_prefix",
+        ... )
+    """
     left_channels = _effective_channel_count(left, dataset)
     right_channels = _effective_channel_count(right, dataset)
     if left_channels != right_channels:
@@ -207,7 +348,22 @@ def _check_expected_channels(
     *,
     check_prefix: str,
 ) -> None:
-    """Validate stored channels under the defined dataset-specific policy."""
+    """Validate stored channels under the defined dataset-specific policy.
+
+    Args:
+        info (dict[str, Any]): Text value specifying info.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        issues (list[dict[str, str]]): Text value specifying issues.
+        check_prefix (str): Text value specifying check prefix.
+
+    Example:
+        >>> _check_expected_channels(
+        ...     info="info",
+        ...     dataset="2d_time",
+        ...     issues="issues",
+        ...     check_prefix="check_prefix",
+        ... )
+    """
     observed = _channel_count(info)
     if dataset == "2d_time":
         if observed < 1:
@@ -238,6 +394,24 @@ def _compare_named_axes(
     *,
     check_prefix: str,
 ) -> None:
+    """Compare named axes across the supplied inputs.
+
+    Args:
+        left (dict[str, Any]): Text value specifying left.
+        right (dict[str, Any]): Text value specifying right.
+        axes (Sequence[str]): Axis specification describing the dimensional order of the image data.
+        issues (list[dict[str, str]]): Text value specifying issues.
+        check_prefix (str): Text value specifying check prefix.
+
+    Example:
+        >>> _compare_named_axes(
+        ...     left="left",
+        ...     right="right",
+        ...     axes="axes",
+        ...     issues="issues",
+        ...     check_prefix="check_prefix",
+        ... )
+    """
     for axis in axes:
         left_size = _axis_size(left, axis)
         right_size = _axis_size(right, axis)
@@ -264,6 +438,22 @@ def _compare_yx_scale(
     *,
     check_prefix: str,
 ) -> None:
+    """Compare yx scale across the supplied inputs.
+
+    Args:
+        left (dict[str, Any]): Text value specifying left.
+        right (dict[str, Any]): Text value specifying right.
+        issues (list[dict[str, str]]): Text value specifying issues.
+        check_prefix (str): Text value specifying check prefix.
+
+    Example:
+        >>> _compare_yx_scale(
+        ...     left="left",
+        ...     right="right",
+        ...     issues="issues",
+        ...     check_prefix="check_prefix",
+        ... )
+    """
     for axis in ("y", "x"):
         left_scale = _axis_scale(left, axis)
         right_scale = _axis_scale(right, axis)
@@ -288,6 +478,23 @@ def _inspect_training_mask(
     expected_yx: tuple[int, int] | None,
     issues: list[dict[str, str]],
 ) -> dict[str, Any] | None:
+    """Return inspect training mask for the supplied inputs.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+        expected_yx (tuple[int, int] | None): Numerical value controlling expected yx.
+        issues (list[dict[str, str]]): Text value specifying issues.
+
+    Returns:
+        dict[str, Any] | None: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _inspect_training_mask(
+        ...     mask_path=Path("path/to/resource"),
+        ...     expected_yx=1,
+        ...     issues="issues",
+        ... )
+    """
     if not mask_path.is_file():
         _add(
             issues,
@@ -358,6 +565,24 @@ def _reduce_to_preview_cyx(
     3D volume used in the MIP workflow, Z is reduced by maximum-intensity
     projection so that the raw preview is spatially comparable with the saved
     normalized MIP.
+
+    Args:
+        array (Any): Value specifying array for the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _reduce_to_preview_cyx(
+        ...     array=image_array,
+        ...     axes="axes",
+        ...     dataset="2d_time",
+        ... )
     """
     current = array
     current_axes = str(axes).lower()
@@ -392,7 +617,21 @@ def _reduce_to_preview_cyx(
 
 
 def _load_preview_cyx(path: Path, *, dataset: str) -> tuple[np.ndarray, str, str]:
-    """Load one display plane while avoiding full eager loading when possible."""
+    """Load one display plane while avoiding full eager loading when possible.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_preview_cyx(path=Path("path/to/resource"), dataset="2d_time")
+    """
     if not path.is_dir():
         raise FileNotFoundError(path)
     array, axes = load_ome_zarr(path, level=0, as_numpy=False)
@@ -401,7 +640,17 @@ def _load_preview_cyx(path: Path, *, dataset: str) -> tuple[np.ndarray, str, str
 
 
 def _display_normalize_plane(plane: np.ndarray) -> np.ndarray:
-    """Robustly scale one raw channel for display only."""
+    """Robustly scale one raw channel for display only.
+
+    Args:
+        plane (np.ndarray): Array containing plane.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_normalize_plane(plane=image_array)
+    """
     values = np.asarray(plane, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -422,7 +671,26 @@ def _channels_to_rgb(
     dataset: str,
     raw_display_scaling: bool,
 ) -> np.ndarray:
-    """Create an RGB preview while preserving the defined fluorescence colours."""
+    """Create an RGB preview while preserving the defined fluorescence colours.
+
+    Args:
+        channels_cyx (np.ndarray): Array containing channels cyx.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        raw_display_scaling (bool): Boolean flag controlling raw display scaling.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _channels_to_rgb(
+        ...     channels_cyx=image_array,
+        ...     dataset="2d_time",
+        ...     raw_display_scaling=True,
+        ... )
+    """
     channels = np.asarray(channels_cyx)
     if channels.ndim != 3:
         raise ValueError(f"Expected CYX preview data, received {channels.shape}")
@@ -464,7 +732,23 @@ def _save_preview_image(
     subtitle: str,
     placeholder: str | None = None,
 ) -> None:
-    """Save one report image with an informative title."""
+    """Save one report image with an informative title.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rgb (np.ndarray | None): Array containing RGB representation.
+        title (str): Title displayed on the generated figure or report section.
+        subtitle (str): Text value specifying subtitle.
+        placeholder (str | None): Text value specifying placeholder. ``None`` selects the function's default behavior.
+
+    Example:
+        >>> _save_preview_image(
+        ...     path=Path("path/to/resource"),
+        ...     rgb=image_array,
+        ...     title="title",
+        ...     subtitle="subtitle",
+        ... )
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -493,7 +777,20 @@ def _save_preview_image(
 
 
 def _build_unsaved_normalized_preview(record: Any) -> tuple[np.ndarray, str]:
-    """Build the exact normalize-then-mask input in memory without saving data."""
+    """Build the exact normalize-then-mask input in memory without saving data.
+
+    Args:
+        record (Any): Value specifying record for the operation.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _build_unsaved_normalized_preview(record=...)
+    """
     if record.dataset == "3d_mip" and record.source_mode in {"raw_masked", "deconv_masked"}:
         intensity, intensity_axes, _ = _load_projection_mip(record.intensity_source_zarr)
         if record.mask_zarr is None:
@@ -539,7 +836,28 @@ def _create_random_visualization(
     dataset: str,
     seed: int | None,
 ) -> dict[str, Any]:
-    """Create raw and normalized PNG previews for one randomly selected sample."""
+    """Create raw and normalized PNG previews for one randomly selected sample.
+
+    Args:
+        records (Sequence[Any]): Value specifying records for the operation.
+        report_root (Path): Directory used for report.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        seed (int | None): Random seed used to make sampling, splitting, or initialization reproducible.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _create_random_visualization(
+        ...     records=[],
+        ...     report_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     seed=1,
+        ... )
+    """
     if not records:
         raise ValueError("No records are available for visualization")
 
@@ -650,6 +968,17 @@ def _create_random_visualization(
 
 
 def audit_record(record) -> dict[str, Any]:
+    """Return audit record for the supplied inputs.
+
+    Args:
+        record (Any): Value specifying record for the operation.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = audit_record(record=...)
+    """
     issues: list[dict[str, str]] = []
     source_info: dict[str, Any] | None = None
     intensity_info: dict[str, Any] | None = None
@@ -846,6 +1175,23 @@ def _write_reports(
     *,
     visualization: dict[str, Any] | None,
 ) -> tuple[Path, Path, Path, Path]:
+    """Write reports to persistent storage.
+
+    Args:
+        rows (list[dict[str, Any]]): Text value specifying rows.
+        report_root (Path): Directory used for report.
+        visualization (dict[str, Any] | None): Text value specifying visualization.
+
+    Returns:
+        tuple[Path, Path, Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_reports(
+        ...     rows="rows",
+        ...     report_root=Path("path/to/resource"),
+        ...     visualization="visualization",
+        ... )
+    """
     report_root.mkdir(parents=True, exist_ok=True)
     csv_path = report_root / "segmentation_input_check.csv"
     json_path = report_root / "segmentation_input_check.json"
@@ -1003,6 +1349,14 @@ th {{ background: #eee; }}
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description="Check segmentation sources, prepared inputs, metadata, and manual masks.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

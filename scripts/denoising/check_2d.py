@@ -1,4 +1,4 @@
-"""
+r"""
 Quantify 2D microscopy noise and Noise2Void restoration quality from OME-Zarr.
 
 Two modes are provided:
@@ -29,6 +29,21 @@ Required default mask location:
 Outputs are written to ``results/noise_analysis/2d/<mode>`` as detailed CSV
 files, dataset-level CSV summaries for later statistical comparison, a compact
 TXT summary for human reading, and an error report.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/check_2d.py --help
+
+Representative execution:
+
+    python scripts/denoising/check_2d.py \
+        --dataset 2d_time \
+        --mode original \
+        --non-interactive \
+        --original-root results/img \
+        --n2v-root results/N2V
 """
 
 from __future__ import annotations
@@ -40,7 +55,20 @@ _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
 
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``."""
+    """Return the repository root containing both ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
+    """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
 
@@ -299,24 +327,61 @@ class N2VDatasetSummaryRecord:
 
 
 def _utc_now() -> str:
-    """Return the current UTC timestamp in ISO 8601 format."""
+    """Return the current UTC timestamp in ISO 8601 format.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _utc_now()
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _finite(values: Iterable[float]) -> np.ndarray:
-    """Return finite values as a one-dimensional float64 array."""
+    """Return finite values as a one-dimensional float64 array.
+
+    Args:
+        values (Iterable[float]): Numerical value controlling values.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _finite(values=0.5)
+    """
     array = np.asarray(list(values), dtype=np.float64)
     return array[np.isfinite(array)]
 
 
 def _mean(values: Iterable[float]) -> float:
-    """Return the arithmetic mean of finite values, or NaN when none exist."""
+    """Return the arithmetic mean of finite values, or NaN when none exist.
+
+    Args:
+        values (Iterable[float]): Numerical value controlling values.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _mean(values=0.5)
+    """
     array = _finite(values)
     return float(np.mean(array)) if array.size else float("nan")
 
 
 def _std(values: Iterable[float]) -> float:
-    """Return the sample standard deviation of finite values."""
+    """Return the sample standard deviation of finite values.
+
+    Args:
+        values (Iterable[float]): Numerical value controlling values.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _std(values=0.5)
+    """
     array = _finite(values)
     if array.size == 0:
         return float("nan")
@@ -326,26 +391,70 @@ def _std(values: Iterable[float]) -> float:
 
 
 def _maximum(values: Iterable[float]) -> float:
-    """Return the maximum finite value, or NaN when none exist."""
+    """Return the maximum finite value, or NaN when none exist.
+
+    Args:
+        values (Iterable[float]): Numerical value controlling values.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _maximum(values=0.5)
+    """
     array = _finite(values)
     return float(np.max(array)) if array.size else float("nan")
 
 
 def _fmt(value: float, digits: int = 4) -> str:
-    """Format one numeric value for terminal and text reporting."""
+    """Format one numeric value for terminal and text reporting.
+
+    Args:
+        value (float): Value to validate, transform, store, or forward.
+        digits (int): Numerical value controlling digits. Defaults to ``4``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _fmt(value=0.5)
+    """
     if not np.isfinite(value):
         return "-"
     return f"{value:.{digits}f}"
 
 
 def _fmt_mean_sd(values: Iterable[float], digits: int = 2) -> str:
-    """Format values as ``mean ± sample standard deviation``."""
+    """Format values as ``mean ± sample standard deviation``.
+
+    Args:
+        values (Iterable[float]): Numerical value controlling values.
+        digits (int): Numerical value controlling digits. Defaults to ``2``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _fmt_mean_sd(values=0.5)
+    """
     values_list = list(values)
     return f"{_fmt(_mean(values_list), digits)} ± {_fmt(_std(values_list), digits)}"
 
 
 def _json_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
-    """Read a root attribute while tolerating JSON-encoded string values."""
+    """Read a root attribute while tolerating JSON-encoded string values.
+
+    Args:
+        attrs (dict[str, Any]): Attribute mapping read from or written to the associated data resource.
+        key (str): Key used to access or identify an entry in a mapping.
+        default (Any): Value specifying default for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _json_attr(attrs="attrs", key="key")
+    """
     value = attrs.get(key, default)
     if isinstance(value, str):
         stripped = value.strip()
@@ -358,7 +467,17 @@ def _json_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
 
 
 def _channel_names(image: OmezarrImage) -> list[str]:
-    """Return stored channel names or deterministic fallback names."""
+    """Return stored channel names or deterministic fallback names.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _channel_names(image=image_array)
+    """
     count = image.array.shape[image.axes.index("c")] if "c" in image.axes else 1
     value = _json_attr(image.attrs, "channel_names")
     if isinstance(value, (list, tuple)):
@@ -369,7 +488,21 @@ def _channel_names(image: OmezarrImage) -> list[str]:
 
 
 def read_omezarr_level0(path: Path) -> OmezarrImage:
-    """Open the highest-resolution OME-Zarr array and read its axes metadata."""
+    """Open the highest-resolution OME-Zarr array and read its axes metadata.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        OmezarrImage: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_omezarr_level0(path=Path("path/to/resource"))
+    """
     path = Path(path).expanduser().resolve()
     if not path.is_dir():
         raise FileNotFoundError(f"OME-Zarr directory does not exist: {path}")
@@ -402,7 +535,21 @@ def read_omezarr_level0(path: Path) -> OmezarrImage:
 
 
 def _axis_indices(size: int, requested: Sequence[int] | None) -> list[int]:
-    """Validate requested axis indices or return every index for the axis."""
+    """Validate requested axis indices or return every index for the axis.
+
+    Args:
+        size (int): Requested size or size constraint for the operation.
+        requested (Sequence[int] | None): Numerical value controlling requested.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _axis_indices(size=1, requested=1)
+    """
     if requested is None:
         return list(range(size))
     result = sorted(set(int(index) for index in requested))
@@ -418,7 +565,22 @@ def iter_2d_planes(
     time_indices: Sequence[int] | None = None,
     channel_indices: Sequence[int] | None = None,
 ) -> Iterator[PlaneSelection]:
-    """Yield 2D YX planes while preserving frame and channel identities."""
+    """Yield 2D YX planes while preserving frame and channel identities.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        time_indices (Sequence[int] | None): Zero-based indices selecting time. ``None`` selects the function's default behavior.
+        channel_indices (Sequence[int] | None): Zero-based indices selecting channel. ``None`` selects the function's default behavior.
+
+    Returns:
+        Iterator[PlaneSelection]: Iterator yielding the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = iter_2d_planes(image=image_array)
+    """
     axes = image.axes
     shape = tuple(int(value) for value in image.array.shape)
     names = _channel_names(image)
@@ -469,7 +631,20 @@ def iter_2d_planes(
 
 
 def _read_mask_file(path: Path) -> np.ndarray:
-    """Read the numerical TIFF mask without altering its stored values."""
+    """Read the numerical TIFF mask without altering its stored values.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _read_mask_file(path=Path("path/to/resource"))
+    """
     if path.suffix.lower() not in (".tif", ".tiff"):
         raise ValueError(f"The numerical U-Net mask must be TIFF: {path}")
     return np.asarray(tifffile.imread(path))
@@ -486,6 +661,26 @@ def _select_mask_plane(
 
     Supported layouts are YX, TYX, CYX, and TCYX. A two-dimensional common
     mask is reused unchanged for every selected frame and channel.
+
+    Args:
+        mask_array (np.ndarray): Array containing mask array.
+        selection (PlaneSelection): Value specifying selection for the operation.
+        image (OmezarrImage): Input image array to process.
+        mask_path (Path): Filesystem path associated with mask.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_mask_plane(
+        ...     mask_array=image_array,
+        ...     selection=...,
+        ...     image=image_array,
+        ...     mask_path=Path("path/to/resource"),
+        ... )
     """
     mask = np.asarray(mask_array)
     while mask.ndim > 2 and mask.shape[0] == 1:
@@ -541,6 +736,19 @@ def _validate_binary_mask(mask: np.ndarray, path: Path) -> np.ndarray:
     The standard PFT masks are stored as ``mask.tif`` with values ``0`` and
     ``1``. This strict check prevents display images such as ``mask_vis.tif``
     or RGB overlays from being used accidentally in the ROI-SNR calculation.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _validate_binary_mask(mask=image_array, path=Path("path/to/resource"))
     """
     array = np.asarray(mask)
     if array.ndim != 2:
@@ -589,6 +797,28 @@ def resolve_mask(
     directories. The numerical mask is required to contain only ``0`` and
     ``1``. A common two-dimensional mask is reused for all selected frames and
     channels.
+
+    Args:
+        mask_root (Path): Directory used for mask.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        selection (PlaneSelection): Value specifying selection for the operation.
+        image (OmezarrImage): Input image array to process.
+
+    Returns:
+        MaskSelection: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_mask(
+        ...     mask_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     selection=...,
+        ...     image=image_array,
+        ... )
     """
     sample_dir = mask_root / dataset / Path(sample)
     if not sample_dir.is_dir():
@@ -623,6 +853,24 @@ def roi_snr(image: np.ndarray, foreground_mask: np.ndarray, epsilon: float) -> t
     The foreground mask defines ``Omega_S``. Pixels outside the mask define
     ``Omega_B``. Non-finite image pixels are excluded. The background standard
     deviation is the sample standard deviation with ``ddof=1``.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        foreground_mask (np.ndarray): Array containing foreground mask.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        tuple[int, int, float, float, float, float]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = roi_snr(
+        ...     image=image_array,
+        ...     foreground_mask=image_array,
+        ...     epsilon=0.5,
+        ... )
     """
     array = np.asarray(image, dtype=np.float64)
     mask = np.asarray(foreground_mask, dtype=bool)
@@ -660,6 +908,18 @@ def robust_noise_sigma(image: np.ndarray) -> float:
 
     This diagnostic is retained from the previous noise-checking scripts. It is
     not used as the denominator of the thesis ROI SNR.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = robust_noise_sigma(image=image_array)
     """
     array = np.asarray(image, dtype=np.float64)
     if array.ndim != 2:
@@ -680,7 +940,18 @@ def robust_noise_sigma(image: np.ndarray) -> float:
 
 
 def _pearson_correlation(first: np.ndarray, second: np.ndarray) -> float:
-    """Return Pearson correlation for two equally sized arrays."""
+    """Return Pearson correlation for two equally sized arrays.
+
+    Args:
+        first (np.ndarray): Array containing first.
+        second (np.ndarray): Array containing second.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _pearson_correlation(first=image_array, second=image_array)
+    """
     first_flat = np.asarray(first, dtype=np.float64).ravel()
     second_flat = np.asarray(second, dtype=np.float64).ravel()
     finite = np.isfinite(first_flat) & np.isfinite(second_flat)
@@ -698,7 +969,17 @@ def _pearson_correlation(first: np.ndarray, second: np.ndarray) -> float:
 
 
 def neighbor_correlation(image: np.ndarray) -> float:
-    """Average Pearson correlation with horizontal and vertical neighbours."""
+    """Average Pearson correlation with horizontal and vertical neighbours.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = neighbor_correlation(image=image_array)
+    """
     array = np.asarray(image, dtype=np.float64)
     values: list[float] = []
     if array.shape[1] >= 2:
@@ -709,7 +990,17 @@ def neighbor_correlation(image: np.ndarray) -> float:
 
 
 def row_column_adjacent_correlations(image: np.ndarray) -> tuple[float, float]:
-    """Return mean correlation between adjacent rows and adjacent columns."""
+    """Return mean correlation between adjacent rows and adjacent columns.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = row_column_adjacent_correlations(image=image_array)
+    """
     array = np.asarray(image, dtype=np.float64)
     row_values = [
         _pearson_correlation(array[index, :], array[index + 1, :])
@@ -723,7 +1014,17 @@ def row_column_adjacent_correlations(image: np.ndarray) -> tuple[float, float]:
 
 
 def fft_peak_score(image: np.ndarray) -> float:
-    """Return strongest non-DC Fourier-power peak divided by median power."""
+    """Return strongest non-DC Fourier-power peak divided by median power.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = fft_peak_score(image=image_array)
+    """
     array = np.asarray(image, dtype=np.float64)
     array = array - np.mean(array)
     power = np.abs(np.fft.fftshift(np.fft.fft2(array))) ** 2
@@ -744,7 +1045,17 @@ def fft_peak_score(image: np.ndarray) -> float:
 
 
 def fft_directionality(image: np.ndarray) -> tuple[float, float]:
-    """Return FFT anisotropy score and dominant frequency-plane angle."""
+    """Return FFT anisotropy score and dominant frequency-plane angle.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = fft_directionality(image=image_array)
+    """
     array = np.asarray(image, dtype=np.float64)
     array = array - np.mean(array)
     power = np.abs(np.fft.fftshift(np.fft.fft2(array))) ** 2
@@ -795,7 +1106,26 @@ def calculate_plane_metrics(
     *,
     epsilon: float,
 ) -> PlaneMetrics:
-    """Calculate ROI SNR and all retained diagnostic metrics for one plane."""
+    """Calculate ROI SNR and all retained diagnostic metrics for one plane.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        foreground_mask (np.ndarray): Array containing foreground mask.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        PlaneMetrics: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = calculate_plane_metrics(
+        ...     image=image_array,
+        ...     foreground_mask=image_array,
+        ...     epsilon=0.5,
+        ... )
+    """
     array = np.asarray(image, dtype=np.float64)
     finite = array[np.isfinite(array)]
     if array.ndim != 2 or finite.size == 0:
@@ -839,7 +1169,20 @@ def calculate_plane_metrics(
 
 
 def _dataset_channels(dataset: str) -> list[int] | None:
-    """Return the intended source channel selection for a supported dataset."""
+    """Return the intended source channel selection for a supported dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[int] | None: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _dataset_channels(dataset="2d_time")
+    """
     if dataset == "2d_time":
         return [0]
     if dataset == "2d_wga_dapi":
@@ -856,12 +1199,47 @@ def _aggregate_image_record(
     image: OmezarrImage,
     plane_metrics: Sequence[PlaneMetrics],
 ) -> ImageRecord:
-    """Average per-plane values into one per-image record."""
+    """Average per-plane values into one per-image record.
+
+    Args:
+        source_kind (str): Text value specifying source kind.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        variant (str): Text value specifying variant.
+        image (OmezarrImage): Input image array to process.
+        plane_metrics (Sequence[PlaneMetrics]): Value specifying plane metrics for the operation.
+
+    Returns:
+        ImageRecord: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _aggregate_image_record(
+        ...     source_kind="source_kind",
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     variant="variant",
+        ...     image=image_array,
+        ...     plane_metrics=[],
+        ... )
+    """
     if not plane_metrics:
         raise ValueError(f"No planes were analysed for {image.path}")
 
     def average(field_name: str) -> float:
-        """Average one PlaneMetrics field across all planes in the image."""
+        """Average one PlaneMetrics field across all planes in the image.
+
+        Args:
+            field_name (str): Text value specifying field name.
+
+        Returns:
+            float: Computed numerical result.
+
+        Example:
+            >>> result = average(field_name="field_name")
+        """
         return _mean(getattr(metric, field_name) for metric in plane_metrics)
 
     return ImageRecord(
@@ -900,7 +1278,32 @@ def analyse_omezarr(
     time_indices: Sequence[int] | None = None,
     channel_indices: Sequence[int] | None = None,
 ) -> tuple[ImageRecord, list[PlaneRecord], list[PlaneSelection], list[PlaneMetrics], list[MaskSelection]]:
-    """Analyse one OME-Zarr image using hand-labelled masks."""
+    """Analyse one OME-Zarr image using hand-labelled masks.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        source_kind (str): Text value specifying source kind.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        mask_root (Path): Directory used for mask.
+        epsilon (float): Numerical value controlling epsilon.
+        variant (str): Text value specifying variant. Defaults to ``"-"``.
+        time_indices (Sequence[int] | None): Zero-based indices selecting time. ``None`` selects the function's default behavior.
+        channel_indices (Sequence[int] | None): Zero-based indices selecting channel. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[ImageRecord, list[PlaneRecord], list[PlaneSelection], list[PlaneMetrics], list[MaskSelection]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = analyse_omezarr(
+        ...     path=Path("path/to/resource"),
+        ...     source_kind="source_kind",
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     mask_root=Path("path/to/resource"),
+        ...     epsilon=0.5,
+        ... )
+    """
     image = read_omezarr_level0(path)
     selections = list(
         iter_2d_planes(
@@ -955,7 +1358,18 @@ def analyse_omezarr(
 
 
 def find_original_omezarrs(original_root: Path, datasets: Sequence[str]) -> list[tuple[str, str, Path]]:
-    """Discover original ``image.ome.zarr`` stores for selected datasets."""
+    """Discover original ``image.ome.zarr`` stores for selected datasets.
+
+    Args:
+        original_root (Path): Directory used for original.
+        datasets (Sequence[str]): Text value specifying datasets.
+
+    Returns:
+        list[tuple[str, str, Path]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_original_omezarrs(original_root=Path("path/to/resource"), datasets="datasets")
+    """
     discovered: list[tuple[str, str, Path]] = []
     for dataset in datasets:
         dataset_root = original_root / dataset
@@ -968,7 +1382,21 @@ def find_original_omezarrs(original_root: Path, datasets: Sequence[str]) -> list
 
 
 def _parse_n2v_path(n2v_root: Path, path: Path) -> tuple[str, str, str]:
-    """Extract dataset, sample, and N2V variant from the standard output path."""
+    """Extract dataset, sample, and N2V variant from the standard output path.
+
+    Args:
+        n2v_root (Path): Directory used for Noise2Void result.
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        tuple[str, str, str]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _parse_n2v_path(n2v_root=Path("path/to/resource"), path=Path("path/to/resource"))
+    """
     relative = path.relative_to(n2v_root)
     parts = relative.parts
     if len(parts) < 5 or parts[-2] != "denoised":
@@ -980,7 +1408,18 @@ def _parse_n2v_path(n2v_root: Path, path: Path) -> tuple[str, str, str]:
 
 
 def find_n2v_omezarrs(n2v_root: Path, datasets: Sequence[str]) -> list[tuple[str, str, str, Path]]:
-    """Discover standard Noise2Void denoised OME-Zarr outputs."""
+    """Discover standard Noise2Void denoised OME-Zarr outputs.
+
+    Args:
+        n2v_root (Path): Directory used for Noise2Void result.
+        datasets (Sequence[str]): Text value specifying datasets.
+
+    Returns:
+        list[tuple[str, str, str, Path]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_n2v_omezarrs(n2v_root=Path("path/to/resource"), datasets="datasets")
+    """
     discovered: list[tuple[str, str, str, Path]] = []
     if not n2v_root.is_dir():
         return discovered
@@ -996,7 +1435,18 @@ def find_n2v_omezarrs(n2v_root: Path, datasets: Sequence[str]) -> list[tuple[str
 
 
 def _variant_channels(dataset: str, variant: str) -> list[int]:
-    """Map an N2V model variant to source channel indices."""
+    """Map an N2V model variant to source channel indices.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        variant (str): Text value specifying variant.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _variant_channels(dataset="2d_time", variant="variant")
+    """
     if dataset == "2d_time" or variant == "time_ch0":
         return [0]
     if variant == "blue_only":
@@ -1016,7 +1466,27 @@ def _source_information(
     sample: str,
     variant: str,
 ) -> tuple[Path, int, list[int], str]:
-    """Resolve the original OME-Zarr and selected plane from N2V provenance."""
+    """Resolve the original OME-Zarr and selected plane from N2V provenance.
+
+    Args:
+        n2v_image (OmezarrImage): Value specifying Noise2Void result image for the operation.
+        original_root (Path): Directory used for original.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        variant (str): Text value specifying variant.
+
+    Returns:
+        tuple[Path, int, list[int], str]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _source_information(
+        ...     n2v_image=...,
+        ...     original_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     variant="variant",
+        ... )
+    """
     attrs = n2v_image.attrs
     source_attr = (
         _json_attr(attrs, "pft_n2v_source_zarr")
@@ -1059,7 +1529,21 @@ def _source_information(
 
 
 def _ssim(raw: np.ndarray, denoised: np.ndarray) -> float:
-    """Calculate structural similarity with a shared raw/denoised data range."""
+    """Calculate structural similarity with a shared raw/denoised data range.
+
+    Args:
+        raw (np.ndarray): Array containing raw.
+        denoised (np.ndarray): Array containing denoised.
+
+    Returns:
+        float: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _ssim(raw=image_array, denoised=image_array)
+    """
     raw_float = np.asarray(raw, dtype=np.float64)
     denoised_float = np.asarray(denoised, dtype=np.float64)
     if raw_float.shape != denoised_float.shape:
@@ -1090,7 +1574,16 @@ def _write_dataclass_csv(
     *,
     row_type: type[Any] | None = None,
 ) -> None:
-    """Write dataclass instances to CSV and retain headers for empty results."""
+    """Write dataclass instances to CSV and retain headers for empty results.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (Sequence[Any]): Value specifying rows for the operation.
+        row_type (type[Any] | None): Value specifying row type for the operation. ``None`` selects the function's default behavior.
+
+    Example:
+        >>> _write_dataclass_csv(path=Path("path/to/resource"), rows=[])
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if rows:
         record_type = type(rows[0])
@@ -1112,7 +1605,18 @@ def build_original_dataset_summaries(
     records: Sequence[ImageRecord],
     datasets: Sequence[str],
 ) -> list[OriginalDatasetSummaryRecord]:
-    """Aggregate original-image records into one comparison-ready row per dataset."""
+    """Aggregate original-image records into one comparison-ready row per dataset.
+
+    Args:
+        records (Sequence[ImageRecord]): Value specifying records for the operation.
+        datasets (Sequence[str]): Text value specifying datasets.
+
+    Returns:
+        list[OriginalDatasetSummaryRecord]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = build_original_dataset_summaries(records=[], datasets="datasets")
+    """
     summaries: list[OriginalDatasetSummaryRecord] = []
     for dataset in datasets:
         subset = [record for record in records if record.dataset == dataset]
@@ -1166,7 +1670,21 @@ def _summarize_n2v_group(
     *,
     preferred: bool,
 ) -> N2VDatasetSummaryRecord:
-    """Aggregate one dataset/variant N2V group into a comparison-ready row."""
+    """Aggregate one dataset/variant N2V group into a comparison-ready row.
+
+    Args:
+        records (Sequence[N2VPairRecord]): Value specifying records for the operation.
+        preferred (bool): Boolean flag controlling preferred.
+
+    Returns:
+        N2VDatasetSummaryRecord: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _summarize_n2v_group(records=[], preferred=True)
+    """
     if not records:
         raise ValueError("Cannot summarize an empty N2V record group.")
     dataset = records[0].dataset
@@ -1234,7 +1752,18 @@ def build_n2v_dataset_summaries(
     records: Sequence[N2VPairRecord],
     datasets: Sequence[str],
 ) -> tuple[list[N2VDatasetSummaryRecord], list[N2VDatasetSummaryRecord]]:
-    """Return preferred-dataset and all-variant N2V summary tables."""
+    """Return preferred-dataset and all-variant N2V summary tables.
+
+    Args:
+        records (Sequence[N2VPairRecord]): Value specifying records for the operation.
+        datasets (Sequence[str]): Text value specifying datasets.
+
+    Returns:
+        tuple[list[N2VDatasetSummaryRecord], list[N2VDatasetSummaryRecord]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = build_n2v_dataset_summaries(records=[], datasets="datasets")
+    """
     preferred_rows: list[N2VDatasetSummaryRecord] = []
     for dataset in datasets:
         group = _preferred_n2v_group(records, dataset)
@@ -1256,7 +1785,18 @@ def build_n2v_dataset_summaries(
 
 
 def _dataset_summary_lines(records: Sequence[ImageRecord], dataset: str) -> list[str]:
-    """Create compact original-or-denoised dataset summary lines."""
+    """Create compact original-or-denoised dataset summary lines.
+
+    Args:
+        records (Sequence[ImageRecord]): Value specifying records for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _dataset_summary_lines(records=[], dataset="2d_time")
+    """
     subset = [record for record in records if record.dataset == dataset]
     if not subset:
         return [f"Dataset: {dataset}", "  No successful images.", ""]
@@ -1290,7 +1830,29 @@ def write_original_summary(
     mask_root: Path,
     epsilon: float,
 ) -> str:
-    """Write and return the complete original-image summary report."""
+    """Write and return the complete original-image summary report.
+
+    Args:
+        records (Sequence[ImageRecord]): Value specifying records for the operation.
+        errors (Sequence[str]): Text value specifying errors.
+        output_path (Path): Filesystem path where the generated result is written.
+        datasets (Sequence[str]): Text value specifying datasets.
+        mask_root (Path): Directory used for mask.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = write_original_summary(
+        ...     records=[],
+        ...     errors="errors",
+        ...     output_path=Path("path/to/resource"),
+        ...     datasets="datasets",
+        ...     mask_root=Path("path/to/resource"),
+        ...     epsilon=0.5,
+        ... )
+    """
     lines = [
         "PFT 2D ORIGINAL OME-ZARR NOISE SUMMARY",
         "=" * 80,
@@ -1347,7 +1909,18 @@ def write_original_summary(
 
 
 def _preferred_n2v_group(records: Sequence[N2VPairRecord], dataset: str) -> list[N2VPairRecord]:
-    """Select the thesis-relevant N2V variant for one dataset."""
+    """Select the thesis-relevant N2V variant for one dataset.
+
+    Args:
+        records (Sequence[N2VPairRecord]): Value specifying records for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[N2VPairRecord]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _preferred_n2v_group(records=[], dataset="2d_time")
+    """
     subset = [record for record in records if record.dataset == dataset]
     if not subset:
         return []
@@ -1365,7 +1938,18 @@ def _preferred_n2v_group(records: Sequence[N2VPairRecord], dataset: str) -> list
 
 
 def _n2v_group_lines(records: Sequence[N2VPairRecord], title: str) -> list[str]:
-    """Create thesis-compatible raw-versus-N2V lines for one record group."""
+    """Create thesis-compatible raw-versus-N2V lines for one record group.
+
+    Args:
+        records (Sequence[N2VPairRecord]): Value specifying records for the operation.
+        title (str): Title displayed on the generated figure or report section.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _n2v_group_lines(records=[], title="title")
+    """
     if not records:
         return [f"Dataset: {title}", "  No successful pairs.", ""]
     return [
@@ -1400,7 +1984,29 @@ def write_n2v_summary(
     mask_root: Path,
     epsilon: float,
 ) -> str:
-    """Write and return the raw-to-N2V comparison summary report."""
+    """Write and return the raw-to-N2V comparison summary report.
+
+    Args:
+        pairs (Sequence[N2VPairRecord]): Value specifying pairs for the operation.
+        errors (Sequence[str]): Text value specifying errors.
+        output_path (Path): Filesystem path where the generated result is written.
+        datasets (Sequence[str]): Text value specifying datasets.
+        mask_root (Path): Directory used for mask.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = write_n2v_summary(
+        ...     pairs=[],
+        ...     errors="errors",
+        ...     output_path=Path("path/to/resource"),
+        ...     datasets="datasets",
+        ...     mask_root=Path("path/to/resource"),
+        ...     epsilon=0.5,
+        ... )
+    """
     lines = [
         "PFT 2D NOISE2VOID ROI-SNR COMPARISON SUMMARY",
         "=" * 80,
@@ -1468,7 +2074,27 @@ def run_original_mode(
     datasets: Sequence[str],
     epsilon: float,
 ) -> int:
-    """Analyse selected original 2D OME-Zarr images using ROI masks."""
+    """Analyse selected original 2D OME-Zarr images using ROI masks.
+
+    Args:
+        original_root (Path): Directory used for original.
+        mask_root (Path): Directory used for mask.
+        output_root (Path): Directory used for output.
+        datasets (Sequence[str]): Text value specifying datasets.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = run_original_mode(
+        ...     original_root=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     datasets="datasets",
+        ...     epsilon=0.5,
+        ... )
+    """
     discovered = find_original_omezarrs(original_root, datasets)
     output_dir = output_root / "original"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1539,7 +2165,33 @@ def run_n2v_mode(
     datasets: Sequence[str],
     epsilon: float,
 ) -> int:
-    """Compare N2V outputs with raw source planes using identical ROI masks."""
+    """Compare N2V outputs with raw source planes using identical ROI masks.
+
+    Args:
+        original_root (Path): Directory used for original.
+        n2v_root (Path): Directory used for Noise2Void result.
+        mask_root (Path): Directory used for mask.
+        output_root (Path): Directory used for output.
+        datasets (Sequence[str]): Text value specifying datasets.
+        epsilon (float): Numerical value controlling epsilon.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_n2v_mode(
+        ...     original_root=Path("path/to/resource"),
+        ...     n2v_root=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     datasets="datasets",
+        ...     epsilon=0.5,
+        ... )
+    """
     discovered = find_n2v_omezarrs(n2v_root, datasets)
     output_dir = output_root / "n2v"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1716,7 +2368,22 @@ def run_n2v_mode(
 
 
 def _prompt_choice(title: str, items: Sequence[tuple[str, str]], default: int = 0) -> str:
-    """Prompt for one labelled terminal selection and return its stored value."""
+    """Prompt for one labelled terminal selection and return its stored value.
+
+    Args:
+        title (str): Title displayed on the generated figure or report section.
+        items (Sequence[tuple[str, str]]): Text value specifying items.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _prompt_choice(title="title", items="items")
+    """
     print(f"\n{title}")
     for index, (label, _) in enumerate(items):
         suffix = " (default)" if index == default else ""
@@ -1729,7 +2396,14 @@ def _prompt_choice(title: str, items: Sequence[tuple[str, str]], default: int = 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line argument parser."""
+    """Create the command-line argument parser.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("original", "n2v"), help="Analysis mode.")
     parser.add_argument(
@@ -1781,7 +2455,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run original-image or Noise2Void 2D ROI-SNR analysis."""
+    """Run original-image or Noise2Void 2D ROI-SNR analysis.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
 
     mode = args.mode

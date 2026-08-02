@@ -1,4 +1,4 @@
-"""
+r"""
 Import CZI datasets, create compact exports, and validate OME-Zarr data.
 The script supports three canonical datasets: ``2d_time``, ``2d_wga_dapi``,
 and ``3d``. A user can process one dataset at a time or select ``all`` to
@@ -13,6 +13,23 @@ At the end of a
 
 run, the script refreshes one compact validation summary per dataset and a
 global summary in ``results/img``.
+
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/process_czi.py --help
+
+Process every CZI file in the 2D time-course source directory:
+
+    python scripts/denoising/process_czi.py \
+        --dataset 2d_time \
+        --folder E:/2D_data_time \
+        --all \
+        --non-interactive \
+        --pyramid-max-layer 2 \
+        --pyramid-downscale 2
 """
 
 from __future__ import annotations
@@ -25,7 +42,20 @@ _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
 
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``."""
+    """Return the repository root containing both ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
+    """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -92,7 +122,15 @@ class ProcessingStats:
     extra_summary_rows: list[ValidationSummaryRow] = field(default_factory=list)
 
     def merge(self, other: "ProcessingStats") -> None:
-        """Add another processing result to this aggregate."""
+        """Add another processing result to this aggregate.
+
+        Args:
+            other ("ProcessingStats"): Value specifying other for the operation.
+
+        Example:
+            >>> instance = ProcessingStats(...)
+            >>> instance.merge(other=...)
+        """
         for dataset in other.datasets_requested:
             if dataset not in self.datasets_requested:
                 self.datasets_requested.append(dataset)
@@ -106,7 +144,20 @@ PATHS = Paths()
 
 
 def default_folder(dataset: str) -> Path:
-    """Return the configured default raw-data directory for one dataset."""
+    """Return the configured default raw-data directory for one dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = default_folder(dataset="2d_time")
+    """
     if dataset == "2d_time":
         return PATHS.data_2d_time
     if dataset == "2d_wga_dapi":
@@ -117,19 +168,56 @@ def default_folder(dataset: str) -> Path:
 
 
 def prompt_float(prompt: str, default: float) -> float:
-    """Read a floating-point value or return the supplied default."""
+    """Read a floating-point value or return the supplied default.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (float): Numerical value controlling default.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = prompt_float(prompt="prompt", default=0.5)
+    """
     value = input(f"{prompt} (empty={default}): ").strip()
     return float(value) if value else default
 
 
 def prompt_int(prompt: str, default: int) -> int:
-    """Read an integer or return the supplied default."""
+    """Read an integer or return the supplied default.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        default (int): Numerical value controlling default.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = prompt_int(prompt="prompt", default=1)
+    """
     value = input(f"{prompt} (empty={default}): ").strip()
     return int(value) if value else default
 
 
 def prompt_choice(prompt: str, options: list[str], default: int = 0) -> int:
-    """Display numbered options and return the selected zero-based index."""
+    """Display numbered options and return the selected zero-based index.
+
+    Args:
+        prompt (str): Text value specifying prompt.
+        options (list[str]): Text value specifying options.
+        default (int): Numerical value controlling default. Defaults to ``0``.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prompt_choice(prompt="prompt", options="options")
+    """
     print(prompt)
     for index, option in enumerate(options):
         marker = " (default)" if index == default else ""
@@ -142,7 +230,21 @@ def prompt_choice(prompt: str, options: list[str], default: int = 0) -> int:
 
 
 def choose_file_interactive(files: list[Path], root: Path) -> Path:
-    """Display discovered CZI files and return one selected source file."""
+    """Display discovered CZI files and return one selected source file.
+
+    Args:
+        files (list[Path]): Filesystem path used for files.
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_file_interactive(files=Path("path/to/resource"), root=Path("path/to/resource"))
+    """
     print("\nAvailable CZI files:")
     for index, file_path in enumerate(files):
         try:
@@ -157,7 +259,23 @@ def choose_file_interactive(files: list[Path], root: Path) -> Path:
 
 
 def output_dataset_path(dataset: str, source_file: Path, dataset_root: Path) -> Path:
-    """Build an output path while preserving nested experiment directories."""
+    """Build an output path while preserving nested experiment directories.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_file (Path): Filesystem path associated with source.
+        dataset_root (Path): Directory used for dataset.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = output_dataset_path(
+        ...     dataset="2d_time",
+        ...     source_file=Path("path/to/resource"),
+        ...     dataset_root=Path("path/to/resource"),
+        ... )
+    """
     try:
         relative_parent = source_file.resolve().parent.relative_to(dataset_root.resolve())
     except ValueError:
@@ -166,7 +284,23 @@ def output_dataset_path(dataset: str, source_file: Path, dataset_root: Path) -> 
 
 
 def expected_2d_output_dir(dataset: str, source_file: Path, dataset_root: Path) -> Path:
-    """Return the expected sample output directory for one 2D source image."""
+    """Return the expected sample output directory for one 2D source image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_file (Path): Filesystem path associated with source.
+        dataset_root (Path): Directory used for dataset.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = expected_2d_output_dir(
+        ...     dataset="2d_time",
+        ...     source_file=Path("path/to/resource"),
+        ...     dataset_root=Path("path/to/resource"),
+        ... )
+    """
     return RESULTS_IMG_DIR / output_dataset_path(dataset, source_file, dataset_root) / source_file.stem
 
 
@@ -179,7 +313,29 @@ def skipped_or_error_row(
     status: str,
     detail: str,
 ) -> ValidationSummaryRow:
-    """Create a compact row when validation was skipped or processing failed."""
+    """Create a compact row when validation was skipped or processing failed.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        source_file (Path | str): Filesystem path associated with source.
+        output_dir (Path): Directory where generated resources are written.
+        status (str): Text value specifying status.
+        detail (str): Text value specifying detail.
+
+    Returns:
+        ValidationSummaryRow: Result produced by the operation.
+
+    Example:
+        >>> result = skipped_or_error_row(
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     source_file=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     status="status",
+        ...     detail="detail",
+        ... )
+    """
     return make_validation_summary_row(
         dataset=dataset,
         sample=sample,
@@ -199,7 +355,28 @@ def run_one_2d(
     scalebar_um: float,
     validate: bool = True,
 ) -> tuple[Path, ProcessingStats]:
-    """Load and export one 2D CZI image and return compact processing statistics."""
+    """Load and export one 2D CZI image and return compact processing statistics.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_file (Path): Filesystem path associated with source.
+        dataset_root (Path): Directory used for dataset.
+        visualize (bool): Boolean flag controlling visualize.
+        scalebar_um (float): Numerical value controlling scalebar um.
+        validate (bool): Boolean flag controlling validate. Defaults to ``True``.
+
+    Returns:
+        tuple[Path, ProcessingStats]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_one_2d(
+        ...     dataset="2d_time",
+        ...     source_file=Path("path/to/resource"),
+        ...     dataset_root=Path("path/to/resource"),
+        ...     visualize=True,
+        ...     scalebar_um=0.5,
+        ... )
+    """
     stats = ProcessingStats(datasets_requested=[dataset], files_discovered=1)
     output_dir = expected_2d_output_dir(dataset, source_file, dataset_root)
     try:
@@ -253,7 +430,27 @@ def run_all_2d(
     stop_on_error: bool = False,
     validate: bool = True,
 ) -> ProcessingStats:
-    """Process all recursively discovered 2D CZI files in one dataset."""
+    """Process all recursively discovered 2D CZI files in one dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        folder (Path): Filesystem path used for folder.
+        scalebar_um (float): Numerical value controlling scalebar um.
+        start (int): Numerical value controlling start. Defaults to ``0``.
+        limit (int | None): Numerical value controlling limit. ``None`` selects the function's default behavior.
+        stop_on_error (bool): Boolean flag controlling stop on error. Defaults to ``False``.
+        validate (bool): Boolean flag controlling validate. Defaults to ``True``.
+
+    Returns:
+        ProcessingStats: Result produced by the operation.
+
+    Example:
+        >>> result = run_all_2d(
+        ...     dataset="2d_time",
+        ...     folder=Path("path/to/resource"),
+        ...     scalebar_um=0.5,
+        ... )
+    """
     files = list_czi_files(folder, recursive=True)[start:]
     if limit is not None:
         files = files[:limit]
@@ -313,7 +510,21 @@ def run_all_3d(
     stop_on_error: bool = False,
     validate: bool = True,
 ) -> ProcessingStats:
-    """Process every recursively discovered 3D CZI file and preserve group paths."""
+    """Process every recursively discovered 3D CZI file and preserve group paths.
+
+    Args:
+        base_folder (Path): Filesystem path used for base folder.
+        pyramid_max_layer (int): Numerical value controlling pyramid max layer. Defaults to ``2``.
+        pyramid_downscale (int): Numerical value controlling pyramid downscale. Defaults to ``2``.
+        stop_on_error (bool): Boolean flag controlling stop on error. Defaults to ``False``.
+        validate (bool): Boolean flag controlling validate. Defaults to ``True``.
+
+    Returns:
+        ProcessingStats: Result produced by the operation.
+
+    Example:
+        >>> result = run_all_3d(base_folder=Path("path/to/resource"))
+    """
     groups = group_czi_files_by_relative_parent(base_folder)
     total = sum(len(files) for files in groups.values())
     stats = ProcessingStats(datasets_requested=["3d_data"], files_discovered=total)
@@ -372,7 +583,25 @@ def resolve_input_folder(
     search_root: str | None,
     interactive: bool,
 ) -> Path:
-    """Resolve one dataset folder from defaults, parent paths, or user selection."""
+    """Resolve one dataset folder from defaults, parent paths, or user selection.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        supplied_folder (str | None): Text value specifying supplied folder.
+        search_root (str | None): Directory used for search.
+        interactive (bool): Boolean flag controlling interactive.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = resolve_input_folder(
+        ...     dataset="2d_time",
+        ...     supplied_folder="supplied_folder",
+        ...     search_root=Path("path/to/resource"),
+        ...     interactive=True,
+        ... )
+    """
     preferred = Path(supplied_folder) if supplied_folder else default_folder(dataset)
     return resolve_dataset_directory(
         dataset,
@@ -383,7 +612,14 @@ def resolve_input_folder(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Construct command-line arguments for one-dataset or all-dataset processing."""
+    """Construct command-line arguments for one-dataset or all-dataset processing.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Convert CZI datasets to OME-Zarr and verify exact data/metadata preservation."
     )
@@ -427,7 +663,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _print_final_summary(stats: ProcessingStats, global_summary: Path, dataset_summaries: dict[str, Path]) -> None:
-    """Print only aggregate processing and validation information at the end."""
+    """Print only aggregate processing and validation information at the end.
+
+    Args:
+        stats (ProcessingStats): Value specifying stats for the operation.
+        global_summary (Path): Filesystem path used for global summary.
+        dataset_summaries (dict[str, Path]): Filesystem path used for dataset summaries.
+
+    Example:
+        >>> _print_final_summary(
+        ...     stats=...,
+        ...     global_summary=Path("path/to/resource"),
+        ...     dataset_summaries="dataset_summaries",
+        ... )
+    """
     all_rows = scan_validation_reports(RESULTS_IMG_DIR)
     pass_count = sum(row.status == "PASS" for row in all_rows)
     fail_count = sum(row.status == "FAIL" for row in all_rows)
@@ -446,7 +695,14 @@ def _print_final_summary(stats: ProcessingStats, global_summary: Path, dataset_s
 
 
 def main() -> None:
-    """Execute one selected dataset or all datasets and refresh all summaries."""
+    """Execute one selected dataset or all datasets and refresh all summaries.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args()
     interactive = not args.non_interactive and stdin_is_interactive()
     validate = not args.skip_validation

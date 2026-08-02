@@ -1,4 +1,4 @@
-"""
+r"""
 Calculate raw and post-local-threshold structured-noise parameters for 2D data.
 
 The script reads source OME-Zarr images from both supported 2D datasets. Each
@@ -15,6 +15,21 @@ The thesis-specific CSV reports:
 The local-threshold output used for the second measurement is not normalized.
 Retained pixels preserve their original intensity values, and rejected pixels
 are zero.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/FFT.py --help
+
+Representative execution:
+
+    python scripts/denoising/FFT.py \
+        --dataset 2d_time \
+        --level 0 \
+        --output-root results/example_output \
+        --max-images 4 \
+        --max-frames 10
 """
 
 from __future__ import annotations
@@ -33,7 +48,17 @@ _SCRIPT_PATH = Path(__file__).resolve()
 
 
 def _find_project_root() -> Path:
-    """Locate the repository root independently of the current directory."""
+    """Locate the repository root independently of the current directory.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_project_root()
+    """
     for candidate in (_SCRIPT_PATH.parent, *_SCRIPT_PATH.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -73,7 +98,15 @@ STAGES = ("raw", "local_threshold")
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write dictionaries as UTF-8 CSV using the union of all column names."""
+    """Write dictionaries as UTF-8 CSV using the union of all column names.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("status\nno_rows\n", encoding="utf-8")
@@ -94,7 +127,18 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _save_preview(path: Path, image_u8: np.ndarray) -> None:
-    """Save a display-only grayscale FFT preview."""
+    """Save a display-only grayscale FFT preview.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        image_u8 (np.ndarray): Array containing image u8.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _save_preview(path=Path("path/to/resource"), image_u8=image_array)
+    """
     try:
         from PIL import Image
     except ImportError as exc:
@@ -104,7 +148,17 @@ def _save_preview(path: Path, image_u8: np.ndarray) -> None:
 
 
 def _numeric(values: Iterable[Any]) -> np.ndarray:
-    """Return finite numeric values as a one-dimensional array."""
+    """Return finite numeric values as a one-dimensional array.
+
+    Args:
+        values (Iterable[Any]): Value specifying values for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _numeric(values=...)
+    """
     numbers: list[float] = []
     for value in values:
         if isinstance(value, bool):
@@ -119,7 +173,18 @@ def _numeric(values: Iterable[Any]) -> np.ndarray:
 
 
 def _selected_channel(dataset: str, channel_index: int) -> bool:
-    """Return whether a channel belongs to the supported biological dataset."""
+    """Return whether a channel belongs to the supported biological dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        channel_index (int): Zero-based index selecting channel.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _selected_channel(dataset="2d_time", channel_index=1)
+    """
     if dataset == "2d_time":
         return channel_index == 0
     if dataset == "2d_wga_dapi":
@@ -128,7 +193,18 @@ def _selected_channel(dataset: str, channel_index: int) -> bool:
 
 
 def _summarize_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate detailed rows by processing stage and channel."""
+    """Aggregate detailed rows by processing stage and channel.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _summarize_rows(dataset="2d_time", rows="rows")
+    """
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[(str(row["processing_stage"]), str(row["channel"]))].append(row)
@@ -179,7 +255,18 @@ def _thesis_summary_rows(
     dataset: str,
     detailed_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Create compact rows matching the structured-noise thesis table."""
+    """Create compact rows matching the structured-noise thesis table.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        detailed_rows (list[dict[str, Any]]): Text value specifying detailed rows.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _thesis_summary_rows(dataset="2d_time", detailed_rows="detailed_rows")
+    """
     output: list[dict[str, Any]] = []
     channels = sorted({str(row["channel"]) for row in detailed_rows})
     scopes = [("all_channels", None), *((channel, channel) for channel in channels)]
@@ -232,7 +319,40 @@ def _stage_rows(
     fft_config: FFTDiagnosticConfig,
     level: int,
 ) -> tuple[list[dict[str, Any]], np.ndarray]:
-    """Calculate raw and actual post-filter-pipeline metrics for one plane."""
+    """Calculate raw and actual post-filter-pipeline metrics for one plane.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        image_name (str): Text value specifying image name.
+        source_path (Path): Filesystem path associated with source.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        channel_index (int): Zero-based index selecting channel.
+        frame_index (int): Zero-based index selecting frame.
+        raw_plane (np.ndarray): Array containing raw plane.
+        threshold_params (LocalThresholdParams): Value specifying threshold params for the operation.
+        fft_config (FFTDiagnosticConfig): Value specifying Fourier-transform result config for the operation.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        tuple[list[dict[str, Any]], np.ndarray]: Mapping containing the generated or resolved values.
+
+    Raises:
+        AssertionError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _stage_rows(
+        ...     dataset="2d_time",
+        ...     image_name="image_name",
+        ...     source_path=Path("path/to/resource"),
+        ...     axes="axes",
+        ...     channel_index=1,
+        ...     frame_index=1,
+        ...     raw_plane=image_array,
+        ...     threshold_params=...,
+        ...     fft_config=...,
+        ...     level=1,
+        ... )
+    """
     passthrough = is_passthrough_image(dataset, image_name)
     if passthrough:
         filtered = np.array(raw_plane, copy=True)
@@ -318,7 +438,36 @@ def _process_dataset(
     max_frames: int | None,
     save_previews: bool,
 ) -> tuple[Path, Path, Path, int]:
-    """Measure one dataset and write detailed, summary, and thesis CSV files."""
+    """Measure one dataset and write detailed, summary, and thesis CSV files.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        output_root (Path): Directory used for output.
+        fft_config (FFTDiagnosticConfig): Value specifying Fourier-transform result config for the operation.
+        threshold_params (LocalThresholdParams): Value specifying threshold params for the operation.
+        level (int): Numerical value controlling level.
+        max_images (int | None): Maximum permitted value of images.
+        max_frames (int | None): Maximum permitted value of frames.
+        save_previews (bool): Boolean flag controlling save previews.
+
+    Returns:
+        tuple[Path, Path, Path, int]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _process_dataset(
+        ...     dataset="2d_time",
+        ...     output_root=Path("path/to/resource"),
+        ...     fft_config=...,
+        ...     threshold_params=...,
+        ...     level=1,
+        ...     max_images=1,
+        ...     max_frames=1,
+        ...     save_previews=True,
+        ... )
+    """
     zarr_paths = list_omezarr_images(dataset)
     if max_images is not None:
         zarr_paths = zarr_paths[:max_images]
@@ -412,7 +561,14 @@ def _process_dataset(
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse dataset, FFT, and local-threshold parameters."""
+    """Parse dataset, FFT, and local-threshold parameters.
+
+    Returns:
+        argparse.Namespace: Result produced by the operation.
+
+    Example:
+        >>> result = _parse_args()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Calculate thesis structured-noise parameters before and after "
@@ -452,7 +608,14 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run raw and post-threshold diagnostics for the selected datasets."""
+    """Run raw and post-threshold diagnostics for the selected datasets.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = _parse_args()
     fft_config = FFTDiagnosticConfig(
         dc_radius_px=args.dc_radius,

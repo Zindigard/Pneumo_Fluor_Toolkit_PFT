@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for u train."""
+
 from __future__ import annotations
 
 import json
@@ -15,7 +17,17 @@ from PFT.core_prog_parts.denoising.notch_filter import _ensure_cyx, _to_numpy
 "Implements a training pipeline for a UNet-based segmentation model, including data loading, patch sampling, model architecture, loss functions, and training loop, with configuration and dataset management."
 
 def find_repo_root(start: Path | None = None) -> Path:
-    """Find and return the requested resource."""
+    """Find and return the requested resource.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_repo_root()
+    """
     start = (start or Path(__file__)).resolve()
     for p in [start] + list(start.parents):
         if (p / "pyproject.toml").exists():
@@ -29,6 +41,7 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 @dataclass
 class TrainConfig:
+    """Store validated configuration or result data for train config."""
     repo_root: Path = find_repo_root(Path(__file__).resolve())
 
     dataset: str = "2d_time"
@@ -63,7 +76,18 @@ class TrainConfig:
 
 
 def yes_no_prompt(text, default=True):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        text (Any): Value specifying text for the operation.
+        default (Any): Value specifying default for the operation. Defaults to ``True``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = yes_no_prompt(text=...)
+    """
     suffix = "[Y/n]" if default else "[y/N]"
     while True:
         s = input(f"{text} {suffix} ").strip().lower()
@@ -77,7 +101,17 @@ def yes_no_prompt(text, default=True):
 
 
 def choose_dataset_terminal(default="2d_time"):
-    """Ask the user to choose a workflow option."""
+    """Ask the user to choose a workflow option.
+
+    Args:
+        default (Any): Value specifying default for the operation. Defaults to ``"2d_time"``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = choose_dataset_terminal()
+    """
     datasets = ["2d_time", "2d_wga_dapi"]
     print("\nChoose dataset to train:")
     for i, ds in enumerate(datasets, 1):
@@ -99,7 +133,26 @@ def choose_dataset_terminal(default="2d_time"):
 
 
 def resolve_filtered_zarr(filtered_root: Path, dataset: str, sample: str) -> Path:
-    """Resolve and return the requested path or identifier."""
+    """Resolve and return the requested path or identifier.
+
+    Args:
+        filtered_root (Path): Directory used for filtered.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_filtered_zarr(
+        ...     filtered_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     cand = filtered_root / dataset / sample / "image.ome.zarr"
     if cand.exists():
         return cand
@@ -110,7 +163,26 @@ def resolve_filtered_zarr(filtered_root: Path, dataset: str, sample: str) -> Pat
 
 
 def list_pairs(mask_root: Path, filtered_root: Path, dataset: str):
-    """List available inputs for this workflow."""
+    """List available inputs for this workflow.
+
+    Args:
+        mask_root (Path): Directory used for mask.
+        filtered_root (Path): Directory used for filtered.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_pairs(
+        ...     mask_root=Path("path/to/resource"),
+        ...     filtered_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     pairs: list[tuple[Path, Path]] = []
     ds_mask_root = mask_root / dataset
     if not ds_mask_root.exists():
@@ -134,7 +206,23 @@ def list_pairs(mask_root: Path, filtered_root: Path, dataset: str):
 
 
 def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.ndarray:
-    """Internal helper used by this module."""
+    """Internal helper used by this module.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+        channel_index (int): Zero-based index selecting channel.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _extract_display_plane(
+        ...     x=image_array,
+        ...     axes="axes",
+        ...     channel_index=1,
+        ... )
+    """
     if "c" in axes:
         plane = np.take(x, indices=channel_index, axis=axes.index("c"))
     else:
@@ -145,7 +233,22 @@ def _extract_display_plane(x: np.ndarray, axes: str, channel_index: int) -> np.n
 
 
 def read_image_mask_numpy(img_path: str, mask_path: str, dataset: str = "2d_time"):
-    """Read data from disk and return parsed content."""
+    """Read data from disk and return parsed content.
+
+    Args:
+        img_path (str): Filesystem path associated with img.
+        mask_path (str): Filesystem path associated with mask.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``. Defaults to ``"2d_time"``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_image_mask_numpy(img_path=Path("path/to/resource"), mask_path=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(Path(img_path), level=0, as_numpy=False)
     img = _to_numpy(arr)
     img, axes = _ensure_cyx(img, axes)
@@ -180,7 +283,21 @@ def read_image_mask_numpy(img_path: str, mask_path: str, dataset: str = "2d_time
 
 
 def normalize_crop_numpy(x: np.ndarray, mode: str):
-    """Normalize data into the expected range."""
+    """Normalize data into the expected range.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        mode (str): Text value specifying mode.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = normalize_crop_numpy(x=image_array, mode="mode")
+    """
     x = x.astype(np.float32)
 
     if mode == "scale_uint16":
@@ -200,7 +317,18 @@ def normalize_crop_numpy(x: np.ndarray, mode: str):
 
 
 def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        normalize_mode (Any): Value specifying normalize mode for the operation. Defaults to ``"percentile"``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = image_to_rgb_uint8(img=image_array)
+    """
     if img.ndim == 2:
         img = img[..., None]
 
@@ -222,14 +350,50 @@ def image_to_rgb_uint8(img: np.ndarray, normalize_mode="percentile"):
 
 
 def random_crop_xy(H, W, patch):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        H (Any): Value specifying h for the operation.
+        W (Any): Value specifying w for the operation.
+        patch (Any): Value specifying patch for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = random_crop_xy(
+        ...     H=...,
+        ...     W=...,
+        ...     patch=...,
+        ... )
+    """
     y0 = random.randint(0, H - patch)
     x0 = random.randint(0, W - patch)
     return y0, x0
 
 
 def clamp_crop_center(cy, cx, H, W, patch):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        cy (Any): Value specifying cy for the operation.
+        cx (Any): Value specifying cx for the operation.
+        H (Any): Value specifying h for the operation.
+        W (Any): Value specifying w for the operation.
+        patch (Any): Value specifying patch for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = clamp_crop_center(
+        ...     cy=...,
+        ...     cx=...,
+        ...     H=...,
+        ...     W=...,
+        ...     patch=...,
+        ... )
+    """
     half = patch // 2
     y0 = int(np.clip(cy - half, 0, H - patch))
     x0 = int(np.clip(cx - half, 0, W - patch))
@@ -237,7 +401,26 @@ def clamp_crop_center(cy, cx, H, W, patch):
 
 
 def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        img (np.ndarray): Array containing img.
+        msk (np.ndarray): Array containing msk.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = sample_patch_numpy(
+        ...     img=image_array,
+        ...     msk=image_array,
+        ...     cfg=config,
+        ... )
+    """
     H, W = msk.shape
     P = cfg.patch
 
@@ -293,11 +476,34 @@ def sample_patch_numpy(img: np.ndarray, msk: np.ndarray, cfg: TrainConfig):
 
 
 def make_dataset(pairs, cfg: TrainConfig, training: bool):
-    """Create and return the requested display or object."""
+    """Create and return the requested display or object.
+
+    Args:
+        pairs (Any): Value specifying pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        training (bool): Boolean flag controlling training.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = make_dataset(
+        ...     pairs=...,
+        ...     cfg=config,
+        ...     training=True,
+        ... )
+    """
     rng = random.Random(cfg.seed + (0 if training else 999))
 
     def gen():
-        """Helper function used by this module."""
+        """Helper function used by this module.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = gen()
+        """
         while True:
             img_path, mask_path = pairs[rng.randint(0, len(pairs) - 1)]
             img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
@@ -328,7 +534,19 @@ def make_dataset(pairs, cfg: TrainConfig, training: bool):
 
 
 def conv_block(x, filters, dropout=0.0):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        x (Any): Horizontal coordinate or numerical input value used by the operation.
+        filters (Any): Value specifying filters for the operation.
+        dropout (Any): Value specifying dropout for the operation. Defaults to ``0.0``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = conv_block(x=..., filters=...)
+    """
     x = tf.keras.layers.Conv2D(filters, 3, padding="same")(x)
     x = tf.keras.layers.BatchNormalization()(x)
     x = tf.keras.layers.Activation("relu")(x)
@@ -343,7 +561,19 @@ def conv_block(x, filters, dropout=0.0):
 
 
 def build_unet(input_shape, base_filters=8, dropout=0.0):
-    """Build and return the requested object."""
+    """Build and return the requested object.
+
+    Args:
+        input_shape (Any): Value specifying input shape for the operation.
+        base_filters (Any): Value specifying base filters for the operation. Defaults to ``8``.
+        dropout (Any): Value specifying dropout for the operation. Defaults to ``0.0``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = build_unet(input_shape=...)
+    """
     inputs = tf.keras.Input(shape=input_shape)
 
     c1 = conv_block(inputs, base_filters, dropout=dropout)
@@ -381,7 +611,19 @@ def build_unet(input_shape, base_filters=8, dropout=0.0):
 
 
 def dice_coef(y_true, y_pred, eps=1e-6):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+        eps (Any): Value specifying eps for the operation. Defaults to ``1e-6``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = dice_coef(y_true=..., y_pred=...)
+    """
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred, tf.float32)
     y_pred = tf.clip_by_value(y_pred, 0.0, 1.0)
@@ -392,19 +634,53 @@ def dice_coef(y_true, y_pred, eps=1e-6):
 
 
 def dice_loss(y_true, y_pred):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = dice_loss(y_true=..., y_pred=...)
+    """
     return 1.0 - dice_coef(y_true, y_pred)
 
 
 def bce_dice_loss(y_true, y_pred):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = bce_dice_loss(y_true=..., y_pred=...)
+    """
     bce = tf.keras.losses.binary_crossentropy(y_true, y_pred)
     bce = tf.reduce_mean(bce)
     return 0.5 * bce + 0.5 * dice_loss(y_true, y_pred)
 
 
 def iou_coef(y_true, y_pred, eps=1e-6):
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        y_true (Any): Value specifying y true for the operation.
+        y_pred (Any): Value specifying y pred for the operation.
+        eps (Any): Value specifying eps for the operation. Defaults to ``1e-6``.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = iou_coef(y_true=..., y_pred=...)
+    """
     y_true = tf.cast(y_true, tf.float32)
     y_pred = tf.cast(y_pred > 0.5, tf.float32)
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
@@ -414,7 +690,16 @@ def iou_coef(y_true, y_pred, eps=1e-6):
 
 
 def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
-    """Print a formatted summary for the current workflow."""
+    """Print a formatted summary for the current workflow.
+
+    Args:
+        pairs (Any): Value specifying pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        title (Any): Title displayed on the generated figure or report section. Defaults to ``"DATASET"``.
+
+    Example:
+        >>> print_dataset_summary(pairs=..., cfg=config)
+    """
     print(f"\n=== {title} ===")
     print(f"Dataset: {cfg.dataset}")
     print(f"Mask root: {cfg.mask_root}")
@@ -451,7 +736,20 @@ def print_dataset_summary(pairs, cfg: TrainConfig, title="DATASET"):
 
 
 def print_split_summary(train_pairs, val_pairs, cfg: TrainConfig):
-    """Print a formatted summary for the current workflow."""
+    """Print a formatted summary for the current workflow.
+
+    Args:
+        train_pairs (Any): Value specifying train pairs for the operation.
+        val_pairs (Any): Value specifying val pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+
+    Example:
+        >>> print_split_summary(
+        ...     train_pairs=...,
+        ...     val_pairs=...,
+        ...     cfg=config,
+        ... )
+    """
     print("\n=== TRAIN / VAL SPLIT ===")
     print(f"Train images: {len(train_pairs)}")
     print(f"Val images:   {len(val_pairs)}")
@@ -468,7 +766,16 @@ def print_split_summary(train_pairs, val_pairs, cfg: TrainConfig):
 
 
 def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
-    """Print a formatted summary for the current workflow."""
+    """Print a formatted summary for the current workflow.
+
+    Args:
+        pairs (Any): Value specifying pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        n (Any): Value specifying n for the operation. Defaults to ``5``.
+
+    Example:
+        >>> print_random_patch_examples(pairs=..., cfg=config)
+    """
     print("\n=== RANDOM PATCH CHECK ===")
     for i in range(n):
         img_path, mask_path = random.choice(pairs)
@@ -487,7 +794,26 @@ def print_random_patch_examples(pairs, cfg: TrainConfig, n=5):
 
 
 def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_path: Path):
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        pairs (Any): Value specifying pairs for the operation.
+        train_pairs (Any): Value specifying train pairs for the operation.
+        val_pairs (Any): Value specifying val pairs for the operation.
+        C (Any): Value specifying c for the operation.
+        out_path (Path): Filesystem path associated with out.
+
+    Example:
+        >>> save_run_summary(
+        ...     cfg=config,
+        ...     pairs=...,
+        ...     train_pairs=...,
+        ...     val_pairs=...,
+        ...     C=...,
+        ...     out_path=Path("path/to/resource"),
+        ... )
+    """
     train_patches_per_epoch = cfg.steps_per_epoch * cfg.batch
     val_patches_per_epoch = cfg.val_steps * cfg.batch
 
@@ -528,7 +854,20 @@ def save_run_summary(cfg: TrainConfig, pairs, train_pairs, val_pairs, C, out_pat
 
 
 def save_training_curves(history, out_png: Path, dataset_name: str):
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        history (Any): Value specifying history for the operation.
+        out_png (Path): Filesystem path used for out PNG image.
+        dataset_name (str): Text value specifying dataset name.
+
+    Example:
+        >>> save_training_curves(
+        ...     history=...,
+        ...     out_png=Path("path/to/resource"),
+        ...     dataset_name="dataset_name",
+        ... )
+    """
     hist = history.history
     epochs = np.arange(1, len(hist.get("loss", [])) + 1)
 
@@ -582,7 +921,23 @@ def save_training_curves(history, out_png: Path, dataset_name: str):
 
 
 def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6):
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        pairs (Any): Value specifying pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        out_dir (Path): Directory used for out.
+        n (Any): Value specifying n for the operation. Defaults to ``6``.
+
+    Example:
+        >>> save_prediction_previews(
+        ...     model="model_name",
+        ...     pairs=...,
+        ...     cfg=config,
+        ...     out_dir=Path("path/to/resource"),
+        ... )
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     chosen = random.sample(pairs, k=min(n, len(pairs)))
 
@@ -630,7 +985,16 @@ def save_prediction_previews(model, pairs, cfg: TrainConfig, out_dir: Path, n=6)
 
 
 def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None = None):
-    """Display a quick visual preview for inspection."""
+    """Display a quick visual preview for inspection.
+
+    Args:
+        pairs (Any): Value specifying pairs for the operation.
+        cfg (TrainConfig): Value specifying cfg for the operation.
+        save_path (Path | None): Filesystem path associated with save. ``None`` selects the function's default behavior.
+
+    Example:
+        >>> show_random_image_mask_patch(pairs=..., cfg=config)
+    """
     img_path, mask_path = random.choice(pairs)
     img, msk = read_image_mask_numpy(str(img_path), str(mask_path), dataset=cfg.dataset)
     img_c, msk_c = sample_patch_numpy(img, msk, cfg)
@@ -675,7 +1039,17 @@ def show_random_image_mask_patch(pairs, cfg: TrainConfig, save_path: Path | None
 
 
 def parse_args(cfg: TrainConfig):
-    """Parse input text or metadata into a structured form."""
+    """Parse input text or metadata into a structured form.
+
+    Args:
+        cfg (TrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = parse_args(cfg=config)
+    """
     import argparse
 
     p = argparse.ArgumentParser(
@@ -720,7 +1094,14 @@ def parse_args(cfg: TrainConfig):
 
 
 def main():
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     cfg = parse_args(TrainConfig())
 
     random.seed(cfg.seed)

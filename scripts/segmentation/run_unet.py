@@ -1,4 +1,23 @@
-"""Compatibility entry point for the 2D U-Net inference CLI."""
+r"""Compatibility entry point for the 2D U-Net inference CLI.
+
+Examples
+--------
+Show all options:
+
+    python scripts/segmentation/run_unet.py --help
+
+Run the 2D U-Net for one sample:
+
+    python scripts/segmentation/run_unet.py \
+        --dataset 2d_time \
+        --mode one \
+        --input results/img/2d_time/WT_HADA_NHS_40min_ROI1_SIM/image.ome.zarr \
+        --level 0 \
+        --patch 256 \
+        --threshold 0.5 \
+        --outside-mask-depletion 0.98 \
+        --non-interactive
+"""
 
 from __future__ import annotations
 

@@ -95,23 +95,81 @@ class AnnotatedSlice:
 
 
 def _default_image_root(project_root: Path) -> Path:
+    """Return default image root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_image_root(project_root=Path("path/to/resource"))
+    """
     return project_root / "results" / "img" / "3d_data"
 
 
 def _default_mask_root(project_root: Path) -> Path:
+    """Return default mask root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_mask_root(project_root=Path("path/to/resource"))
+    """
     return project_root / "results" / "training_files" / "U-net" / "3d_25d"
 
 
 def _default_model_root(project_root: Path) -> Path:
+    """Return default model root for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _default_model_root(project_root=Path("path/to/resource"))
+    """
     return project_root / "models" / "u_net_3d_25d"
 
 
 def _find_image_zarrs(root: Path) -> list[Path]:
+    """Find image zarrs in the available data or project structure.
+
+    Args:
+        root (Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _find_image_zarrs(root=Path("path/to/resource"))
+    """
     return sorted(path for path in root.rglob("image.ome.zarr") if path.is_dir())
 
 
 def open_3d_image_czyx(zarr_path: Path, *, level: int = 0) -> zarr.Array:
-    """Open one CZYX OME-Zarr level lazily without loading the volume."""
+    """Open one CZYX OME-Zarr level lazily without loading the volume.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        zarr.Array: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = open_3d_image_czyx(zarr_path=Path("path/to/resource"))
+    """
     zarr_path = Path(zarr_path)
     meta = extract_ome_zarr_meta_for_compare(zarr_path, level=level)
     axes = str(meta.get("axes") or "").lower()
@@ -128,7 +186,21 @@ def open_3d_image_czyx(zarr_path: Path, *, level: int = 0) -> zarr.Array:
 
 
 def load_3d_image_czyx(zarr_path: Path, *, level: int = 0) -> np.ndarray:
-    """Load one complete CZYX image as float32. Prefer the lazy opener for training."""
+    """Load one complete CZYX image as float32. Prefer the lazy opener for training.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = load_3d_image_czyx(zarr_path=Path("path/to/resource"))
+    """
     array = open_3d_image_czyx(zarr_path, level=level)
     output = np.asarray(array, dtype=np.float32)
     if not np.isfinite(output).all():
@@ -137,7 +209,21 @@ def load_3d_image_czyx(zarr_path: Path, *, level: int = 0) -> np.ndarray:
 
 
 def read_binary_slice_mask(mask_path: Path, expected_yx: tuple[int, int]) -> np.ndarray:
-    """Read and strictly validate one binary target-slice mask."""
+    """Read and strictly validate one binary target-slice mask.
+
+    Args:
+        mask_path (Path): Filesystem path associated with mask.
+        expected_yx (tuple[int, int]): Numerical value controlling expected yx.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = read_binary_slice_mask(mask_path=Path("path/to/resource"), expected_yx=1)
+    """
     mask = np.asarray(tiff.imread(str(mask_path)))
     mask = np.squeeze(mask)
     if mask.ndim != 2:
@@ -166,6 +252,19 @@ def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[in
     The returned tuple is ``(red_source, green_source, blue_source)``. Every
     required colour must be represented exactly once. A tolerance of 35 nm is
     used only to accommodate minor metadata variation around 405/488/561 nm.
+
+    Args:
+        image_zarr (Path): Filesystem path used for image Zarr.
+        level (int): Numerical value controlling level. Defaults to ``0``.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_rgb_source_channels(image_zarr=Path("path/to/resource"))
     """
     optics = resolve_channel_optics(image_zarr, level=level)
     assignments: dict[str, int] = {}
@@ -193,7 +292,22 @@ def resolve_rgb_source_channels(image_zarr: Path, *, level: int = 0) -> tuple[in
 
 
 def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
-    """Find valid sparse annotations and skip missing reference masks with warnings."""
+    """Find valid sparse annotations and skip missing reference masks with warnings.
+
+    Args:
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        list[AnnotatedSlice]: Collection containing the generated or selected values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_annotated_slices(cfg=config)
+    """
     image_root = Path(cfg.image_root or _default_image_root(cfg.project_root))
     mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root))
     if not image_root.is_dir():
@@ -281,7 +395,18 @@ def list_annotated_slices(cfg: UNet25DTrainConfig) -> list[AnnotatedSlice]:
 def split_annotated_slices(
     entries: Sequence[AnnotatedSlice], cfg: UNet25DTrainConfig
 ) -> tuple[list[AnnotatedSlice], list[AnnotatedSlice], str]:
-    """Split by complete sample where possible, otherwise by spaced target slices."""
+    """Split by complete sample where possible, otherwise by spaced target slices.
+
+    Args:
+        entries (Sequence[AnnotatedSlice]): Value specifying entries for the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        tuple[list[AnnotatedSlice], list[AnnotatedSlice], str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = split_annotated_slices(entries=[], cfg=config)
+    """
     rng = random.Random(cfg.seed)
     samples = sorted({entry.sample for entry in entries})
     if len(samples) >= 2:
@@ -303,7 +428,27 @@ def split_annotated_slices(
 
 
 def _context_z_indices(img_czyx: Any, z: int, cfg: UNet25DTrainConfig) -> tuple[int, int, int]:
-    """Return the complete Z-1/Z/Z+1 indices for one middle slice."""
+    """Return the complete Z-1/Z/Z+1 indices for one middle slice.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+
+    Returns:
+        tuple[int, int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _context_z_indices(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     cfg=config,
+        ... )
+    """
     if cfg.z_radius != 1:
         raise ValueError("Merged-RGB 2.5D input requires z_radius=1")
     z_total = int(img_czyx.shape[1])
@@ -320,7 +465,29 @@ def _source_plane_keys(
     cfg: UNet25DTrainConfig,
     rgb_source_channels: tuple[int, int, int],
 ) -> list[tuple[int, int]]:
-    """Return source plane keys in Z-major then RGB order."""
+    """Return source plane keys in Z-major then RGB order.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+
+    Returns:
+        list[tuple[int, int]]: Collection containing the generated or selected values.
+
+    Raises:
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _source_plane_keys(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     if len(rgb_source_channels) != 3 or len(set(rgb_source_channels)) != 3:
         raise ValueError(f"Invalid RGB source-channel mapping: {rgb_source_channels}")
     if any(not 0 <= channel < int(img_czyx.shape[0]) for channel in rgb_source_channels):
@@ -340,7 +507,28 @@ def make_25d_input_slice(
     cfg: UNet25DTrainConfig,
     rgb_source_channels: tuple[int, int, int],
 ) -> np.ndarray:
-    """Read the complete Z-1/Z/Z+1 merged-RGB context in HWC order."""
+    """Read the complete Z-1/Z/Z+1 merged-RGB context in HWC order.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_25d_input_slice(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     planes = [
         np.asarray(img_czyx[channel, z_position], dtype=np.float32)
         for channel, z_position in _source_plane_keys(
@@ -363,7 +551,36 @@ def make_25d_input_patch(
     cfg: UNet25DTrainConfig,
     rgb_source_channels: tuple[int, int, int],
 ) -> np.ndarray:
-    """Read one merged-RGB 2.5D HWC patch from the OME-Zarr array."""
+    """Read one merged-RGB 2.5D HWC patch from the OME-Zarr array.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        y0 (int): Numerical value controlling y0.
+        x0 (int): Numerical value controlling x0.
+        height (int): Numerical value controlling height.
+        width (int): Numerical value controlling width.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_25d_input_patch(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     y0=1,
+        ...     x0=1,
+        ...     height=1,
+        ...     width=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     planes = [
         np.asarray(
             img_czyx[channel, z_position, y0:y0 + height, x0:x0 + width],
@@ -392,6 +609,27 @@ def _normalization_limits(
     three context planes. The same limits are then applied to that colour in
     Z-1, Z, and Z+1. This keeps training, validation, and annotation display
     construction consistent.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+        cache (dict[tuple[int, int], tuple[float, float]] | None): Numerical value controlling cache. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[tuple[float, float]]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalization_limits(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
     """
     if cfg.normalize == "scale_uint16":
         return [(0.0, 65535.0)] * 9
@@ -427,7 +665,21 @@ def _normalize_with_limits(
     image_hwc: np.ndarray,
     limits: Sequence[tuple[float, float]],
 ) -> np.ndarray:
-    """Apply context-wise RGB normalization to a patch or complete input."""
+    """Apply context-wise RGB normalization to a patch or complete input.
+
+    Args:
+        image_hwc (np.ndarray): Array containing image hwc.
+        limits (Sequence[tuple[float, float]]): Numerical value controlling limits.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _normalize_with_limits(image_hwc=image_array, limits=0.5)
+    """
     image = np.asarray(image_hwc, dtype=np.float32)
     if image.ndim != 3 or image.shape[-1] != len(limits):
         raise ValueError(f"Normalization geometry mismatch: shape={image.shape}, limits={len(limits)}")
@@ -452,7 +704,26 @@ def make_merged_rgb_context_slice(
     *,
     normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> np.ndarray:
-    """Return normalized Z-1/Z/Z+1 RGB images as ``(3, Y, X, 3)``."""
+    """Return normalized Z-1/Z/Z+1 RGB images as ``(3, Y, X, 3)``.
+
+    Args:
+        img_czyx (Any): Value specifying img czyx for the operation.
+        z (int): Axial coordinate or numerical input value used by the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+        normalization_cache (dict[tuple[int, int], tuple[float, float]] | None): Numerical value controlling normalization cache. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = make_merged_rgb_context_slice(
+        ...     img_czyx=...,
+        ...     z=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     raw = make_25d_input_slice(img_czyx, z, cfg, rgb_source_channels)
     limits = _normalization_limits(
         img_czyx, z, cfg, rgb_source_channels, normalization_cache
@@ -465,6 +736,26 @@ def make_merged_rgb_context_slice(
 
 
 def _choose_patch(mask_yx: np.ndarray, cfg: UNet25DTrainConfig, rng: random.Random) -> tuple[int, int]:
+    """Choose patch according to the configured criteria.
+
+    Args:
+        mask_yx (np.ndarray): Array containing mask yx.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rng (random.Random): Random-number generator used for reproducible sampling or augmentation.
+
+    Returns:
+        tuple[int, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _choose_patch(
+        ...     mask_yx=image_array,
+        ...     cfg=config,
+        ...     rng=...,
+        ... )
+    """
     height, width = mask_yx.shape
     patch = cfg.patch
     if height < patch or width < patch:
@@ -495,7 +786,26 @@ def _choose_patch(mask_yx: np.ndarray, cfg: UNet25DTrainConfig, rng: random.Rand
 def make_25d_dataset(
     entries: Sequence[AnnotatedSlice], cfg: UNet25DTrainConfig, *, training: bool
 ) -> tuple[tf.data.Dataset, int]:
-    """Create an infinite patch dataset from annotated target slices only."""
+    """Create an infinite patch dataset from annotated target slices only.
+
+    Args:
+        entries (Sequence[AnnotatedSlice]): Value specifying entries for the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        training (bool): Boolean flag controlling training.
+
+    Returns:
+        tuple[tf.data.Dataset, int]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_25d_dataset(
+        ...     entries=[],
+        ...     cfg=config,
+        ...     training=True,
+        ... )
+    """
     if not entries:
         raise ValueError("Cannot create a dataset from zero annotated slices")
     first_image = open_3d_image_czyx(entries[0].image_zarr, level=cfg.level)
@@ -505,6 +815,14 @@ def make_25d_dataset(
     rng = random.Random(cfg.seed + (0 if training else 10000))
 
     def generator():
+        """Return generator for the supplied inputs.
+
+        Returns:
+            Any: Result produced by the operation.
+
+        Example:
+            >>> result = generator()
+        """
         image_cache: dict[Path, zarr.Array] = {}
         mask_cache: dict[Path, np.ndarray] = {}
         normalization_cache: dict[Path, dict[tuple[int, int], tuple[float, float]]] = {}
@@ -552,6 +870,21 @@ def make_25d_dataset(
 
 
 def _pad_patch_to_size(patch_hwc: np.ndarray, patch_size: int) -> np.ndarray:
+    """Pad patch to size to the requested shape.
+
+    Args:
+        patch_hwc (np.ndarray): Array containing patch hwc.
+        patch_size (int): Size parameter controlling patch.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pad_patch_to_size(patch_hwc=image_array, patch_size=1)
+    """
     pad_y = patch_size - patch_hwc.shape[0]
     pad_x = patch_size - patch_hwc.shape[1]
     if pad_y < 0 or pad_x < 0:
@@ -571,7 +904,28 @@ def predict_25d_probability(
     *,
     normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> np.ndarray:
-    """Predict one middle-slice probability map from merged-RGB context."""
+    """Predict one middle-slice probability map from merged-RGB context.
+
+    Args:
+        model (tf.keras.Model): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        image_czyx (Any): Value specifying image czyx for the operation.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+        normalization_cache (dict[tuple[int, int], tuple[float, float]] | None): Numerical value controlling normalization cache. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = predict_25d_probability(
+        ...     model="model_name",
+        ...     image_czyx=...,
+        ...     z_index=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     height = int(image_czyx.shape[-2])
     width = int(image_czyx.shape[-1])
     limits = _normalization_limits(
@@ -583,6 +937,11 @@ def predict_25d_probability(
     batch_size = max(1, cfg.predict_batch_size)
 
     def flush() -> None:
+        """Return flush for the supplied inputs.
+
+        Example:
+            >>> flush()
+        """
         if not tiles:
             return
         batch = np.stack(tiles).astype(np.float32, copy=False)
@@ -616,6 +975,19 @@ def predict_25d_probability(
 
 
 def _binary_metrics(reference: np.ndarray, prediction: np.ndarray, epsilon: float = 1e-12) -> dict[str, float]:
+    """Return binary metrics for the supplied inputs.
+
+    Args:
+        reference (np.ndarray): Array containing reference.
+        prediction (np.ndarray): Array containing prediction.
+        epsilon (float): Numerical value controlling epsilon. Defaults to ``1e-12``.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _binary_metrics(reference=image_array, prediction=image_array)
+    """
     reference = reference.astype(bool)
     prediction = prediction.astype(bool)
     intersection = float(np.count_nonzero(reference & prediction))
@@ -640,7 +1012,26 @@ def _display_composite(
     rgb_source_channels: tuple[int, int, int],
     normalization_cache: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> np.ndarray:
-    """Return the normalized merged RGB middle image used by the model."""
+    """Return the normalized merged RGB middle image used by the model.
+
+    Args:
+        image_czyx (Any): Value specifying image czyx for the operation.
+        z_index (int): Zero-based axial slice index selected from a three-dimensional volume.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        rgb_source_channels (tuple[int, int, int]): Numerical value controlling RGB representation source channels.
+        normalization_cache (dict[tuple[int, int], tuple[float, float]] | None): Numerical value controlling normalization cache. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _display_composite(
+        ...     image_czyx=...,
+        ...     z_index=1,
+        ...     cfg=config,
+        ...     rgb_source_channels=1,
+        ... )
+    """
     context = make_merged_rgb_context_slice(
         image_czyx,
         z_index,
@@ -659,7 +1050,26 @@ def evaluate_annotated_slices(
     *,
     partitions: Mapping[tuple[str, int], str] | None = None,
 ) -> tuple[Path, Path, Path]:
-    """Evaluate and preview only the manually annotated training/validation slices."""
+    """Evaluate and preview only the manually annotated training/validation slices.
+
+    Args:
+        model (tf.keras.Model): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        entries (Sequence[AnnotatedSlice]): Value specifying entries for the operation.
+        cfg (UNet25DTrainConfig): Value specifying cfg for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        partitions (Mapping[tuple[str, int], str] | None): Text value specifying partitions. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[Path, Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = evaluate_annotated_slices(
+        ...     model="model_name",
+        ...     entries=[],
+        ...     cfg=config,
+        ...     output_dir=Path("path/to/resource"),
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     image_cache: dict[Path, zarr.Array] = {}
     normalization_cache: dict[Path, dict[tuple[int, int], tuple[float, float]]] = {}
@@ -721,6 +1131,17 @@ def evaluate_annotated_slices(
         writer.writeheader()
         writer.writerows(rows)
     def aggregate(selected: Sequence[dict[str, object]]) -> dict[str, float | int]:
+        """Return aggregate for the supplied inputs.
+
+        Args:
+            selected (Sequence[dict[str, object]]): Text value specifying selected.
+
+        Returns:
+            dict[str, float | int]: Mapping containing the generated or resolved values.
+
+        Example:
+            >>> result = aggregate(selected="selected")
+        """
         return {
             "count": len(selected),
             "mean_iou": float(np.mean([float(row["iou"]) for row in selected])),
@@ -769,7 +1190,20 @@ def evaluate_annotated_slices(
 
 
 def train_3d_25d_unet(cfg: UNet25DTrainConfig | None = None) -> dict[str, Path]:
-    """Train the 2.5D model, save models, and evaluate annotated slices."""
+    """Train the 2.5D model, save models, and evaluate annotated slices.
+
+    Args:
+        cfg (UNet25DTrainConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        dict[str, Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = train_3d_25d_unet()
+    """
     cfg = cfg or UNet25DTrainConfig()
     cfg.image_root = Path(cfg.image_root or _default_image_root(cfg.project_root))
     cfg.mask_root = Path(cfg.mask_root or _default_mask_root(cfg.project_root))

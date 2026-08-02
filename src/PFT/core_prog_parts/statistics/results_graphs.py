@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for results graphs."""
+
 
 from __future__ import annotations
 
@@ -11,7 +13,17 @@ import matplotlib.pyplot as plt
 
 
 def find_project_root(start: Optional[Path] = None) -> Path:
-    """Locate the Pneumo_Fluor_Toolkit_PFT project root."""
+    """Locate the Pneumo_Fluor_Toolkit_PFT project root.
+
+    Args:
+        start (Optional[Path]): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_project_root()
+    """
     current = Path.cwd() if start is None else Path(start).resolve()
 
     for candidate in [current, *current.parents]:
@@ -24,11 +36,33 @@ def find_project_root(start: Optional[Path] = None) -> Path:
 
 
 def final_values_dir(project_root: Optional[Path] = None) -> Path:
+    """Return final values dir for the supplied inputs.
+
+    Args:
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = final_values_dir()
+    """
     root = find_project_root(project_root)
     return root / "results" / "final_values"
 
 
 def graphs_dir(project_root: Optional[Path] = None) -> Path:
+    """Return graphs dir for the supplied inputs.
+
+    Args:
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = graphs_dir()
+    """
     root = find_project_root(project_root)
     path = root / "results" / "graphs"
     path.mkdir(parents=True, exist_ok=True)
@@ -36,6 +70,17 @@ def graphs_dir(project_root: Optional[Path] = None) -> Path:
 
 
 def list_csv_files(project_root: Optional[Path] = None) -> list[Path]:
+    """List CSV data files available in the configured project structure.
+
+    Args:
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_csv_files()
+    """
     folder = final_values_dir(project_root)
     if not folder.exists():
         return []
@@ -80,6 +125,17 @@ COLUMN_ALIASES: dict[str, list[str]] = {
 
 
 def normalize_column_name(name: str) -> str:
+    """Normalize column name using the configured procedure.
+
+    Args:
+        name (str): Name used to identify the current object, resource, or output.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = normalize_column_name(name="name")
+    """
     return (
         str(name)
         .strip()
@@ -93,6 +149,17 @@ def normalize_column_name(name: str) -> str:
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize columns using the configured procedure.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = normalize_columns(df=...)
+    """
     out = df.copy()
     out.columns = [normalize_column_name(c) for c in out.columns]
     return out
@@ -104,6 +171,23 @@ def find_column(
     required: bool = True,
     extra_candidates: Optional[Sequence[str]] = None,
 ) -> Optional[str]:
+    """Find column in the available data or project structure.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        logical_name (str): Text value specifying logical name.
+        required (bool): Boolean flag controlling required. Defaults to ``True``.
+        extra_candidates (Optional[Sequence[str]]): Text value specifying extra candidates. ``None`` selects the function's default behavior.
+
+    Returns:
+        Optional[str]: Generated or resolved text value.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_column(df=..., logical_name="logical_name")
+    """
     cols = set(df.columns)
     candidates: list[str] = []
     if extra_candidates:
@@ -125,12 +209,24 @@ def find_column(
 
 
 def load_csv(csv_path: Path) -> pd.DataFrame:
+    """Load CSV data from persistent storage.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = load_csv(csv_path=Path("path/to/resource"))
+    """
     df = pd.read_csv(csv_path)
     return normalize_columns(df)
 
 
 @dataclass
 class FigureResult:
+    """Store validated configuration or result data for figure result."""
     png_path: Path
     pdf_path: Path
     csv_path: Optional[Path] = None
@@ -138,6 +234,15 @@ class FigureResult:
 
     @property
     def all_paths(self) -> list[Path]:
+        """Return all paths for the supplied inputs.
+
+        Returns:
+            list[Path]: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = FigureResult(...)
+            >>> value = instance.all_paths
+        """
         paths = [self.png_path, self.pdf_path]
         if self.csv_path is not None:
             paths.append(self.csv_path)
@@ -146,6 +251,19 @@ class FigureResult:
 
 
 def save_current_figure(output_dir: Path, stem: str, dpi: int = 600) -> FigureResult:
+    """Save current figure to persistent storage.
+
+    Args:
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+        dpi (int): Resolution of a generated figure in dots per inch. Defaults to ``600``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = save_current_figure(output_dir=Path("path/to/resource"), stem="stem")
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     png_path = output_dir / f"{stem}.png"
     pdf_path = output_dir / f"{stem}.pdf"
@@ -156,12 +274,37 @@ def save_current_figure(output_dir: Path, stem: str, dpi: int = 600) -> FigureRe
 
 
 def clean_axis(ax: plt.Axes) -> None:
+    """Clean axis before downstream processing.
+
+    Args:
+        ax (plt.Axes): Matplotlib axes object on which graphical elements are drawn.
+
+    Example:
+        >>> clean_axis(ax=...)
+    """
     ax.grid(True, axis="y", linestyle=":", alpha=0.35)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
 
 def save_summary_csv(df: pd.DataFrame, output_dir: Path, stem: str) -> Path:
+    """Save summary CSV data to persistent storage.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = save_summary_csv(
+        ...     df=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{stem}.csv"
     df.to_csv(path, index=False)
@@ -178,7 +321,24 @@ def boxplot_from_csv(
     group_order: Optional[Sequence[str]] = None,
     ylim: Optional[tuple[float, float]] = None,
 ) -> FigureResult:
-    """Create a box plot with individual-cell points from a CSV file."""
+    """Create a box plot with individual-cell points from a CSV file.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (Optional[str]): Text value specifying stem. ``None`` selects the function's default behavior.
+        ylabel (Optional[str]): Text value specifying ylabel. ``None`` selects the function's default behavior.
+        group_order (Optional[Sequence[str]]): Text value specifying group order. ``None`` selects the function's default behavior.
+        ylim (Optional[tuple[float, float]]): Numerical value controlling ylim. ``None`` selects the function's default behavior.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = boxplot_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     value_col = normalize_column_name(value_col) if value_col else find_column(df, "value")
     group_col = normalize_column_name(group_col) if group_col else find_column(df, "condition")
@@ -239,7 +399,23 @@ def time_population_plot_from_csv(
     stem: str = "time_population_plot",
     ylabel: str = "Detected cells",
 ) -> FigureResult:
-    """Create a time-population line plot. If no value_col is supplied, cells are counted."""
+    """Create a time-population line plot. If no value_col is supplied, cells are counted.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        time_col (Optional[str]): Text value specifying time col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"time_population_plot"``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Detected cells"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = time_population_plot_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     time_col = normalize_column_name(time_col) if time_col else find_column(df, "time")
     group_col = normalize_column_name(group_col) if group_col else find_column(df, "condition", required=False)
@@ -303,7 +479,31 @@ def profile_from_csv(
     xlabel: str = "Normalized position",
     ylabel: str = "Normalized intensity",
 ) -> FigureResult:
-    """Create mean line profiles with SEM shading."""
+    """Create mean line profiles with SEM shading.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        coordinate_col (str): Text value specifying coordinate col.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"profile"``.
+        xlabel (str): Text value specifying xlabel. Defaults to ``"Normalized position"``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Normalized intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = profile_from_csv(
+        ...     csv_path=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     coordinate_col="coordinate_col",
+        ... )
+    """
     df = load_csv(csv_path)
     coordinate_col = normalize_column_name(coordinate_col)
     group_col = normalize_column_name(group_col) if group_col else find_column(df, "condition", required=False)
@@ -376,6 +576,23 @@ def axial_profile_from_csv(
     stem: str = "axial_profile",
     ylabel: str = "Normalized intensity",
 ) -> FigureResult:
+    """Return axial profile from CSV data for the supplied inputs.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"axial_profile"``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Normalized intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = axial_profile_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
     return profile_from_csv(
@@ -399,6 +616,23 @@ def radial_profile_from_csv(
     stem: str = "radial_profile",
     ylabel: str = "Normalized intensity",
 ) -> FigureResult:
+    """Return radial profile from CSV data for the supplied inputs.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"radial_profile"``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Normalized intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = radial_profile_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     radius_col = normalize_column_name(radius_col) if radius_col else find_column(df, "radius")
     return profile_from_csv(
@@ -423,7 +657,24 @@ def standardized_cell_map_from_csv(
     stem: str = "standardized_cell_map",
     intensity_label: str = "Normalized intensity",
 ) -> FigureResult:
-    """Create kymograph-like standardized-cell map from long-format CSV."""
+    """Create kymograph-like standardized-cell map from long-format CSV.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"standardized_cell_map"``.
+        intensity_label (str): Text value specifying intensity label. Defaults to ``"Normalized intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = standardized_cell_map_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
     group_col = normalize_column_name(group_col) if group_col else find_column(df, "condition")
@@ -494,6 +745,25 @@ def colocalization_boxplot_from_csv(
     pair_col: Optional[str] = None,
     stem: str = "colocalization_boxplot",
 ) -> FigureResult:
+    """Return colocalization boxplot from CSV data for the supplied inputs.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        pair_col (Optional[str]): Text value specifying pair col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"colocalization_boxplot"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = colocalization_boxplot_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     value_col = normalize_column_name(value_col) if value_col else find_column(df, "spatial_relation")
     pair_col = normalize_column_name(pair_col) if pair_col else find_column(df, "channel", required=False)
@@ -512,6 +782,27 @@ def correlation_plot_from_csv(
     group_col: Optional[str] = None,
     stem: str = "correlation_plot",
 ) -> FigureResult:
+    """Return correlation plot from CSV data for the supplied inputs.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        x_col (str): Text value specifying x col.
+        y_col (str): Text value specifying y col.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"correlation_plot"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = correlation_plot_from_csv(
+        ...     csv_path=Path("path/to/resource"),
+        ...     output_dir=Path("path/to/resource"),
+        ...     x_col="x_col",
+        ...     y_col="y_col",
+        ... )
+    """
     df = load_csv(csv_path)
     x_col = normalize_column_name(x_col)
     y_col = normalize_column_name(y_col)
@@ -577,6 +868,18 @@ CONDITION_ORDER_3D: list[str] = ["THY", "NHS"]
 
 
 def _ordered_present(values: Sequence[object], preferred: Sequence[str]) -> list[str]:
+    """Return ordered present for the supplied inputs.
+
+    Args:
+        values (Sequence[object]): Value specifying values for the operation.
+        preferred (Sequence[str]): Text value specifying preferred.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _ordered_present(values=[], preferred="preferred")
+    """
     present = list(dict.fromkeys(str(v) for v in values if pd.notna(v)))
     upper_map = {p.upper(): p for p in present}
     ordered: list[str] = []
@@ -588,12 +891,33 @@ def _ordered_present(values: Sequence[object], preferred: Sequence[str]) -> list
 
 
 def _is_numeric_series(series: pd.Series) -> bool:
+    """Determine whether numeric series satisfies the stated condition.
+
+    Args:
+        series (pd.Series): Value specifying series for the operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_numeric_series(series=...)
+    """
     numeric = pd.to_numeric(series, errors="coerce")
     return numeric.notna().mean() > 0.5
 
 
 def _classify_3d_source_channel(raw: object) -> str:
-    """Classify CSV channel names before the final blue/green switch."""
+    """Classify CSV channel names before the final blue/green switch.
+
+    Args:
+        raw (object): Value specifying raw for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _classify_3d_source_channel(raw=...)
+    """
     name = normalize_column_name(str(raw))
     if any(key in name for key in ["hada", "blue", "b_channel", "channel_b"]):
         return "old_blue"
@@ -610,6 +934,16 @@ def map_3d_channel(raw: object, switch_blue_green: bool = True) -> str:
     With switch_blue_green=True, the earlier blue-like channel is plotted as green,
     and the earlier green-like channel is plotted as blue. This is the final setting
     used for the discussed 3D graphs.
+
+    Args:
+        raw (object): Value specifying raw for the operation.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = map_3d_channel(raw=...)
     """
     source = _classify_3d_source_channel(raw)
     if switch_blue_green:
@@ -628,6 +962,18 @@ def map_3d_channel(raw: object, switch_blue_green: bool = True) -> str:
 
 
 def _discover_3d_value_columns(df: pd.DataFrame, value_cols: Optional[Sequence[str]] = None) -> list[str]:
+    """Discover three-dimensional data value columns in the configured project structure.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _discover_3d_value_columns(df=...)
+    """
     if value_cols:
         return [normalize_column_name(c) for c in value_cols]
 
@@ -663,6 +1009,24 @@ def _three_d_long_values(
       1) long CSV: condition, channel, value;
       2) wide CSV: condition and one column per channel, e.g. HADA/NADA/TADA,
          blue/green/red, or *_intensity / *_homogeneity variants.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+        logical_value (str): Text value specifying logical value. Defaults to ``"value"``.
+        id_cols (Optional[Sequence[str]]): Text value specifying id cols. ``None`` selects the function's default behavior.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _three_d_long_values(df=...)
     """
     work = df.copy()
 
@@ -712,6 +1076,19 @@ def _three_d_long_values(
 
 
 def _save_figure_pair(output_dir: Path, stem: str, dpi: int = 600) -> tuple[Path, Path]:
+    """Save figure pair to persistent storage.
+
+    Args:
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+        dpi (int): Resolution of a generated figure in dots per inch. Defaults to ``600``.
+
+    Returns:
+        tuple[Path, Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_figure_pair(output_dir=Path("path/to/resource"), stem="stem")
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     png_path = output_dir / f"{stem}.png"
     pdf_path = output_dir / f"{stem}.pdf"
@@ -722,10 +1099,33 @@ def _save_figure_pair(output_dir: Path, stem: str, dpi: int = 600) -> tuple[Path
 
 
 def _line_style_for_condition(condition: str) -> str:
+    """Return line style for condition for the supplied inputs.
+
+    Args:
+        condition (str): Text value specifying condition.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _line_style_for_condition(condition="condition")
+    """
     return "--" if condition.upper() == "NHS" else "-"
 
 
 def _summarize_profile(long: pd.DataFrame, coordinate_col: str) -> pd.DataFrame:
+    """Summarize profile for reporting.
+
+    Args:
+        long (pd.DataFrame): Value specifying long for the operation.
+        coordinate_col (str): Text value specifying coordinate col.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = _summarize_profile(long=..., coordinate_col="coordinate_col")
+    """
     work = long.copy()
     work[coordinate_col] = pd.to_numeric(work[coordinate_col], errors="coerce")
     work = work.dropna(subset=[coordinate_col, "value"])
@@ -750,7 +1150,26 @@ def three_d_axial_profile_from_csv(
     switch_blue_green: bool = True,
     ylabel: str = "Normalized fluorescence intensity",
 ) -> FigureResult:
-    """Create the final 3D SIM axial profile graph from CSV values."""
+    """Create the final 3D SIM axial profile graph from CSV values.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"3d_sim_mip_axial_profiles"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Normalized fluorescence intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = three_d_axial_profile_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
     if group_col:
@@ -807,6 +1226,27 @@ def _plot_three_d_radial_pair(
     channels: tuple[str, str],
     stem: str,
 ) -> FigureResult:
+    """Plot three d radial pair for visual assessment.
+
+    Args:
+        summary (pd.DataFrame): Value specifying summary for the operation.
+        radius_col (str): Text value specifying radius col.
+        output_dir (Path): Directory where generated resources are written.
+        channels (tuple[str, str]): Channel indices or identifiers selected for processing.
+        stem (str): Text value specifying stem.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = _plot_three_d_radial_pair(
+        ...     summary=...,
+        ...     radius_col="radius_col",
+        ...     output_dir=Path("path/to/resource"),
+        ...     channels="channels",
+        ...     stem="stem",
+        ... )
+    """
     fig, ax = plt.subplots(figsize=(10.5, 6.0), dpi=180)
     conditions = _ordered_present(summary["condition"].unique(), CONDITION_ORDER_3D)
     for channel in channels:
@@ -847,7 +1287,25 @@ def three_d_radial_profiles_from_csv(
     stem: str = "3d_sim_mip_radial_profiles",
     switch_blue_green: bool = True,
 ) -> FigureResult:
-    """Create the three final 3D radial pairwise profiles from CSV values."""
+    """Create the three final 3D radial pairwise profiles from CSV values.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"3d_sim_mip_radial_profiles"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = three_d_radial_profiles_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     radius_col = normalize_column_name(radius_col) if radius_col else find_column(df, "radius")
     if group_col:
@@ -893,6 +1351,22 @@ def three_d_homogeneity_from_csv(
 
     Final order is Green > Blue > Red. The plot is data-driven: if the CSV values
     differ from this pattern, the actual values are still shown.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"3d_sim_mip_channel_homogeneity"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = three_d_homogeneity_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
     """
     df = load_csv(csv_path)
     if group_col:
@@ -986,6 +1460,34 @@ def _plot_single_three_d_kymograph(
     stem: str,
     intensity_label: str,
 ) -> FigureResult:
+    """Plot single three d kymograph for visual assessment.
+
+    Args:
+        long (pd.DataFrame): Value specifying long for the operation.
+        axis_col (str): Text value specifying axis col.
+        cell_col (str): Text value specifying cell col.
+        output_dir (Path): Directory where generated resources are written.
+        channel (str): Channel index or channel identifier selected for processing.
+        stem (str): Text value specifying stem.
+        intensity_label (str): Text value specifying intensity label.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _plot_single_three_d_kymograph(
+        ...     long=...,
+        ...     axis_col="axis_col",
+        ...     cell_col="cell_col",
+        ...     output_dir=Path("path/to/resource"),
+        ...     channel="channel",
+        ...     stem="stem",
+        ...     intensity_label="intensity_label",
+        ... )
+    """
     channel_df = long[long["channel"] == channel].copy()
     if channel_df.empty:
         raise ValueError(f"No rows found for 3D channel '{channel}'.")
@@ -1065,7 +1567,27 @@ def three_d_kymographs_from_csv(
     intensity_label: str = "Normalized fluorescence intensity",
     switch_blue_green: bool = True,
 ) -> FigureResult:
-    """Create final 3D blue, green, and red kymographs from long/wide CSV values."""
+    """Create final 3D blue, green, and red kymographs from long/wide CSV values.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"3d_sim_mip_kymograph"``.
+        intensity_label (str): Text value specifying intensity label. Defaults to ``"Normalized fluorescence intensity"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = three_d_kymographs_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
+    """
     df = load_csv(csv_path)
     axis_col = normalize_column_name(axis_col) if axis_col else find_column(df, "axis")
     cell_col = normalize_column_name(cell_col) if cell_col else find_column(df, "cell_id")
@@ -1132,6 +1654,27 @@ def three_d_all_graphs_from_csv(
     The CSV must contain the columns required by each graph type. In practice this
     works best with one long table containing condition, channel, cell_id, axis,
     radius, value, and optionally homogeneity.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        output_dir (Path): Directory where generated resources are written.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        stem (str): Text value specifying stem. Defaults to ``"3d_sim_mip"``.
+        intensity_label (str): Text value specifying intensity label. Defaults to ``"Normalized fluorescence intensity"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+        ylabel (str): Text value specifying ylabel. Defaults to ``"Normalized fluorescence intensity"``.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Example:
+        >>> result = three_d_all_graphs_from_csv(csv_path=Path("path/to/resource"), output_dir=Path("path/to/resource"))
     """
     results: list[FigureResult] = []
     results.append(
@@ -1213,7 +1756,29 @@ def run_graph(
     output_subdir: Optional[str] = None,
     **kwargs,
 ) -> FigureResult:
-    """Dispatch graph creation based on dataset and graph name."""
+    """Dispatch graph creation based on dataset and graph name.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        csv_path (Path): Filesystem path associated with CSV data.
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+        output_subdir (Optional[str]): Text value specifying output subdir. ``None`` selects the function's default behavior.
+        **kwargs (Any): Additional keyword arguments forwarded to the underlying callable.
+
+    Returns:
+        FigureResult: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_graph(
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ...     csv_path=Path("path/to/resource"),
+        ... )
+    """
     dataset = dataset.lower().strip()
     graph = graph.lower().strip()
     out = graphs_dir(project_root) / (output_subdir or dataset)

@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for intenisty."""
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +48,14 @@ CURATED_TEST_STEMS: dict[str, list[str]] = {
 
 
 def analysis_root() -> Path:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = analysis_root()
+    """
     out = find_project_root() / "results" / "analysis" / "intensity_fft"
     out.mkdir(parents=True, exist_ok=True)
     return out
@@ -55,7 +64,17 @@ def analysis_root() -> Path:
 
 
 def fft_log_magnitude(img2d: np.ndarray) -> np.ndarray:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        img2d (np.ndarray): Array containing img2d.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = fft_log_magnitude(img2d=image_array)
+    """
     x = np.asarray(img2d, dtype=np.float32)
     F = np.fft.fftshift(np.fft.fft2(x - float(np.mean(x))))
     mag = np.log1p(np.abs(F)).astype(np.float32)
@@ -63,7 +82,18 @@ def fft_log_magnitude(img2d: np.ndarray) -> np.ndarray:
 
 
 def list_curated_test_images(dataset: str, zarrs: list[Path]) -> list[Path]:
-    """List available inputs for this workflow."""
+    """List available inputs for this workflow.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        zarrs (list[Path]): Filesystem path used for zarrs.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = list_curated_test_images(dataset="2d_time", zarrs=Path("path/to/resource"))
+    """
     want = CURATED_TEST_STEMS.get(dataset, [])
     by_stem = {p.parent.name: p for p in zarrs}
     return [by_stem[s] for s in want if s in by_stem]
@@ -71,7 +101,18 @@ def list_curated_test_images(dataset: str, zarrs: list[Path]) -> list[Path]:
 
 
 def load_planes(zarr_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray | None]:
-    """Load data and return the processed result."""
+    """Load data and return the processed result.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = load_planes(zarr_path=Path("path/to/resource"), dataset="2d_time")
+    """
     arr, axes = load_ome_zarr(zarr_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -81,7 +122,23 @@ def load_planes(zarr_path: Path, dataset: str) -> tuple[np.ndarray, np.ndarray |
 
 
 def make_rgb(dataset: str, blue: np.ndarray, green: np.ndarray | None) -> np.ndarray:
-    """Create and return the requested display or object."""
+    """Create and return the requested display or object.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        blue (np.ndarray): Array containing blue.
+        green (np.ndarray | None): Array containing green.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = make_rgb(
+        ...     dataset="2d_time",
+        ...     blue=image_array,
+        ...     green=image_array,
+        ... )
+    """
     b = to_uint8_percentile(blue)
     z = np.zeros_like(b, dtype=np.uint8)
     if dataset == "2d_wga_dapi" and green is not None:
@@ -91,24 +148,83 @@ def make_rgb(dataset: str, blue: np.ndarray, green: np.ndarray | None) -> np.nda
 
 
 def choose_source_zarr(dataset: str, stem: str, raw_zarr: Path) -> Path:
-    """Ask the user to choose a workflow option."""
+    """Ask the user to choose a workflow option.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        stem (str): Text value specifying stem.
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = choose_source_zarr(
+        ...     dataset="2d_time",
+        ...     stem="stem",
+        ...     raw_zarr=Path("path/to/resource"),
+        ... )
+    """
     filtered_zarr = filtered_img_root() / dataset / stem / "image.ome.zarr"
     return filtered_zarr if filtered_zarr.exists() else raw_zarr
 
 
 def save_single_channel_outputs(channel: np.ndarray, out_dir: Path, stem: str, channel_name: str) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        channel (np.ndarray): Channel index or channel identifier selected for processing.
+        out_dir (Path): Directory used for out.
+        stem (str): Text value specifying stem.
+        channel_name (str): Text value specifying channel name.
+
+    Example:
+        >>> save_single_channel_outputs(
+        ...     channel=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ...     channel_name="channel_name",
+        ... )
+    """
     viz.save_single_channel_outputs(channel, out_dir, stem, channel_name, cmap=INTENSITY_RGB_CMAP)
 
 
 def save_rgb_overview(dataset: str, blue: np.ndarray, green: np.ndarray | None, out_dir: Path, stem: str) -> None:
-    """Save generated outputs to disk."""
+    """Save generated outputs to disk.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        blue (np.ndarray): Array containing blue.
+        green (np.ndarray | None): Array containing green.
+        out_dir (Path): Directory used for out.
+        stem (str): Text value specifying stem.
+
+    Example:
+        >>> save_rgb_overview(
+        ...     dataset="2d_time",
+        ...     blue=image_array,
+        ...     green=image_array,
+        ...     out_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     rgb = make_rgb(dataset, blue, green)
     viz.save_rgb_overview(rgb, out_dir, stem, panel_title=f"{stem} normalized RGB")
 
 
 def process_one(dataset: str, raw_zarr: Path) -> Path:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        raw_zarr (Path): Filesystem path used for raw Zarr.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = process_one(dataset="2d_time", raw_zarr=Path("path/to/resource"))
+    """
     stem = raw_zarr.parent.name
     source_zarr = choose_source_zarr(dataset, stem, raw_zarr)
     out_dir = analysis_root() / dataset / stem
@@ -127,7 +243,14 @@ def process_one(dataset: str, raw_zarr: Path) -> Path:
 
 
 def choose_dataset_interactive() -> str:
-    """Ask the user to choose a workflow option."""
+    """Ask the user to choose a workflow option.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_dataset_interactive()
+    """
     print("Choose dataset:")
     print("  1) 2d_time")
     print("  2) 2d_wga_dapi")
@@ -141,7 +264,17 @@ def choose_dataset_interactive() -> str:
 
 
 def choose_mode_interactive(n: int) -> str:
-    """Ask the user to choose a workflow option."""
+    """Ask the user to choose a workflow option.
+
+    Args:
+        n (int): Numerical value controlling n.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = choose_mode_interactive(n=1)
+    """
     print("Choose mode:")
     print("  1) One image")
     print("  2) Curated subset")
@@ -154,7 +287,17 @@ def choose_mode_interactive(n: int) -> str:
 
 
 def choose_index_interactive(paths: list[Path]) -> int:
-    """Ask the user to choose a workflow option."""
+    """Ask the user to choose a workflow option.
+
+    Args:
+        paths (list[Path]): Filesystem path used for paths.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = choose_index_interactive(paths=Path("path/to/resource"))
+    """
     for i, p in enumerate(paths):
         print(f"  [{i:02d}] {p.parent.name}")
     while True:
@@ -169,7 +312,15 @@ def choose_index_interactive(paths: list[Path]) -> int:
 
 
 def main() -> None:
-    """Helper function used by this module."""
+    """Helper function used by this module.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     ap = argparse.ArgumentParser(description="Create intensity maps and FFT images from the same images used in filtering.")
     ap.add_argument("--dataset", choices=["2d_time", "2d_wga_dapi"], required=False)
     ap.add_argument("--mode", choices=["one", "curated", "all"], required=False)

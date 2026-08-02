@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for results statistics."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -68,6 +70,15 @@ class StatisticsResult:
 
     @property
     def all_paths(self) -> list[Path]:
+        """Return all paths for the supplied inputs.
+
+        Returns:
+            list[Path]: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = StatisticsResult(...)
+            >>> value = instance.all_paths
+        """
         paths = [self.primary_csv_path]
         if self.prepared_csv_path is not None:
             paths.append(self.prepared_csv_path)
@@ -76,7 +87,17 @@ class StatisticsResult:
 
 
 def statistics_dir(project_root: Optional[Path] = None) -> Path:
-    """Return the output directory for statistical result tables."""
+    """Return the output directory for statistical result tables.
+
+    Args:
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = statistics_dir()
+    """
     root = find_project_root(project_root)
     path = root / "results" / "statistics"
     path.mkdir(parents=True, exist_ok=True)
@@ -89,7 +110,23 @@ def _find_column(
     required: bool = True,
     extra_candidates: Optional[Sequence[str]] = None,
 ) -> Optional[str]:
-    """Find a column using the graph aliases plus statistics-specific aliases."""
+    """Find a column using the graph aliases plus statistics-specific aliases.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        logical_name (str): Text value specifying logical name.
+        required (bool): Boolean flag controlling required. Defaults to ``True``.
+        extra_candidates (Optional[Sequence[str]]): Text value specifying extra candidates. ``None`` selects the function's default behavior.
+
+    Returns:
+        Optional[str]: Generated or resolved text value.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_column(df=..., logical_name="logical_name")
+    """
     cols = set(df.columns)
     candidates: list[str] = []
     if extra_candidates:
@@ -111,6 +148,23 @@ def _find_column(
 
 
 def _save_csv(df: pd.DataFrame, output_dir: Path, stem: str) -> Path:
+    """Save CSV data to persistent storage.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _save_csv(
+        ...     df=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{stem}.csv"
     df.to_csv(path, index=False)
@@ -118,12 +172,39 @@ def _save_csv(df: pd.DataFrame, output_dir: Path, stem: str) -> Path:
 
 
 def _is_numeric_series(series: pd.Series) -> bool:
+    """Determine whether numeric series satisfies the stated condition.
+
+    Args:
+        series (pd.Series): Value specifying series for the operation.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _is_numeric_series(series=...)
+    """
     numeric = pd.to_numeric(series, errors="coerce")
     return numeric.notna().mean() > 0.5
 
 
 def _discover_value_columns(df: pd.DataFrame, dataset: str, graph: str) -> list[str]:
-    """Detect numeric value columns for profile-like wide CSV tables."""
+    """Detect numeric value columns for profile-like wide CSV tables.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _discover_value_columns(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
+    """
     dataset = dataset.lower().strip()
     graph = graph.lower().strip()
 
@@ -158,6 +239,17 @@ def _discover_value_columns(df: pd.DataFrame, dataset: str, graph: str) -> list[
 
 
 def _classify_3d_source_channel(raw: object) -> str:
+    """Return classify three-dimensional data source channel for the supplied inputs.
+
+    Args:
+        raw (object): Value specifying raw for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _classify_3d_source_channel(raw=...)
+    """
     name = normalize_column_name(str(raw))
     if any(key in name for key in ["hada", "blue", "b_channel", "channel_b"]):
         return "old_blue"
@@ -169,7 +261,18 @@ def _classify_3d_source_channel(raw: object) -> str:
 
 
 def map_3d_channel(raw: object, switch_blue_green: bool = True) -> str:
-    """Map HADA/NADA/TADA or blue/green/red labels to final thesis channel labels."""
+    """Map HADA/NADA/TADA or blue/green/red labels to final thesis channel labels.
+
+    Args:
+        raw (object): Value specifying raw for the operation.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = map_3d_channel(raw=...)
+    """
     source = _classify_3d_source_channel(raw)
     if switch_blue_green:
         if source == "old_blue":
@@ -187,6 +290,19 @@ def map_3d_channel(raw: object, switch_blue_green: bool = True) -> str:
 
 
 def _map_general_marker(raw: object, dataset: str, switch_blue_green: bool = True) -> str:
+    """Map general marker to the required representation.
+
+    Args:
+        raw (object): Value specifying raw for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _map_general_marker(raw=..., dataset="2d_time")
+    """
     name = normalize_column_name(str(raw))
     if "3d" in dataset.lower() or "sim" in dataset.lower():
         return map_3d_channel(name, switch_blue_green=switch_blue_green)
@@ -204,6 +320,17 @@ def _map_general_marker(raw: object, dataset: str, switch_blue_green: bool = Tru
 
 
 def _parse_medium_from_condition(value: object) -> str:
+    """Parse medium from condition into a validated representation.
+
+    Args:
+        value (object): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _parse_medium_from_condition(value=...)
+    """
     text = str(value).upper()
     if "THY" in text:
         return "THY"
@@ -213,6 +340,17 @@ def _parse_medium_from_condition(value: object) -> str:
 
 
 def _parse_csp_from_condition(value: object) -> str:
+    """Parse csp from condition into a validated representation.
+
+    Args:
+        value (object): Value to validate, transform, store, or forward.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _parse_csp_from_condition(value=...)
+    """
     text = str(value).upper().replace(" ", "")
     if "+CSP" in text or "CSP+" in text or text.endswith("CSP") and "NO" not in text and "WITHOUT" not in text:
         return "+CSP"
@@ -224,7 +362,18 @@ def _parse_csp_from_condition(value: object) -> str:
 
 
 def add_derived_factors(df: pd.DataFrame, dataset: str) -> pd.DataFrame:
-    """Add medium/CSP/channel factors when they can be inferred from existing columns."""
+    """Add medium/CSP/channel factors when they can be inferred from existing columns.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = add_derived_factors(df=..., dataset="2d_time")
+    """
     out = df.copy()
 
     condition_col = _find_column(out, "condition", required=False)
@@ -243,11 +392,44 @@ def add_derived_factors(df: pd.DataFrame, dataset: str) -> pd.DataFrame:
 
 
 def _find_existing_factor(df: pd.DataFrame, logical_name: str) -> Optional[str]:
+    """Find existing factor in the available data or project structure.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        logical_name (str): Text value specifying logical name.
+
+    Returns:
+        Optional[str]: Generated or resolved text value.
+
+    Example:
+        >>> result = _find_existing_factor(df=..., logical_name="logical_name")
+    """
     return _find_column(df, logical_name, required=False)
 
 
 def infer_default_value_col(df: pd.DataFrame, dataset: str, graph: str, value_col: Optional[str] = None) -> str:
-    """Infer the dependent variable for non-profile statistical tests."""
+    """Infer the dependent variable for non-profile statistical tests.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = infer_default_value_col(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
+    """
     if value_col:
         col = normalize_column_name(value_col)
         if col not in df.columns:
@@ -288,7 +470,25 @@ def infer_default_factors(
     factor_a: Optional[str] = None,
     factor_b: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Infer two ANOVA factors from dataset and graph context."""
+    """Infer two ANOVA factors from dataset and graph context.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        factor_a (Optional[str]): Text value specifying factor a. ``None`` selects the function's default behavior.
+        factor_b (Optional[str]): Text value specifying factor b. ``None`` selects the function's default behavior.
+
+    Returns:
+        tuple[Optional[str], Optional[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = infer_default_factors(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
+    """
     if factor_a:
         factor_a = normalize_column_name(factor_a)
     if factor_b:
@@ -316,6 +516,17 @@ def infer_default_factors(
 
 
 def _profile_graph(graph: str) -> bool:
+    """Return profile graph for the supplied inputs.
+
+    Args:
+        graph (str): Text value specifying graph.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _profile_graph(graph="graph")
+    """
     graph_l = graph.lower().strip()
     return graph_l in {
         "axial_profile", "hada_axial", "wga_axial", "dapi_axial", "3d_axial", "axial",
@@ -329,6 +540,20 @@ def _coordinate_column_for_profile(
     axis_col: Optional[str] = None,
     radius_col: Optional[str] = None,
 ) -> str:
+    """Return coordinate column for profile for the supplied inputs.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        graph (str): Text value specifying graph.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _coordinate_column_for_profile(df=..., graph="graph")
+    """
     graph_l = graph.lower().strip()
     if graph_l in {"radial_profile", "radial", "3d_radial"}:
         return normalize_column_name(radius_col) if radius_col else _find_column(df, "radius")
@@ -336,6 +561,18 @@ def _coordinate_column_for_profile(
 
 
 def _collect_unit_columns(df: pd.DataFrame, cell_col: Optional[str] = None) -> list[str]:
+    """Collect unit columns from the available inputs.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _collect_unit_columns(df=...)
+    """
     unit_cols: list[str] = []
     if cell_col:
         col = normalize_column_name(cell_col)
@@ -365,7 +602,34 @@ def _long_profile_table(
     cell_col: Optional[str] = None,
     switch_blue_green: bool = True,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
-    """Convert profile CSV to long format suitable for AUC calculation."""
+    """Convert profile CSV to long format suitable for AUC calculation.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        coordinate_col (str): Text value specifying coordinate col.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        tuple[pd.DataFrame, list[str], list[str]]: Collection containing the generated or selected values.
+
+    Raises:
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _long_profile_table(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ...     coordinate_col="coordinate_col",
+        ... )
+    """
     work = df.copy()
     coordinate_col = normalize_column_name(coordinate_col)
     if coordinate_col not in work.columns:
@@ -422,6 +686,28 @@ def calculate_auc_table(
 
     Returns a table with one row per cell/image/profile unit and a column `value`,
     which can be used by t-tests and two-way ANOVA.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        tuple[pd.DataFrame, list[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = calculate_auc_table(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
     """
     coordinate_col = _coordinate_column_for_profile(df, graph, axis_col=axis_col, radius_col=radius_col)
     long, factor_cols, unit_cols = _long_profile_table(
@@ -491,6 +777,32 @@ def prepare_statistics_table(
 
     The output table always has a numeric column named `value` plus available
     factor columns such as condition, time, medium, csp, channel, model.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        time_col (Optional[str]): Text value specifying time col. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        pair_col (Optional[str]): Text value specifying pair col. ``None`` selects the function's default behavior.
+        use_auc (Optional[bool]): Boolean flag controlling whether to auc. ``None`` selects the function's default behavior.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+
+    Returns:
+        tuple[pd.DataFrame, list[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = prepare_statistics_table(
+        ...     csv_path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
     """
     df = load_csv(csv_path)
 
@@ -547,7 +859,17 @@ def prepare_statistics_table(
 
 
 def _holm_adjust(p_values: Sequence[float]) -> list[float]:
-    """Holm adjustment for multiple pairwise p-values."""
+    """Holm adjustment for multiple pairwise p-values.
+
+    Args:
+        p_values (Sequence[float]): Numerical value controlling p values.
+
+    Returns:
+        list[float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _holm_adjust(p_values=0.5)
+    """
     p = np.asarray([np.nan if pd.isna(v) else float(v) for v in p_values], dtype=float)
     adjusted = np.full_like(p, np.nan, dtype=float)
     valid_idx = np.where(~np.isnan(p))[0]
@@ -565,6 +887,18 @@ def _holm_adjust(p_values: Sequence[float]) -> list[float]:
 
 
 def _cohens_d(x: np.ndarray, y: np.ndarray) -> float:
+    """Return cohens d for the supplied inputs.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        y (np.ndarray): Vertical coordinate or numerical input value used by the operation.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = _cohens_d(x=image_array, y=image_array)
+    """
     if len(x) < 2 or len(y) < 2:
         return np.nan
     sx = np.var(x, ddof=1)
@@ -584,6 +918,18 @@ def welch_t_tests(
 ) -> pd.DataFrame:
     """Run Welch pairwise t-tests across levels of compare_col.
 
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        compare_col (str): Text value specifying compare col.
+        value_col (str): Text value specifying value col. Defaults to ``"value"``.
+        within_cols (Optional[Sequence[str]]): Text value specifying within cols. ``None`` selects the function's default behavior.
+        min_n (int): Minimum permitted value of n. Defaults to ``2``.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = welch_t_tests(df=..., compare_col="compare_col")
     """
     compare_col = normalize_column_name(compare_col)
     value_col = normalize_column_name(value_col)
@@ -648,7 +994,30 @@ def automatic_t_tests(
     factor_b: Optional[str] = None,
     min_n: int = 2,
 ) -> pd.DataFrame:
-    """Run default t-tests for all sensible pairwise comparisons in the table."""
+    """Run default t-tests for all sensible pairwise comparisons in the table.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        compare_col (Optional[str]): Text value specifying compare col. ``None`` selects the function's default behavior.
+        factor_a (Optional[str]): Text value specifying factor a. ``None`` selects the function's default behavior.
+        factor_b (Optional[str]): Text value specifying factor b. ``None`` selects the function's default behavior.
+        min_n (int): Minimum permitted value of n. Defaults to ``2``.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = automatic_t_tests(
+        ...     df=...,
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ... )
+    """
     work = add_derived_factors(df, dataset)
 
     if compare_col:
@@ -684,7 +1053,29 @@ def two_way_anova(
     factor_b: str,
     value_col: str = "value",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run two-way ANOVA with interaction and return ANOVA plus group summary."""
+    """Run two-way ANOVA with interaction and return ANOVA plus group summary.
+
+    Args:
+        df (pd.DataFrame): Value specifying df for the operation.
+        factor_a (str): Text value specifying factor a.
+        factor_b (str): Text value specifying factor b.
+        value_col (str): Text value specifying value col. Defaults to ``"value"``.
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]: Collection containing the generated or selected values.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+        KeyError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = two_way_anova(
+        ...     df=...,
+        ...     factor_a="factor_a",
+        ...     factor_b="factor_b",
+        ... )
+    """
     if sm is None or smf is None:  # pragma: no cover
         raise ImportError("statsmodels is required for two-way ANOVA.") from _STATSMODELS_IMPORT_ERROR
 
@@ -752,7 +1143,45 @@ def run_statistics(
     stem: Optional[str] = None,
     min_n: int = 2,
 ) -> StatisticsResult:
-    """Run t-test and/or two-way ANOVA for a selected dataset and graph."""
+    """Run t-test and/or two-way ANOVA for a selected dataset and graph.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        graph (str): Text value specifying graph.
+        csv_path (Path): Filesystem path associated with CSV data.
+        project_root (Optional[Path]): Root directory of the PFT project containing the results, models, scripts, and source-code directories. ``None`` selects the function's default behavior.
+        output_subdir (Optional[str]): Text value specifying output subdir. ``None`` selects the function's default behavior.
+        test (str): Text value specifying test. Defaults to ``"all"``.
+        value_col (Optional[str]): Text value specifying value col. ``None`` selects the function's default behavior.
+        value_cols (Optional[Sequence[str]]): Text value specifying value cols. ``None`` selects the function's default behavior.
+        group_col (Optional[str]): Text value specifying group col. ``None`` selects the function's default behavior.
+        time_col (Optional[str]): Text value specifying time col. ``None`` selects the function's default behavior.
+        axis_col (Optional[str]): Text value specifying axis col. ``None`` selects the function's default behavior.
+        radius_col (Optional[str]): Text value specifying radius col. ``None`` selects the function's default behavior.
+        cell_col (Optional[str]): Text value specifying cell col. ``None`` selects the function's default behavior.
+        channel_col (Optional[str]): Text value specifying channel col. ``None`` selects the function's default behavior.
+        pair_col (Optional[str]): Text value specifying pair col. ``None`` selects the function's default behavior.
+        compare_col (Optional[str]): Text value specifying compare col. ``None`` selects the function's default behavior.
+        factor_a (Optional[str]): Text value specifying factor a. ``None`` selects the function's default behavior.
+        factor_b (Optional[str]): Text value specifying factor b. ``None`` selects the function's default behavior.
+        use_auc (Optional[bool]): Boolean flag controlling whether to auc. ``None`` selects the function's default behavior.
+        switch_blue_green (bool): Boolean flag controlling switch blue green. Defaults to ``True``.
+        stem (Optional[str]): Text value specifying stem. ``None`` selects the function's default behavior.
+        min_n (int): Minimum permitted value of n. Defaults to ``2``.
+
+    Returns:
+        StatisticsResult: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = run_statistics(
+        ...     dataset="2d_time",
+        ...     graph="graph",
+        ...     csv_path=Path("path/to/resource"),
+        ... )
+    """
     dataset = dataset.lower().strip()
     graph = graph.lower().strip()
     test = test.lower().strip().replace("-", "_")

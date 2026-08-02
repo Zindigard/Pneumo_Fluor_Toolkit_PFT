@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for stardist finetune two-dimensional data time core."""
+
 from __future__ import annotations
 
 import random
@@ -18,6 +20,7 @@ FAMILY = "stardist"
 
 @dataclass
 class StarDistFineTuneConfig:
+    """Store validated configuration or result data for star dist fine tune config."""
     project_root: Path
     epochs: int = 100
     steps_per_epoch: int = 100
@@ -28,14 +31,43 @@ class StarDistFineTuneConfig:
     channels: tuple[int, ...] | None = None
 
     def __post_init__(self):
+        """Return post init for the supplied inputs.
+
+        Example:
+            >>> instance = StarDistFineTuneConfig(...)
+            >>> instance.__post_init__()
+        """
         if self.channels is None:
             self.channels = (0, 1) if DATASET == "2d_wga_dapi" else (0,)
 
     def model_dir(self) -> Path:
+        """Return model dir for the supplied inputs.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = StarDistFineTuneConfig(...)
+            >>> result = instance.model_dir()
+        """
         return model_root(self.project_root, FAMILY, DATASET)
 
 
 def _load_training_arrays(cfg: StarDistFineTuneConfig):
+    """Load training arrays from persistent storage.
+
+    Args:
+        cfg (StarDistFineTuneConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _load_training_arrays(cfg=config)
+    """
     pairs = collect_training_pairs(cfg.project_root, DATASET)
     X, Y = [], []
     for image_path, mask_path, sample in pairs:
@@ -65,6 +97,17 @@ def _load_training_arrays(cfg: StarDistFineTuneConfig):
 
 
 def finetune_stardist_2d_time(cfg: StarDistFineTuneConfig | None = None) -> Path:
+    """Return finetune stardist two-dimensional data time for the supplied inputs.
+
+    Args:
+        cfg (StarDistFineTuneConfig | None): Value specifying cfg for the operation. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = finetune_stardist_2d_time()
+    """
     if cfg is None:
         cfg = StarDistFineTuneConfig(project_root=find_project_root())
     from stardist.models import Config2D, StarDist2D

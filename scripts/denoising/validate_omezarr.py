@@ -1,4 +1,4 @@
-"""
+r"""
 Revalidate existing OME-Zarr images against their original CZI files.
 With no arguments, the script validates every ``*.ome.zarr`` directory below
 ``<project>/results/img``. ``--root`` may select another directory tree and
@@ -9,6 +9,21 @@ interactive mode.
 Every image receives a detailed ``ome_zarr_validation.txt`` beside the
 OME-Zarr directory. Detailed checks are written only to that text file. Dataset summaries and
 a global validation summary are refreshed after the scan.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/validate_omezarr.py --help
+
+Representative execution:
+
+    python scripts/denoising/validate_omezarr.py \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --root results/img/3d_data \
+        --non-interactive \
+        --raw-root results/img/3d_data \
+        --stop-on-error
 """
 
 from __future__ import annotations
@@ -21,7 +36,20 @@ _PFT_SCRIPT_FILE = _PFTPath(__file__).resolve()
 
 
 def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
-    """Return the repository root containing both ``scripts`` and ``src/PFT``."""
+    """Return the repository root containing both ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
+    """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -58,7 +86,20 @@ DEFAULT_VALIDATION_ROOT = REPO_ROOT / "results" / "img"
 
 
 def find_omezarr_directories(root: str | Path) -> list[Path]:
-    """Return one or more OME-Zarr directories below a validation target."""
+    """Return one or more OME-Zarr directories below a validation target.
+
+    Args:
+        root (str | Path): Root directory used to resolve relative project paths.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_omezarr_directories(root=Path("path/to/resource"))
+    """
     target = Path(root).expanduser()
     if not target.exists():
         raise FileNotFoundError(f"Validation root does not exist: {target}")
@@ -71,7 +112,20 @@ def find_omezarr_directories(root: str | Path) -> list[Path]:
 
 
 def stored_source_path(zarr_path: Path) -> Path | None:
-    """Read the original CZI path stored in OME-Zarr root attributes."""
+    """Read the original CZI path stored in OME-Zarr root attributes.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        Path | None: Resolved or generated filesystem path.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = stored_source_path(zarr_path=Path("path/to/resource"))
+    """
     try:
         import zarr
     except Exception as exc:
@@ -87,7 +141,18 @@ def stored_source_path(zarr_path: Path) -> Path | None:
 
 
 def find_source_by_name(raw_root: Path, filename: str) -> list[Path]:
-    """Search a raw-data root recursively for a CZI filename case-insensitively."""
+    """Search a raw-data root recursively for a CZI filename case-insensitively.
+
+    Args:
+        raw_root (Path): Directory used for raw.
+        filename (str): Text value specifying filename.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_source_by_name(raw_root=Path("path/to/resource"), filename="filename")
+    """
     filename_lower = filename.lower()
     return sorted(
         (
@@ -100,7 +165,22 @@ def find_source_by_name(raw_root: Path, filename: str) -> list[Path]:
 
 
 def choose_source(candidates: list[Path], *, interactive: bool) -> Path:
-    """Select one source CZI from matching candidates."""
+    """Select one source CZI from matching candidates.
+
+    Args:
+        candidates (list[Path]): Filesystem path used for candidates.
+        interactive (bool): Boolean flag controlling interactive.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        IndexError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = choose_source(candidates=Path("path/to/resource"), interactive=True)
+    """
     if not candidates:
         raise FileNotFoundError("No matching CZI source file was found.")
     if len(candidates) == 1 or not interactive:
@@ -116,7 +196,17 @@ def choose_source(candidates: list[Path], *, interactive: bool) -> Path:
 
 
 def request_raw_root() -> Path:
-    """Request the parent raw-data directory through a dialog or terminal input."""
+    """Request the parent raw-data directory through a dialog or terminal input.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = request_raw_root()
+    """
     selected = select_directory_dialog("Select the parent folder containing original CZI data")
     if selected is None:
         value = input("Enter the parent raw-data folder: ").strip().strip('"')
@@ -134,7 +224,26 @@ def resolve_source(
     raw_root: Path | None,
     interactive: bool,
 ) -> tuple[Path, Path | None]:
-    """Resolve the original CZI path and return the active relocation root."""
+    """Resolve the original CZI path and return the active relocation root.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        raw_root (Path | None): Directory used for raw.
+        interactive (bool): Boolean flag controlling interactive.
+
+    Returns:
+        tuple[Path, Path | None]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = resolve_source(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     raw_root=Path("path/to/resource"),
+        ...     interactive=True,
+        ... )
+    """
     stored = stored_source_path(zarr_path)
     if stored is not None and stored.is_file():
         return stored.resolve(), raw_root
@@ -157,7 +266,17 @@ def resolve_source(
 
 
 def summary_root_for_target(scan_target: Path) -> Path:
-    """Choose the directory under which dataset and global summaries are stored."""
+    """Choose the directory under which dataset and global summaries are stored.
+
+    Args:
+        scan_target (Path): Filesystem path used for scan target.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = summary_root_for_target(scan_target=Path("path/to/resource"))
+    """
     resolved = scan_target.resolve()
     default_root = DEFAULT_VALIDATION_ROOT.resolve()
     if resolved == default_root or resolved.is_relative_to(default_root):
@@ -168,7 +287,18 @@ def summary_root_for_target(scan_target: Path) -> Path:
 
 
 def dataset_and_sample(zarr_path: Path, summary_root: Path) -> tuple[str, str]:
-    """Derive compact dataset and sample identifiers from an OME-Zarr path."""
+    """Derive compact dataset and sample identifiers from an OME-Zarr path.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        summary_root (Path): Directory used for summary.
+
+    Returns:
+        tuple[str, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = dataset_and_sample(zarr_path=Path("path/to/resource"), summary_root=Path("path/to/resource"))
+    """
     sample_dir = zarr_path.parent.resolve()
     try:
         relative = sample_dir.relative_to(summary_root.resolve())
@@ -181,7 +311,14 @@ def dataset_and_sample(zarr_path: Path, summary_root: Path) -> tuple[str, str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Construct arguments for default-all, custom-root, or single-image validation."""
+    """Construct arguments for default-all, custom-root, or single-image validation.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Validate OME-Zarr images against original CZI files. With no source "
@@ -205,7 +342,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Validate all selected OME-Zarr images and refresh compact summaries."""
+    """Validate all selected OME-Zarr images and refresh compact summaries.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args()
     scan_target = Path(args.zarr or args.root or DEFAULT_VALIDATION_ROOT).expanduser().resolve()
     zarr_paths = find_omezarr_directories(scan_target)

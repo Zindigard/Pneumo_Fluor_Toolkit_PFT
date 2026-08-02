@@ -1,4 +1,21 @@
-﻿from __future__ import annotations
+r"""Provide command-line and programmatic utilities for create statistics graphs.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/statistics/create_statistics_graphs.py --help
+
+Representative execution:
+
+    python scripts/statistics/create_statistics_graphs.py \
+        --dataset 2d_time \
+        --source-mode filtered_unet \
+        --manifest results/statistics/manifest.csv \
+        --example
+"""
+
+from __future__ import annotations
 
 """Create quantitative-analysis graphs for one dataset or all supported datasets.
 
@@ -41,6 +58,7 @@ EXAMPLE_MODE = False
 
 @dataclass(frozen=True)
 class DatasetSpec:
+    """Store validated configuration or result data for dataset spec."""
     dataset: str
     channel_names: tuple[str, ...]
     condition_order: tuple[str, ...]
@@ -73,6 +91,20 @@ SPECS = {
 
 
 def find_project_root(start: Path | None = None) -> Path:
+    """Find project root in the available data or project structure.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = find_project_root()
+    """
     current = (start or SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -82,17 +114,45 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 def configure_local_imports(project_root: Path) -> None:
+    """Return configure local imports for the supplied inputs.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+
+    Example:
+        >>> configure_local_imports(project_root=Path("path/to/resource"))
+    """
     statistics_dir = project_root / "scripts" / "statistics"
     if str(statistics_dir) not in sys.path:
         sys.path.insert(0, str(statistics_dir))
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
+    """Read CSV data from persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+
+    Returns:
+        list[dict[str, str]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = read_csv(path=Path("path/to/resource"))
+    """
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
         return list(csv.DictReader(handle))
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    """Write CSV data to persistent storage.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, object]]): Text value specifying rows.
+
+    Example:
+        >>> write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -109,6 +169,21 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, object]]:
+    """Infer condition from the supplied model inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample_name (str): Text value specifying sample name.
+
+    Returns:
+        tuple[str, dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = infer_condition(dataset="2d_time", sample_name="sample_name")
+    """
     upper = sample_name.upper()
     medium = "THY" if "THY" in upper else "NHS" if "NHS" in upper else "UNKNOWN"
     metadata: dict[str, object] = {"medium": medium}
@@ -135,6 +210,18 @@ def infer_condition(dataset: str, sample_name: str) -> tuple[str, dict[str, obje
 
 
 def safe_float(value: object, default: float = math.nan) -> float:
+    """Return safe float for the supplied inputs.
+
+    Args:
+        value (object): Value to validate, transform, store, or forward.
+        default (float): Numerical value controlling default. Defaults to ``math.nan``.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = safe_float(value=...)
+    """
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -142,6 +229,11 @@ def safe_float(value: object, default: float = math.nan) -> float:
 
 
 def setup_style() -> None:
+    """Return setup style for the supplied inputs.
+
+    Example:
+        >>> setup_style()
+    """
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
@@ -158,6 +250,20 @@ def setup_style() -> None:
 
 
 def save_figure(fig: plt.Figure, output_dir: Path, stem: str) -> None:
+    """Save figure to persistent storage.
+
+    Args:
+        fig (plt.Figure): Matplotlib figure object containing the generated visualization.
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+
+    Example:
+        >>> save_figure(
+        ...     fig=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_dir / f"{stem}.png", bbox_inches="tight")
     fig.savefig(output_dir / f"{stem}.pdf", bbox_inches="tight")
@@ -165,6 +271,17 @@ def save_figure(fig: plt.Figure, output_dir: Path, stem: str) -> None:
 
 
 def profile_minmax(profile: np.ndarray) -> np.ndarray:
+    """Return profile minmax for the supplied inputs.
+
+    Args:
+        profile (np.ndarray): Array containing profile.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = profile_minmax(profile=image_array)
+    """
     profile = np.asarray(profile, dtype=np.float64)
     finite = profile[np.isfinite(profile)]
     if finite.size == 0:
@@ -183,6 +300,15 @@ def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
 
     The 50% axial extent is a profile-based signal length: the fraction of the
     normalized cell axis occupied by values at least 50% of the profile peak.
+
+    Args:
+        profile (np.ndarray): Array containing profile.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = axial_profile_metrics(profile=image_array)
     """
     values = np.asarray(profile, dtype=np.float64)
     finite = np.isfinite(values)
@@ -208,6 +334,17 @@ def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
     spread = float(np.sqrt(np.sum(values * (x - centroid) ** 2) / (total + EPS)))
 
     def extent_fraction(level: float) -> float:
+        """Return extent fraction for the supplied inputs.
+
+        Args:
+            level (float): Numerical value controlling level.
+
+        Returns:
+            float: Computed numerical result.
+
+        Example:
+            >>> result = extent_fraction(level=0.5)
+        """
         selected = np.flatnonzero(values >= level)
         if selected.size == 0:
             return 0.0
@@ -242,7 +379,17 @@ def axial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
 
 
 def radial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
-    """Return scalar descriptors of a normalized centre-to-boundary profile."""
+    """Return scalar descriptors of a normalized centre-to-boundary profile.
+
+    Args:
+        profile (np.ndarray): Array containing profile.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = radial_profile_metrics(profile=image_array)
+    """
     values = np.asarray(profile, dtype=np.float64)
     finite = np.isfinite(values)
     if not np.any(finite):
@@ -269,7 +416,18 @@ def radial_profile_metrics(profile: np.ndarray) -> dict[str, float]:
 
 
 def axial_profile(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Average intensity across cell width at each normalized axial position."""
+    """Average intensity across cell width at each normalized axial position.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = axial_profile(image=image_array, mask=image_array)
+    """
     width = mask.shape[1]
     result = np.full(width, np.nan, dtype=np.float64)
     for x in range(width):
@@ -291,7 +449,23 @@ def axial_profile(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 def radial_profile(image: np.ndarray, mask: np.ndarray, bins: int) -> np.ndarray:
-    """Compute centre-to-boundary profile using the Methods radial coordinate."""
+    """Compute centre-to-boundary profile using the Methods radial coordinate.
+
+    Args:
+        image (np.ndarray): Input image array to process.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        bins (int): Numerical value controlling bins.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = radial_profile(
+        ...     image=image_array,
+        ...     mask=image_array,
+        ...     bins=1,
+        ... )
+    """
     distance = ndi.distance_transform_edt(mask)
     dmax = float(np.max(distance))
     output = np.full(bins, np.nan, dtype=np.float64)
@@ -319,6 +493,17 @@ def radial_profile(image: np.ndarray, mask: np.ndarray, bins: int) -> np.ndarray
 
 
 def pca_dimensions(binary: np.ndarray) -> tuple[float, float]:
+    """Return principal-component analysis result dimensions for the supplied inputs.
+
+    Args:
+        binary (np.ndarray): Array containing binary.
+
+    Returns:
+        tuple[float, float]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = pca_dimensions(binary=image_array)
+    """
     yy, xx = np.nonzero(binary)
     if xx.size < 2:
         return 0.0, 0.0
@@ -337,6 +522,18 @@ def pca_dimensions(binary: np.ndarray) -> tuple[float, float]:
 
 
 def background_parameters(image_cyx: np.ndarray, full_mask: np.ndarray) -> list[dict[str, float]]:
+    """Return background parameters for the supplied inputs.
+
+    Args:
+        image_cyx (np.ndarray): Array containing image cyx.
+        full_mask (np.ndarray): Array containing full mask.
+
+    Returns:
+        list[dict[str, float]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = background_parameters(image_cyx=image_array, full_mask=image_array)
+    """
     background = full_mask == 0
     params: list[dict[str, float]] = []
     for channel in image_cyx:
@@ -360,6 +557,25 @@ def boundary_homogeneity(
     cell_mask: np.ndarray,
     threshold: float,
 ) -> float:
+    """Return boundary homogeneity for the supplied inputs.
+
+    Args:
+        raw_channel (np.ndarray): Array containing raw channel.
+        corrected_channel (np.ndarray): Array containing corrected channel.
+        cell_mask (np.ndarray): Array containing cell mask.
+        threshold (float): Numerical decision threshold used by the operation.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = boundary_homogeneity(
+        ...     raw_channel=image_array,
+        ...     corrected_channel=image_array,
+        ...     cell_mask=image_array,
+        ...     threshold=0.5,
+        ... )
+    """
     boundary = cell_mask & ~ndi.binary_erosion(cell_mask, iterations=1, border_value=0)
     if not np.any(boundary):
         return math.nan
@@ -383,6 +599,25 @@ def dapi_homogeneity(
     cell_mask: np.ndarray,
     threshold: float,
 ) -> float:
+    """Return dapi homogeneity for the supplied inputs.
+
+    Args:
+        raw_channel (np.ndarray): Array containing raw channel.
+        corrected_channel (np.ndarray): Array containing corrected channel.
+        cell_mask (np.ndarray): Array containing cell mask.
+        threshold (float): Numerical decision threshold used by the operation.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = dapi_homogeneity(
+        ...     raw_channel=image_array,
+        ...     corrected_channel=image_array,
+        ...     cell_mask=image_array,
+        ...     threshold=0.5,
+        ... )
+    """
     raw_values = raw_channel[cell_mask]
     corrected_values = corrected_channel[cell_mask]
     finite = np.isfinite(raw_values) & np.isfinite(corrected_values)
@@ -398,6 +633,23 @@ def dapi_homogeneity(
 
 
 def pearson_inside(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float:
+    """Return pearson inside for the supplied inputs.
+
+    Args:
+        a (np.ndarray): Array containing a.
+        b (np.ndarray): Array containing b.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+
+    Returns:
+        float: Computed numerical result.
+
+    Example:
+        >>> result = pearson_inside(
+        ...     a=image_array,
+        ...     b=image_array,
+        ...     mask=image_array,
+        ... )
+    """
     av = a[mask].astype(np.float64)
     bv = b[mask].astype(np.float64)
     finite = np.isfinite(av) & np.isfinite(bv)
@@ -415,7 +667,27 @@ def channel_overlap_metrics(
     first_positive_threshold: float,
     second_positive_threshold: float,
 ) -> dict[str, float]:
-    """Compute descriptive intensity-overlap metrics inside one cell."""
+    """Compute descriptive intensity-overlap metrics inside one cell.
+
+    Args:
+        first (np.ndarray): Array containing first.
+        second (np.ndarray): Array containing second.
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        first_positive_threshold (float): Decision threshold applied to first positive.
+        second_positive_threshold (float): Decision threshold applied to second positive.
+
+    Returns:
+        dict[str, float]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = channel_overlap_metrics(
+        ...     first=image_array,
+        ...     second=image_array,
+        ...     mask=image_array,
+        ...     first_positive_threshold=0.5,
+        ...     second_positive_threshold=0.5,
+        ... )
+    """
     first_values = np.asarray(first[mask], dtype=np.float64)
     second_values = np.asarray(second[mask], dtype=np.float64)
     finite = np.isfinite(first_values) & np.isfinite(second_values)
@@ -450,6 +722,18 @@ def channel_overlap_metrics(
 
 
 def condition_sort_key(spec: DatasetSpec, condition: str) -> tuple[int, str]:
+    """Return condition sort key for the supplied inputs.
+
+    Args:
+        spec (DatasetSpec): Value specifying spec for the operation.
+        condition (str): Text value specifying condition.
+
+    Returns:
+        tuple[int, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = condition_sort_key(spec=..., condition="condition")
+    """
     try:
         return spec.condition_order.index(condition), condition
     except ValueError:
@@ -457,6 +741,17 @@ def condition_sort_key(spec: DatasetSpec, condition: str) -> tuple[int, str]:
 
 
 def condition_display(condition: str) -> str:
+    """Return condition display for the supplied inputs.
+
+    Args:
+        condition (str): Text value specifying condition.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = condition_display(condition="condition")
+    """
     labels = {
         "THY_noCSP": "THY",
         "THY_CSP": "THY + CSP",
@@ -479,6 +774,26 @@ def plot_2d_time_metric_over_time(
     output_dir: Path,
     stem: str,
 ) -> None:
+    """Plot two-dimensional data time metric over time for visual assessment.
+
+    Args:
+        records (list[dict[str, object]]): Text value specifying records.
+        key (str): Key used to access or identify an entry in a mapping.
+        ylabel (str): Text value specifying ylabel.
+        title (str): Title displayed on the generated figure or report section.
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+
+    Example:
+        >>> plot_2d_time_metric_over_time(
+        ...     records="records",
+        ...     key="key",
+        ...     ylabel="ylabel",
+        ...     title="title",
+        ...     output_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     available_times = sorted(
         {
             int(safe_float(row.get("time_min"), -1))
@@ -548,6 +863,14 @@ def plot_2d_time_metric_over_time(
 
 
 def add_note(fig: plt.Figure) -> None:
+    """Add note to the current data structure.
+
+    Args:
+        fig (plt.Figure): Matplotlib figure object containing the generated visualization.
+
+    Example:
+        >>> add_note(fig=...)
+    """
     if not EXAMPLE_MODE:
         return
     fig.text(
@@ -562,6 +885,20 @@ def add_note(fig: plt.Figure) -> None:
 
 
 def jittered_scatter(ax, positions: Sequence[float], groups: Sequence[np.ndarray]) -> None:
+    """Return jittered scatter for the supplied inputs.
+
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        positions (Sequence[float]): Numerical value controlling positions.
+        groups (Sequence[np.ndarray]): Array containing groups.
+
+    Example:
+        >>> jittered_scatter(
+        ...     ax=...,
+        ...     positions=0.5,
+        ...     groups=image_array,
+        ... )
+    """
     rng = np.random.default_rng(42)
     for position, values in zip(positions, groups):
         values = np.asarray(values, dtype=float)
@@ -580,6 +917,28 @@ def boxplot_metric(
     output_dir: Path,
     stem: str,
 ) -> None:
+    """Return boxplot metric for the supplied inputs.
+
+    Args:
+        records (list[dict[str, object]]): Text value specifying records.
+        conditions (list[str]): Text value specifying conditions.
+        key (str): Key used to access or identify an entry in a mapping.
+        ylabel (str): Text value specifying ylabel.
+        title (str): Title displayed on the generated figure or report section.
+        output_dir (Path): Directory where generated resources are written.
+        stem (str): Text value specifying stem.
+
+    Example:
+        >>> boxplot_metric(
+        ...     records="records",
+        ...     conditions="conditions",
+        ...     key="key",
+        ...     ylabel="ylabel",
+        ...     title="title",
+        ...     output_dir=Path("path/to/resource"),
+        ...     stem="stem",
+        ... )
+    """
     groups = [np.asarray([safe_float(row.get(key)) for row in records if row["condition"] == cond]) for cond in conditions]
     if not any(np.any(np.isfinite(group)) for group in groups):
         return
@@ -596,6 +955,17 @@ def boxplot_metric(
 
 
 def mean_and_band(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return mean and band for the supplied inputs.
+
+    Args:
+        matrix (np.ndarray): Array containing matrix.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = mean_and_band(matrix=image_array)
+    """
     matrix = np.asarray(matrix, dtype=float)
     mean = np.nanmean(matrix, axis=0)
     if matrix.shape[0] <= 1:
@@ -614,6 +984,24 @@ def plot_axial_profiles(
     output_dir: Path,
     dataset: str,
 ) -> None:
+    """Plot axial profiles for visual assessment.
+
+    Args:
+        profile_store (dict[tuple[str, str], list[np.ndarray]]): Array containing profile store.
+        conditions (list[str]): Text value specifying conditions.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        output_dir (Path): Directory where generated resources are written.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> plot_axial_profiles(
+        ...     profile_store=image_array,
+        ...     conditions="conditions",
+        ...     channel_names="channel_names",
+        ...     output_dir=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
         "color", [f"C{i}" for i in range(10)]
     )
@@ -734,6 +1122,24 @@ def plot_heatmaps(
     output_dir: Path,
     dataset: str,
 ) -> None:
+    """Plot heatmaps for visual assessment.
+
+    Args:
+        profile_store (dict[tuple[str, str], list[np.ndarray]]): Array containing profile store.
+        conditions (list[str]): Text value specifying conditions.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        output_dir (Path): Directory where generated resources are written.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> plot_heatmaps(
+        ...     profile_store=image_array,
+        ...     conditions="conditions",
+        ...     channel_names="channel_names",
+        ...     output_dir=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     for channel in channel_names:
         if dataset == "2d_time":
             times = sorted(
@@ -854,6 +1260,24 @@ def plot_radial_profiles(
     output_dir: Path,
     dataset: str,
 ) -> None:
+    """Plot radial profiles for visual assessment.
+
+    Args:
+        radial_store (dict[tuple[str, str], list[np.ndarray]]): Array containing radial store.
+        conditions (list[str]): Text value specifying conditions.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        output_dir (Path): Directory where generated resources are written.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Example:
+        >>> plot_radial_profiles(
+        ...     radial_store=image_array,
+        ...     conditions="conditions",
+        ...     channel_names="channel_names",
+        ...     output_dir=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ... )
+    """
     if not radial_store:
         return
     cycle = plt.rcParams["axes.prop_cycle"].by_key().get(
@@ -981,6 +1405,22 @@ def plot_standardized_maps(
     channel_names: tuple[str, ...],
     output_dir: Path,
 ) -> None:
+    """Plot standardized maps for visual assessment.
+
+    Args:
+        map_store (dict[tuple[str, str], tuple[np.ndarray, np.ndarray]]): Array containing map store.
+        conditions (list[str]): Text value specifying conditions.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        output_dir (Path): Directory where generated resources are written.
+
+    Example:
+        >>> plot_standardized_maps(
+        ...     map_store=image_array,
+        ...     conditions="conditions",
+        ...     channel_names="channel_names",
+        ...     output_dir=Path("path/to/resource"),
+        ... )
+    """
     for channel in channel_names:
         available = [condition for condition in conditions if (condition, channel) in map_store]
         if not available:
@@ -1009,6 +1449,20 @@ def plot_wga_dapi_overlap_maps(
     conditions: list[str],
     output_dir: Path,
 ) -> None:
+    """Plot wga dapi overlap maps for visual assessment.
+
+    Args:
+        map_store (dict[tuple[str, str], tuple[np.ndarray, np.ndarray]]): Array containing map store.
+        conditions (list[str]): Text value specifying conditions.
+        output_dir (Path): Directory where generated resources are written.
+
+    Example:
+        >>> plot_wga_dapi_overlap_maps(
+        ...     map_store=image_array,
+        ...     conditions="conditions",
+        ...     output_dir=Path("path/to/resource"),
+        ... )
+    """
     available = [
         condition
         for condition in conditions
@@ -1073,6 +1527,17 @@ def plot_wga_dapi_overlap_maps(
 
 
 def _numeric_metrics(records: list[dict[str, object]]) -> list[str]:
+    """Return numeric metrics for the supplied inputs.
+
+    Args:
+        records (list[dict[str, object]]): Text value specifying records.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _numeric_metrics(records="records")
+    """
     excluded = {
         "dataset",
         "annotation_id",
@@ -1100,6 +1565,17 @@ def _numeric_metrics(records: list[dict[str, object]]) -> list[str]:
 
 
 def _profile_comparison_plan(dataset: str) -> list[tuple[str, str, list[str], str, list[str]]]:
+    """Return profile comparison plan for the supplied inputs.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[tuple[str, str, list[str], str, list[str]]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _profile_comparison_plan(dataset="2d_time")
+    """
     if dataset == "2d_time":
         return [
             (f"{time} min", "THY", [f"THY_{time}min"], "NHS", [f"NHS_{time}min"])
@@ -1121,6 +1597,18 @@ def _profile_comparison_plan(dataset: str) -> list[tuple[str, str, list[str], st
 def _records_for_conditions(
     records: list[dict[str, object]], conditions: list[str]
 ) -> list[dict[str, object]]:
+    """Return records for conditions for the supplied inputs.
+
+    Args:
+        records (list[dict[str, object]]): Text value specifying records.
+        conditions (list[str]): Text value specifying conditions.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _records_for_conditions(records="records", conditions="conditions")
+    """
     condition_set = set(conditions)
     return [row for row in records if str(row.get("condition", "")) in condition_set]
 
@@ -1130,6 +1618,23 @@ def _profile_values(
     conditions: list[str],
     channel: str,
 ) -> list[np.ndarray]:
+    """Return profile values for the supplied inputs.
+
+    Args:
+        store (dict[tuple[str, str], list[np.ndarray]]): Array containing store.
+        conditions (list[str]): Text value specifying conditions.
+        channel (str): Channel index or channel identifier selected for processing.
+
+    Returns:
+        list[np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _profile_values(
+        ...     store=image_array,
+        ...     conditions="conditions",
+        ...     channel="channel",
+        ... )
+    """
     values: list[np.ndarray] = []
     for condition in conditions:
         values.extend(store.get((condition, channel), []))
@@ -1144,6 +1649,26 @@ def _append_profile_difference_sheet(
     channel_names: tuple[str, ...],
     coordinate_name: str,
 ) -> None:
+    """Append profile difference sheet to the current collection.
+
+    Args:
+        workbook (Workbook): Value specifying workbook for the operation.
+        sheet_name (str): Text value specifying sheet name.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        store (dict[tuple[str, str], list[np.ndarray]]): Array containing store.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        coordinate_name (str): Text value specifying coordinate name.
+
+    Example:
+        >>> _append_profile_difference_sheet(
+        ...     workbook=...,
+        ...     sheet_name="sheet_name",
+        ...     dataset="2d_time",
+        ...     store=image_array,
+        ...     channel_names="channel_names",
+        ...     coordinate_name="coordinate_name",
+        ... )
+    """
     sheet = workbook.create_sheet(sheet_name)
     sheet.append([
         "dataset",
@@ -1206,6 +1731,26 @@ def write_condition_metric_workbook(
     channel_names: tuple[str, ...],
     output_path: Path,
 ) -> None:
+    """Write condition metric workbook to persistent storage.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        records (list[dict[str, object]]): Text value specifying records.
+        axial_store (dict[tuple[str, str], list[np.ndarray]]): Array containing axial store.
+        radial_store (dict[tuple[str, str], list[np.ndarray]]): Array containing radial store.
+        channel_names (tuple[str, ...]): Text value specifying channel names.
+        output_path (Path): Filesystem path where the generated result is written.
+
+    Example:
+        >>> write_condition_metric_workbook(
+        ...     dataset="2d_time",
+        ...     records="records",
+        ...     axial_store=image_array,
+        ...     radial_store=image_array,
+        ...     channel_names="channel_names",
+        ...     output_path=Path("path/to/resource"),
+        ... )
+    """
     if not records:
         return
     metrics = _numeric_metrics(records)
@@ -1380,6 +1925,20 @@ def plot_detected_cells(
     rows: list[dict[str, str]],
     output_dir: Path,
 ) -> None:
+    """Plot detected cells for visual assessment.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        rows (list[dict[str, str]]): Text value specifying rows.
+        output_dir (Path): Directory where generated resources are written.
+
+    Example:
+        >>> plot_detected_cells(
+        ...     dataset="2d_time",
+        ...     rows="rows",
+        ...     output_dir=Path("path/to/resource"),
+        ... )
+    """
     parsed: list[dict[str, object]] = []
     for row in rows:
         if row.get("annotation_type", "full") != "full":
@@ -1553,6 +2112,14 @@ def plot_detected_cells(
 
 
 def _import_common():
+    """Return import common for the supplied inputs.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _import_common()
+    """
     local_dir = SCRIPT_FILE.parent
     if str(local_dir) not in sys.path:
         sys.path.insert(0, str(local_dir))
@@ -1583,6 +2150,18 @@ COMMON = _import_common()
 
 
 def _prepare_output(output_root: Path, overwrite: bool) -> None:
+    """Prepare output for downstream processing.
+
+    Args:
+        output_root (Path): Directory used for output.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Raises:
+        FileExistsError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> _prepare_output(output_root=Path("path/to/resource"), overwrite=True)
+    """
     if output_root.exists() and any(output_root.iterdir()):
         if not overwrite:
             raise FileExistsError(f"Output folder is not empty: {output_root}. Use --overwrite.")
@@ -1591,6 +2170,17 @@ def _prepare_output(output_root: Path, overwrite: bool) -> None:
 
 
 def aggregate_roi_records(cell_records: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return aggregate region of interest records for the supplied inputs.
+
+    Args:
+        cell_records (list[dict[str, object]]): Text value specifying cell records.
+
+    Returns:
+        list[dict[str, object]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = aggregate_roi_records(cell_records="cell_records")
+    """
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
     for row in cell_records:
         grouped[str(row["annotation_id"])].append(row)
@@ -1629,6 +2219,17 @@ def aggregate_roi_records(cell_records: list[dict[str, object]]) -> list[dict[st
 def _mean_profile_store(
     store: dict[tuple[str, str, str], list[np.ndarray]],
 ) -> dict[tuple[str, str], list[np.ndarray]]:
+    """Return mean profile store for the supplied inputs.
+
+    Args:
+        store (dict[tuple[str, str, str], list[np.ndarray]]): Array containing store.
+
+    Returns:
+        dict[tuple[str, str], list[np.ndarray]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _mean_profile_store(store=image_array)
+    """
     output: dict[tuple[str, str], list[np.ndarray]] = defaultdict(list)
     for (_annotation_id, condition, channel), profiles in store.items():
         if profiles:
@@ -1639,6 +2240,17 @@ def _mean_profile_store(
 def _condition_maps_from_annotations(
     annotation_maps: dict[tuple[str, str, str], tuple[np.ndarray, np.ndarray]],
 ) -> dict[tuple[str, str], tuple[np.ndarray, np.ndarray]]:
+    """Return condition maps from annotations for the supplied inputs.
+
+    Args:
+        annotation_maps (dict[tuple[str, str, str], tuple[np.ndarray, np.ndarray]]): Array containing annotation maps.
+
+    Returns:
+        dict[tuple[str, str], tuple[np.ndarray, np.ndarray]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _condition_maps_from_annotations(annotation_maps=image_array)
+    """
     result: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for (_annotation_id, condition, channel), (weighted_sum, weight) in annotation_maps.items():
         valid = weight > 0
@@ -1671,6 +2283,46 @@ def process_dataset(
     pixel_size_um: float | None,
     overwrite: bool,
 ) -> dict[str, object]:
+    """Process dataset using the configured workflow.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_mode (str): Preprocessing source used to construct the input, such as the original image, a filtered image, or a U-Net-masked image.
+        example (bool): Boolean flag controlling example.
+        manifest (Path): Filesystem path used for manifest.
+        pca_root (Path): Directory used for principal-component analysis result.
+        normalized_root (Path): Directory used for normalized.
+        all_mask_summary (Path | None): Filesystem path used for all mask summary.
+        output_root (Path): Directory used for output.
+        radial_bins (int): Numerical value controlling radial bins.
+        pixel_size_um (float | None): Physical pixel size in micrometres.
+        overwrite (bool): Whether an existing output may be replaced.
+
+    Returns:
+        dict[str, object]: Mapping containing the generated or resolved values.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = process_dataset(
+        ...     project_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     source_mode="original",
+        ...     example=True,
+        ...     manifest=Path("path/to/resource"),
+        ...     pca_root=Path("path/to/resource"),
+        ...     normalized_root=Path("path/to/resource"),
+        ...     all_mask_summary=Path("path/to/resource"),
+        ...     output_root=Path("path/to/resource"),
+        ...     radial_bins=1,
+        ...     pixel_size_um=0.5,
+        ...     overwrite=True,
+        ... )
+    """
     global EXAMPLE_MODE
     EXAMPLE_MODE = example
     _prepare_output(output_root, overwrite)
@@ -2134,6 +2786,14 @@ def process_dataset(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from the supplied inputs.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Create statistics graphs for one dataset or all datasets. "
@@ -2161,6 +2821,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     project_root = COMMON["find_project_root"](SCRIPT_FILE, args.project_root)
     if args.radial_bins < 3:

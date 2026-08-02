@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for omnipose run."""
+
 from __future__ import annotations
 
 import argparse
@@ -15,7 +17,18 @@ from PFT.core_prog_parts.decoder_omezar import load_ome_zarr
 
 
 def _take_first_time(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
-    """Remove time by taking the first frame when present."""
+    """Remove time by taking the first frame when present.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _take_first_time(x=image_array, axes="axes")
+    """
     if "t" not in axes:
         return x, axes
     t_idx = axes.index("t")
@@ -23,12 +36,33 @@ def _take_first_time(x: np.ndarray, axes: str) -> tuple[np.ndarray, str]:
 
 
 def _center_slice_index(length: int) -> int:
-    """Return the center index for one dimension."""
+    """Return the center index for one dimension.
+
+    Args:
+        length (int): Numerical value controlling length.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _center_slice_index(length=1)
+    """
     return max(0, int(length) // 2)
 
 
 def _pick_channels(dataset: str, n_available: int) -> list[int]:
-    """Choose the image channels used for one dataset."""
+    """Choose the image channels used for one dataset.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        n_available (int): Number of available used by the operation.
+
+    Returns:
+        list[int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _pick_channels(dataset="2d_time", n_available=1)
+    """
     ds = normalize_dataset_name(dataset)
     if ds == "2d_wga_dapi":
         return list(range(min(2, n_available)))
@@ -36,7 +70,19 @@ def _pick_channels(dataset: str, n_available: int) -> list[int]:
 
 
 def _normalize_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.8) -> np.ndarray:
-    """Normalize image intensities into a stable range."""
+    """Normalize image intensities into a stable range.
+
+    Args:
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        p_lo (float): Numerical value controlling p lo. Defaults to ``1.0``.
+        p_hi (float): Numerical value controlling p hi. Defaults to ``99.8``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _normalize_percentile(x=image_array)
+    """
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 2:
         lo = np.percentile(x, p_lo)
@@ -53,7 +99,26 @@ def _normalize_percentile(x: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.8) 
 
 
 def extract_input_image(path: Path, dataset: str, ndim: int) -> np.ndarray:
-    """Extract a 2D or 3D Omnipose-ready image from one OME-Zarr file."""
+    """Extract a 2D or 3D Omnipose-ready image from one OME-Zarr file.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        ndim (int): Numerical value controlling ndim.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = extract_input_image(
+        ...     path=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     ndim=1,
+        ... )
+    """
     arr, axes = load_ome_zarr(path, level=0, as_numpy=False)
     x = np.asarray(arr)
     axes = str(axes)
@@ -90,7 +155,21 @@ def extract_input_image(path: Path, dataset: str, ndim: int) -> np.ndarray:
 
 
 def list_filtered_images(project_root: Path, dataset: str) -> list[Path]:
-    """List filtered OME-Zarr files for one dataset."""
+    """List filtered OME-Zarr files for one dataset.
+
+    Args:
+        project_root (Path): Root directory of the PFT project containing the results, models, scripts, and source-code directories.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = list_filtered_images(project_root=Path("path/to/resource"), dataset="2d_time")
+    """
     ds = normalize_dataset_name(dataset)
     candidates = [
         filtered_img_root(project_root) / ds,
@@ -129,7 +208,15 @@ class OmniposeRunConfig:
     gpu: bool = True
 
     def output_root(self) -> Path:
-        """Build the prediction output folder."""
+        """Build the prediction output folder.
+
+        Returns:
+            Path: Resolved or generated filesystem path.
+
+        Example:
+            >>> instance = OmniposeRunConfig(...)
+            >>> result = instance.output_root()
+        """
         name = self.model_name or self.model_type
         out = self.project_root / "results" / "segmentation_predictions" / "omnipose" / self.dataset / name
         out.mkdir(parents=True, exist_ok=True)
@@ -137,7 +224,17 @@ class OmniposeRunConfig:
 
 
 def build_model(cfg: OmniposeRunConfig):
-    """Load a built-in or custom Omnipose model."""
+    """Load a built-in or custom Omnipose model.
+
+    Args:
+        cfg (OmniposeRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = build_model(cfg=config)
+    """
     from cellpose_omni import models
 
     if cfg.pretrained_model:
@@ -165,7 +262,23 @@ def build_model(cfg: OmniposeRunConfig):
 
 
 def run_one_image(model, img: np.ndarray, cfg: OmniposeRunConfig) -> np.ndarray:
-    """Run Omnipose on one image or volume."""
+    """Run Omnipose on one image or volume.
+
+    Args:
+        model (Any): Model identifier or filesystem path to the pretrained or fine-tuned model.
+        img (np.ndarray): Array containing img.
+        cfg (OmniposeRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = run_one_image(
+        ...     model="model_name",
+        ...     img=image_array,
+        ...     cfg=config,
+        ... )
+    """
     channels = [0, 0] if cfg.nchan == 1 else [2, 1]
     kwargs = dict(
         diameter=cfg.diameter,
@@ -182,7 +295,17 @@ def run_one_image(model, img: np.ndarray, cfg: OmniposeRunConfig) -> np.ndarray:
 
 
 def run_omnipose_dataset(cfg: OmniposeRunConfig) -> Path:
-    """Run Omnipose on all filtered images of one dataset."""
+    """Run Omnipose on all filtered images of one dataset.
+
+    Args:
+        cfg (OmniposeRunConfig): Value specifying cfg for the operation.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = run_omnipose_dataset(cfg=config)
+    """
     model = build_model(cfg)
     images = list_filtered_images(cfg.project_root, cfg.dataset)
     out_root = cfg.output_root()
@@ -208,7 +331,14 @@ def run_omnipose_dataset(cfg: OmniposeRunConfig) -> Path:
 
 
 def parse_args() -> OmniposeRunConfig:
-    """Read command line settings for Omnipose prediction."""
+    """Read command line settings for Omnipose prediction.
+
+    Returns:
+        OmniposeRunConfig: Result produced by the operation.
+
+    Example:
+        >>> result = parse_args()
+    """
     project_root = find_project_root()
     p = argparse.ArgumentParser(description="Run Omnipose on filtered OME-Zarr images.")
     p.add_argument("--dataset", default="2d_time")
@@ -250,7 +380,11 @@ def parse_args() -> OmniposeRunConfig:
 
 
 def main() -> None:
-    """Run Omnipose prediction from the terminal."""
+    """Run Omnipose prediction from the terminal.
+
+    Example:
+        >>> exit_code = main()
+    """
     cfg = parse_args()
     out_dir = run_omnipose_dataset(cfg)
     print(f"Saved Omnipose predictions to: {out_dir}")

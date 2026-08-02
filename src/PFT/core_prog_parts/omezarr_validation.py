@@ -54,22 +54,54 @@ class ValidationResult:
 
     @property
     def passed(self) -> bool:
-        """Return ``True`` only when every validation check passed."""
+        """Return ``True`` only when every validation check passed.
+
+        Returns:
+            bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+        Example:
+            >>> instance = ValidationResult(...)
+            >>> value = instance.passed
+        """
         return all(check.passed for check in self.checks)
 
     @property
     def failed_checks(self) -> tuple[ValidationCheck, ...]:
-        """Return all checks that failed in their original evaluation order."""
+        """Return all checks that failed in their original evaluation order.
+
+        Returns:
+            tuple[ValidationCheck, ...]: Collection containing the generated or selected values.
+
+        Example:
+            >>> instance = ValidationResult(...)
+            >>> value = instance.failed_checks
+        """
         return tuple(check for check in self.checks if not check.passed)
 
     @property
     def checks_passed(self) -> int:
-        """Return the number of successful validation checks."""
+        """Return the number of successful validation checks.
+
+        Returns:
+            int: Computed numerical result.
+
+        Example:
+            >>> instance = ValidationResult(...)
+            >>> value = instance.checks_passed
+        """
         return sum(check.passed for check in self.checks)
 
     @property
     def checks_failed(self) -> int:
-        """Return the number of failed validation checks."""
+        """Return the number of failed validation checks.
+
+        Returns:
+            int: Computed numerical result.
+
+        Example:
+            >>> instance = ValidationResult(...)
+            >>> value = instance.checks_failed
+        """
         return len(self.checks) - self.checks_passed
 
 
@@ -88,7 +120,17 @@ class ValidationSummaryRow:
 
 
 def _json_normalize(value: Any) -> Any:
-    """Normalize Zarr attribute values into stable Python containers for comparison."""
+    """Normalize Zarr attribute values into stable Python containers for comparison.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+
+    Returns:
+        Any: Result produced by the operation.
+
+    Example:
+        >>> result = _json_normalize(value=...)
+    """
     if isinstance(value, dict):
         return {str(key): _json_normalize(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -101,7 +143,18 @@ def _json_normalize(value: Any) -> Any:
 
 
 def _short(value: Any, max_chars: int = 180) -> str:
-    """Create a bounded-length textual representation for report diagnostics."""
+    """Create a bounded-length textual representation for report diagnostics.
+
+    Args:
+        value (Any): Value to validate, transform, store, or forward.
+        max_chars (int): Maximum permitted value of chars. Defaults to ``180``.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _short(value=...)
+    """
     if isinstance(value, str) and len(value) > max_chars:
         return f"{value[:max_chars]}... <{len(value)} characters>"
     try:
@@ -112,7 +165,18 @@ def _short(value: Any, max_chars: int = 180) -> str:
 
 
 def _same_float_sequence(actual: Any, expected: Iterable[float]) -> bool:
-    """Compare two numeric sequences using strict floating-point tolerances."""
+    """Compare two numeric sequences using strict floating-point tolerances.
+
+    Args:
+        actual (Any): Value specifying actual for the operation.
+        expected (Iterable[float]): Numerical value controlling expected.
+
+    Returns:
+        bool: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _same_float_sequence(actual=..., expected=0.5)
+    """
     try:
         return bool(np.allclose(
             np.asarray(actual, dtype=float),
@@ -125,7 +189,17 @@ def _same_float_sequence(actual: Any, expected: Iterable[float]) -> bool:
 
 
 def _dataset_entries(root: Any) -> tuple[list[dict[str, Any]], str]:
-    """Extract multiscale dataset entries and concatenated axis names from OME-NGFF metadata."""
+    """Extract multiscale dataset entries and concatenated axis names from OME-NGFF metadata.
+
+    Args:
+        root (Any): Root directory used to resolve relative project paths.
+
+    Returns:
+        tuple[list[dict[str, Any]], str]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _dataset_entries(root=Path("path/to/resource"))
+    """
     multiscales = _json_normalize(root.attrs.get("multiscales", []))
     if not isinstance(multiscales, list) or not multiscales:
         return [], ""
@@ -143,7 +217,18 @@ def _dataset_entries(root: Any) -> tuple[list[dict[str, Any]], str]:
 
 
 def _iter_chunk_slices(shape: tuple[int, ...], chunks: tuple[int, ...] | None) -> Iterable[tuple[slice, ...]]:
-    """Yield slice tuples that cover an array according to its chunk geometry."""
+    """Yield slice tuples that cover an array according to its chunk geometry.
+
+    Args:
+        shape (tuple[int, ...]): Target or observed array shape.
+        chunks (tuple[int, ...] | None): Numerical value controlling chunks.
+
+    Returns:
+        Iterable[tuple[slice, ...]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _iter_chunk_slices(shape=1, chunks=1)
+    """
     if not shape:
         yield tuple()
         return
@@ -158,7 +243,18 @@ def _iter_chunk_slices(shape: tuple[int, ...], chunks: tuple[int, ...] | None) -
 
 
 def _hash_and_compare_exact(source: np.ndarray, zarr_array: Any) -> tuple[bool, str, str, str]:
-    """Compare source and stored level-0 data chunk by chunk and compute SHA-256 digests."""
+    """Compare source and stored level-0 data chunk by chunk and compute SHA-256 digests.
+
+    Args:
+        source (np.ndarray): Array containing source.
+        zarr_array (Any): Value specifying Zarr array for the operation.
+
+    Returns:
+        tuple[bool, str, str, str]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _hash_and_compare_exact(source=image_array, zarr_array=...)
+    """
     source_hash = sha256()
     zarr_hash = sha256()
     exact = True
@@ -181,7 +277,17 @@ def _hash_and_compare_exact(source: np.ndarray, zarr_array: Any) -> tuple[bool, 
 
 
 def _extract_scale(dataset_entry: dict[str, Any]) -> list[float] | None:
-    """Return the scale coordinate transformation from one OME-NGFF dataset entry."""
+    """Return the scale coordinate transformation from one OME-NGFF dataset entry.
+
+    Args:
+        dataset_entry (dict[str, Any]): Text value specifying dataset entry.
+
+    Returns:
+        list[float] | None: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _extract_scale(dataset_entry="dataset_entry")
+    """
     transforms = dataset_entry.get("coordinateTransformations", [])
     if not isinstance(transforms, list):
         return None
@@ -193,7 +299,18 @@ def _extract_scale(dataset_entry: dict[str, Any]) -> list[float] | None:
 
 
 def _sidecar_xml_check(zarr_path: Path, meta: CziMeta) -> ValidationCheck:
-    """Compare the metadata XML sidecar with the original CZI XML when a sidecar exists."""
+    """Compare the metadata XML sidecar with the original CZI XML when a sidecar exists.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+        meta (CziMeta): Value specifying meta for the operation.
+
+    Returns:
+        ValidationCheck: Result produced by the operation.
+
+    Example:
+        >>> result = _sidecar_xml_check(zarr_path=Path("path/to/resource"), meta=...)
+    """
     expected_xml = getattr(meta, "raw_xml", None)
     candidates = [zarr_path.parent / "metadata.xml", zarr_path.parent / "metadata_full.xml"]
     existing = next((path for path in candidates if path.exists()), None)
@@ -223,9 +340,29 @@ def validate_ome_zarr(
     print_terminal: bool = True,
 ) -> ValidationResult:
     """Validate exact pixel data, axes, physical calibration, pyramid structure, and metadata.
-    
+
     A detailed report is written beside the OME-Zarr directory. The function
     returns a ``ValidationResult`` rather than raising for failed checks.
+
+    Args:
+        zarr_path (str | Path): Filesystem path associated with Zarr.
+        source_arr (np.ndarray): Array containing source arr.
+        source_meta (CziMeta): Value specifying source meta for the operation.
+        report_path (str | Path | None): Filesystem path associated with report. ``None`` selects the function's default behavior.
+        print_terminal (bool): Boolean flag controlling print terminal. Defaults to ``True``.
+
+    Returns:
+        ValidationResult: Result produced by the operation.
+
+    Raises:
+        ImportError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_ome_zarr(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     source_arr=image_array,
+        ...     source_meta=...,
+        ... )
     """
     zarr_path = Path(zarr_path).expanduser().resolve()
     report = Path(report_path) if report_path is not None else zarr_path.parent / REPORT_FILENAME
@@ -374,7 +511,18 @@ def validate_ome_zarr(
 
 
 def _format_report(result: ValidationResult, source_meta: CziMeta) -> str:
-    """Format validation checks and source information as a human-readable text report."""
+    """Format validation checks and source information as a human-readable text report.
+
+    Args:
+        result (ValidationResult): Value specifying result for the operation.
+        source_meta (CziMeta): Value specifying source meta for the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _format_report(result=..., source_meta=...)
+    """
     passed_count = sum(check.passed for check in result.checks)
     failed_count = len(result.checks) - passed_count
     status = "PASS" if result.passed else "FAIL"
@@ -410,7 +558,20 @@ def _write_report(
     *,
     print_terminal: bool,
 ) -> None:
-    """Write a validation report to disk and optionally print the same report in the terminal."""
+    """Write a validation report to disk and optionally print the same report in the terminal.
+
+    Args:
+        result (ValidationResult): Value specifying result for the operation.
+        source_meta (CziMeta): Value specifying source meta for the operation.
+        print_terminal (bool): Boolean flag controlling print terminal.
+
+    Example:
+        >>> _write_report(
+        ...     result=...,
+        ...     source_meta=...,
+        ...     print_terminal=True,
+        ... )
+    """
     text = _format_report(result, source_meta)
     result.report_path.parent.mkdir(parents=True, exist_ok=True)
     result.report_path.write_text(text, encoding="utf-8")
@@ -435,7 +596,31 @@ def make_validation_summary_row(
     checks_failed: int = 0,
     detail: str = "",
 ) -> ValidationSummaryRow:
-    """Create a normalized summary row for successful, failed, or skipped work."""
+    """Create a normalized summary row for successful, failed, or skipped work.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        status (str): Text value specifying status.
+        source_path (str | Path): Filesystem path associated with source. Defaults to ``""``.
+        zarr_path (str | Path): Filesystem path associated with Zarr. Defaults to ``""``.
+        checks_passed (int): Numerical value controlling checks passed. Defaults to ``0``.
+        checks_failed (int): Numerical value controlling checks failed. Defaults to ``0``.
+        detail (str): Text value specifying detail. Defaults to ``""``.
+
+    Returns:
+        ValidationSummaryRow: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = make_validation_summary_row(
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     status="status",
+        ... )
+    """
     normalized_status = status.strip().upper()
     if normalized_status not in {"PASS", "FAIL", "ERROR", "SKIPPED"}:
         raise ValueError(f"Unsupported validation status: {status!r}")
@@ -458,7 +643,25 @@ def summary_row_from_result(
     dataset: str,
     sample: str,
 ) -> ValidationSummaryRow:
-    """Convert an in-memory validation result into one compact summary row."""
+    """Convert an in-memory validation result into one compact summary row.
+
+    Args:
+        result (ValidationResult): Value specifying result for the operation.
+        source_meta (CziMeta): Value specifying source meta for the operation.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+
+    Returns:
+        ValidationSummaryRow: Result produced by the operation.
+
+    Example:
+        >>> result = summary_row_from_result(
+        ...     result=...,
+        ...     source_meta=...,
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ... )
+    """
     return make_validation_summary_row(
         dataset=dataset,
         sample=sample,
@@ -472,7 +675,18 @@ def summary_row_from_result(
 
 
 def _report_header_value(lines: list[str], label: str) -> str:
-    """Extract a value from a ``Label: value`` line in a detailed report."""
+    """Extract a value from a ``Label: value`` line in a detailed report.
+
+    Args:
+        lines (list[str]): Text value specifying lines.
+        label (str): Label value or label image used to identify a segmented object.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _report_header_value(lines="lines", label="label")
+    """
     prefix = f"{label}:"
     for line in lines:
         if line.startswith(prefix):
@@ -485,7 +699,21 @@ def summary_row_from_report(
     *,
     results_img_root: str | Path,
 ) -> ValidationSummaryRow:
-    """Parse one detailed report into a dataset/global summary row."""
+    """Parse one detailed report into a dataset/global summary row.
+
+    Args:
+        report_path (str | Path): Filesystem path associated with report.
+        results_img_root (str | Path): Directory used for results img.
+
+    Returns:
+        ValidationSummaryRow: Result produced by the operation.
+
+    Example:
+        >>> result = summary_row_from_report(
+        ...     report_path=Path("path/to/resource"),
+        ...     results_img_root=Path("path/to/resource"),
+        ... )
+    """
     report = Path(report_path).expanduser().resolve()
     root = Path(results_img_root).expanduser().resolve()
     lines = report.read_text(encoding="utf-8").splitlines()
@@ -524,7 +752,17 @@ def summary_row_from_report(
 
 
 def scan_validation_reports(results_img_root: str | Path) -> list[ValidationSummaryRow]:
-    """Read every per-image validation report below a ``results/img`` directory."""
+    """Read every per-image validation report below a ``results/img`` directory.
+
+    Args:
+        results_img_root (str | Path): Directory used for results img.
+
+    Returns:
+        list[ValidationSummaryRow]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = scan_validation_reports(results_img_root=Path("path/to/resource"))
+    """
     root = Path(results_img_root).expanduser().resolve()
     if not root.is_dir():
         return []
@@ -547,7 +785,17 @@ def scan_validation_reports(results_img_root: str | Path) -> list[ValidationSumm
 
 
 def _deduplicate_summary_rows(rows: Iterable[ValidationSummaryRow]) -> list[ValidationSummaryRow]:
-    """Remove duplicate summary rows while retaining the latest supplied row."""
+    """Remove duplicate summary rows while retaining the latest supplied row.
+
+    Args:
+        rows (Iterable[ValidationSummaryRow]): Value specifying rows for the operation.
+
+    Returns:
+        list[ValidationSummaryRow]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _deduplicate_summary_rows(rows=...)
+    """
     indexed: dict[tuple[str, str, str, str], ValidationSummaryRow] = {}
     for row in rows:
         key = (row.dataset, row.sample, row.source_path, row.zarr_path)
@@ -564,7 +812,23 @@ def write_validation_summary(
     *,
     title: str,
 ) -> Path:
-    """Write a compact validation summary without reproducing per-check details."""
+    """Write a compact validation summary without reproducing per-check details.
+
+    Args:
+        rows (Iterable[ValidationSummaryRow]): Value specifying rows for the operation.
+        output_path (str | Path): Filesystem path where the generated result is written.
+        title (str): Title displayed on the generated figure or report section.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = write_validation_summary(
+        ...     rows=...,
+        ...     output_path=Path("path/to/resource"),
+        ...     title="title",
+        ... )
+    """
     normalized = _deduplicate_summary_rows(rows)
     output = Path(output_path).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -607,7 +871,18 @@ def write_dataset_and_global_validation_summaries(
     *,
     extra_rows: Iterable[ValidationSummaryRow] = (),
 ) -> tuple[dict[str, Path], Path]:
-    """Refresh every dataset summary and the global summary below ``results/img``."""
+    """Refresh every dataset summary and the global summary below ``results/img``.
+
+    Args:
+        results_img_root (str | Path): Directory used for results img.
+        extra_rows (Iterable[ValidationSummaryRow]): Value specifying extra rows for the operation. Defaults to ``()``.
+
+    Returns:
+        tuple[dict[str, Path], Path]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = write_dataset_and_global_validation_summaries(results_img_root=Path("path/to/resource"))
+    """
     root = Path(results_img_root).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     rows = _deduplicate_summary_rows([*scan_validation_reports(root), *list(extra_rows)])
@@ -638,7 +913,28 @@ def validate_or_raise(
     report_path: str | Path | None = None,
     print_terminal: bool = True,
 ) -> ValidationResult:
-    """Run complete validation and raise ``OMEZarrValidationError`` when any check fails."""
+    """Run complete validation and raise ``OMEZarrValidationError`` when any check fails.
+
+    Args:
+        zarr_path (str | Path): Filesystem path associated with Zarr.
+        source_arr (np.ndarray): Array containing source arr.
+        source_meta (CziMeta): Value specifying source meta for the operation.
+        report_path (str | Path | None): Filesystem path associated with report. ``None`` selects the function's default behavior.
+        print_terminal (bool): Boolean flag controlling print terminal. Defaults to ``True``.
+
+    Returns:
+        ValidationResult: Result produced by the operation.
+
+    Raises:
+        OMEZarrValidationError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = validate_or_raise(
+        ...     zarr_path=Path("path/to/resource"),
+        ...     source_arr=image_array,
+        ...     source_meta=...,
+        ... )
+    """
     result = validate_ome_zarr(
         zarr_path,
         source_arr,

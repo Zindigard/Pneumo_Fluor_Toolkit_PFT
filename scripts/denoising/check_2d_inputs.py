@@ -1,4 +1,4 @@
-"""
+r"""
 Check whether 2D raw, mask, and Noise2Void data are ready for analysis.
 
 The checker validates:
@@ -16,6 +16,21 @@ The checker validates:
 
 Exit code ``0`` means that no blocking failures were found. Exit code ``1``
 means that at least one requested input is missing or incompatible.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/check_2d_inputs.py --help
+
+Representative execution:
+
+    python scripts/denoising/check_2d_inputs.py \
+        --dataset 2d_time \
+        --mode all \
+        --original-root results/img \
+        --n2v-root results/N2V \
+        --mask-root results/training_files/U-net
 """
 
 from __future__ import annotations
@@ -37,7 +52,20 @@ _SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root(start: Path | None = None) -> Path:
-    """Return the PFT repository root containing ``scripts`` and ``src/PFT``."""
+    """Return the PFT repository root containing ``scripts`` and ``src/PFT``.
+
+    Args:
+        start (Path | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     current = (start or _SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
     for candidate in (search_start, *search_start.parents):
@@ -105,12 +133,30 @@ class InputCheckRecord:
 
 
 def _utc_now() -> str:
-    """Return the current UTC timestamp in ISO 8601 format."""
+    """Return the current UTC timestamp in ISO 8601 format.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _utc_now()
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _status_from_issues(failures: Sequence[str], warnings: Sequence[str]) -> str:
-    """Return FAIL, WARN, or PASS from accumulated messages."""
+    """Return FAIL, WARN, or PASS from accumulated messages.
+
+    Args:
+        failures (Sequence[str]): Text value specifying failures.
+        warnings (Sequence[str]): Text value specifying warnings.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _status_from_issues(failures="failures", warnings="warnings")
+    """
     if failures:
         return STATUS_FAIL
     if warnings:
@@ -119,14 +165,35 @@ def _status_from_issues(failures: Sequence[str], warnings: Sequence[str]) -> str
 
 
 def _render_issues(failures: Sequence[str], warnings: Sequence[str]) -> str:
-    """Serialize blocking failures and non-blocking warnings into one field."""
+    """Serialize blocking failures and non-blocking warnings into one field.
+
+    Args:
+        failures (Sequence[str]): Text value specifying failures.
+        warnings (Sequence[str]): Text value specifying warnings.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _render_issues(failures="failures", warnings="warnings")
+    """
     parts = [f"FAIL: {message}" for message in failures]
     parts.extend(f"WARN: {message}" for message in warnings)
     return " | ".join(parts)
 
 
 def _validation_report_status(zarr_path: Path) -> tuple[Path, bool, str]:
-    """Return the report path, PASS state, and explanatory message."""
+    """Return the report path, PASS state, and explanatory message.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        tuple[Path, bool, str]: ``True`` when the requested condition is satisfied; otherwise ``False``.
+
+    Example:
+        >>> result = _validation_report_status(zarr_path=Path("path/to/resource"))
+    """
     report = zarr_path.parent / VALIDATION_REPORT_NAME
     if not report.is_file():
         return report, False, "per-sample OME-Zarr validation report is missing"
@@ -141,19 +208,54 @@ def _validation_report_status(zarr_path: Path) -> tuple[Path, bool, str]:
 
 
 def _axis_size(image: OmezarrImage, axis: str) -> int:
-    """Return an axis size, or one when the axis is absent."""
+    """Return an axis size, or one when the axis is absent.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        axis (str): Array axis along which the operation is performed.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _axis_size(image=image_array, axis="axis")
+    """
     if axis not in image.axes:
         return 1
     return int(image.array.shape[image.axes.index(axis)])
 
 
 def _yx_shape(image: OmezarrImage) -> tuple[int, int]:
-    """Return the YX dimensions of an opened OME-Zarr image."""
+    """Return the YX dimensions of an opened OME-Zarr image.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+
+    Returns:
+        tuple[int, int]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _yx_shape(image=image_array)
+    """
     return _axis_size(image, "y"), _axis_size(image, "x")
 
 
 def _selected_channels(image: OmezarrImage, dataset: str) -> list[int | None]:
-    """Return the channel indices that ``check_2d.py`` will analyse."""
+    """Return the channel indices that ``check_2d.py`` will analyse.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+
+    Returns:
+        list[int | None]: Collection containing the generated or selected values.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _selected_channels(image=image_array, dataset="2d_time")
+    """
     if "c" not in image.axes:
         if dataset == "2d_wga_dapi":
             raise ValueError("2d_wga_dapi requires an explicit two-channel C axis")
@@ -174,14 +276,34 @@ def _selected_channels(image: OmezarrImage, dataset: str) -> list[int | None]:
 
 
 def _selected_times(image: OmezarrImage) -> list[int | None]:
-    """Return all time indices, or one absent-axis marker."""
+    """Return all time indices, or one absent-axis marker.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+
+    Returns:
+        list[int | None]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _selected_times(image=image_array)
+    """
     if "t" not in image.axes:
         return [None]
     return list(range(_axis_size(image, "t")))
 
 
 def _check_supported_axes(image: OmezarrImage) -> list[str]:
-    """Return blocking axis-layout problems for 2D analysis."""
+    """Return blocking axis-layout problems for 2D analysis.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+
+    Returns:
+        list[str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _check_supported_axes(image=image_array)
+    """
     failures: list[str] = []
     allowed = {"t", "c", "z", "y", "x"}
     for axis, size in zip(image.axes, image.array.shape):
@@ -203,7 +325,19 @@ def _small_plane_sample(
     time_index: int | None = None,
     channel_index: int | None = None,
 ) -> np.ndarray:
-    """Read a small strided sample from one plane without loading a full image."""
+    """Read a small strided sample from one plane without loading a full image.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        time_index (int | None): Zero-based time-point index selected from a time series. ``None`` selects the function's default behavior.
+        channel_index (int | None): Zero-based index selecting channel. ``None`` selects the function's default behavior.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = _small_plane_sample(image=image_array)
+    """
     index: list[Any] = []
     for axis, size_value in zip(image.axes, image.array.shape):
         size = int(size_value)
@@ -225,7 +359,23 @@ def _check_sample_values(
     time_index: int | None,
     channel_index: int | None,
 ) -> tuple[list[str], list[str]]:
-    """Check that a representative image sample is finite and non-constant."""
+    """Check that a representative image sample is finite and non-constant.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        time_index (int | None): Zero-based time-point index selected from a time series.
+        channel_index (int | None): Zero-based index selecting channel.
+
+    Returns:
+        tuple[list[str], list[str]]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _check_sample_values(
+        ...     image=image_array,
+        ...     time_index=1,
+        ...     channel_index=1,
+        ... )
+    """
     failures: list[str] = []
     warnings: list[str] = []
     sample = _small_plane_sample(
@@ -255,7 +405,23 @@ def _plane_selections(
     time_indices: Sequence[int | None],
     channel_indices: Sequence[int | None],
 ) -> list[PlaneSelection]:
-    """Create lightweight plane descriptors for exact mask compatibility checks."""
+    """Create lightweight plane descriptors for exact mask compatibility checks.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        time_indices (Sequence[int | None]): Zero-based indices selecting time.
+        channel_indices (Sequence[int | None]): Zero-based indices selecting channel.
+
+    Returns:
+        list[PlaneSelection]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _plane_selections(
+        ...     image=image_array,
+        ...     time_indices=1,
+        ...     channel_indices=1,
+        ... )
+    """
     selections: list[PlaneSelection] = []
     for time_index, channel_index in product(time_indices, channel_indices):
         labels: list[str] = []
@@ -286,7 +452,29 @@ def _check_masks(
     time_indices: Sequence[int | None],
     channel_indices: Sequence[int | None],
 ) -> tuple[Path | None, int, int, int, list[str]]:
-    """Validate exact ``mask.tif`` compatibility for every selected plane."""
+    """Validate exact ``mask.tif`` compatibility for every selected plane.
+
+    Args:
+        image (OmezarrImage): Input image array to process.
+        mask_root (Path): Directory used for mask.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        time_indices (Sequence[int | None]): Zero-based indices selecting time.
+        channel_indices (Sequence[int | None]): Zero-based indices selecting channel.
+
+    Returns:
+        tuple[Path | None, int, int, int, list[str]]: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _check_masks(
+        ...     image=image_array,
+        ...     mask_root=Path("path/to/resource"),
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     time_indices=1,
+        ...     channel_indices=1,
+        ... )
+    """
     failures: list[str] = []
     paths: set[Path] = set()
     foreground_counts: list[int] = []
@@ -330,7 +518,25 @@ def _check_original_item(
     zarr_path: Path,
     mask_root: Path,
 ) -> InputCheckRecord:
-    """Check one original OME-Zarr sample and its exact U-Net mask."""
+    """Check one original OME-Zarr sample and its exact U-Net mask.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        zarr_path (Path): Filesystem path associated with Zarr.
+        mask_root (Path): Directory used for mask.
+
+    Returns:
+        InputCheckRecord: Result produced by the operation.
+
+    Example:
+        >>> result = _check_original_item(
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     zarr_path=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ... )
+    """
     failures: list[str] = []
     warnings: list[str] = []
     image: OmezarrImage | None = None
@@ -410,7 +616,32 @@ def _check_n2v_item(
     original_root: Path,
     mask_root: Path,
 ) -> InputCheckRecord:
-    """Check one N2V output, its raw source, and shared U-Net mask."""
+    """Check one N2V output, its raw source, and shared U-Net mask.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        sample (str): Text value specifying sample.
+        variant (str): Text value specifying variant.
+        n2v_path (Path): Filesystem path associated with Noise2Void result.
+        original_root (Path): Directory used for original.
+        mask_root (Path): Directory used for mask.
+
+    Returns:
+        InputCheckRecord: Result produced by the operation.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _check_n2v_item(
+        ...     dataset="2d_time",
+        ...     sample="sample",
+        ...     variant="variant",
+        ...     n2v_path=Path("path/to/resource"),
+        ...     original_root=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ... )
+    """
     failures: list[str] = []
     warnings: list[str] = []
     original_path = original_root / dataset / sample / "image.ome.zarr"
@@ -532,7 +763,23 @@ def _orphan_mask_records(
     mask_root: Path,
     datasets: Sequence[str],
 ) -> list[InputCheckRecord]:
-    """Return warning rows for exact masks with no matching original sample."""
+    """Return warning rows for exact masks with no matching original sample.
+
+    Args:
+        original_root (Path): Directory used for original.
+        mask_root (Path): Directory used for mask.
+        datasets (Sequence[str]): Text value specifying datasets.
+
+    Returns:
+        list[InputCheckRecord]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = _orphan_mask_records(
+        ...     original_root=Path("path/to/resource"),
+        ...     mask_root=Path("path/to/resource"),
+        ...     datasets="datasets",
+        ... )
+    """
     records: list[InputCheckRecord] = []
     for dataset in datasets:
         dataset_mask_root = mask_root / dataset
@@ -569,7 +816,15 @@ def _orphan_mask_records(
 
 
 def _write_csv(path: Path, rows: Sequence[InputCheckRecord]) -> None:
-    """Write all readiness records to CSV with a stable header."""
+    """Write all readiness records to CSV with a stable header.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (Sequence[InputCheckRecord]): Value specifying rows for the operation.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows=[])
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     names = [field.name for field in fields(InputCheckRecord)]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -579,7 +834,18 @@ def _write_csv(path: Path, rows: Sequence[InputCheckRecord]) -> None:
 
 
 def _count_status(rows: Iterable[InputCheckRecord], status: str) -> int:
-    """Count records with one status value."""
+    """Count records with one status value.
+
+    Args:
+        rows (Iterable[InputCheckRecord]): Value specifying rows for the operation.
+        status (str): Text value specifying status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> result = _count_status(rows=..., status="status")
+    """
     return sum(1 for row in rows if row.status == status)
 
 
@@ -592,7 +858,29 @@ def _write_summary(
     original_count: int,
     n2v_count: int,
 ) -> str:
-    """Write a compact human-readable readiness summary."""
+    """Write a compact human-readable readiness summary.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        mode (str): Text value specifying mode.
+        datasets (Sequence[str]): Text value specifying datasets.
+        rows (Sequence[InputCheckRecord]): Value specifying rows for the operation.
+        original_count (int): Number of original used by the operation.
+        n2v_count (int): Number of Noise2Void result used by the operation.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _write_summary(
+        ...     path=Path("path/to/resource"),
+        ...     mode="mode",
+        ...     datasets="datasets",
+        ...     rows=[],
+        ...     original_count=1,
+        ...     n2v_count=1,
+        ... )
+    """
     lines = [
         "PFT 2D analysis input readiness report",
         "=" * 78,
@@ -633,7 +921,14 @@ def _write_summary(
 
 
 def _prompt_mode() -> str:
-    """Prompt for original, N2V, or combined readiness checks."""
+    """Prompt for original, N2V, or combined readiness checks.
+
+    Returns:
+        str: Generated or resolved text value.
+
+    Example:
+        >>> result = _prompt_mode()
+    """
     print("\nSelect data to check:")
     print("   [0] Original OME-Zarr images and U-Net masks (default)")
     print("   [1] N2V outputs, original sources, and shared masks")
@@ -645,7 +940,14 @@ def _prompt_mode() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Create the command-line parser for the readiness checker."""
+    """Create the command-line parser for the readiness checker.
+
+    Returns:
+        argparse.ArgumentParser: Result produced by the operation.
+
+    Example:
+        >>> result = build_parser()
+    """
     parser = argparse.ArgumentParser(
         description="Check whether 2D original, mask, and N2V data are ready for analysis."
     )
@@ -688,7 +990,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the requested checks, save reports, and return a process exit code."""
+    """Run the requested checks, save reports, and return a process exit code.
+
+    Args:
+        argv (Sequence[str] | None): Optional command-line argument sequence. When omitted, arguments are read from ``sys.argv``. ``None`` selects the function's default behavior.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = build_parser().parse_args(argv)
     mode = args.mode or _prompt_mode()
     datasets = list(DATASETS) if args.dataset == "all" else [args.dataset]

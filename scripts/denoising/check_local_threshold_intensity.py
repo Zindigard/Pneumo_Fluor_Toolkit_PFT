@@ -1,4 +1,4 @@
-"""
+r"""
 Verify intensity preservation in saved local-threshold OME-Zarr outputs.
 
 The check compares each saved output against its source OME-Zarr image and the
@@ -14,6 +14,21 @@ unchanged pass-through copies. A plane passes only when:
 
 These conditions directly exclude percentile normalization, min-max scaling,
 dtype conversion, smoothing, or any other intensity transformation.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/check_local_threshold_intensity.py --help
+
+Representative execution:
+
+    python scripts/denoising/check_local_threshold_intensity.py \
+        --dataset 2d_time \
+        --level 0 \
+        --max-images 4 \
+        --image-name WT_HADA_NHS_40min_ROI1_SIM \
+        --high-percentile 99.2
 """
 
 from __future__ import annotations
@@ -30,7 +45,17 @@ _SCRIPT_PATH = Path(__file__).resolve()
 
 
 def _find_project_root() -> Path:
-    """Locate the repository root independently of the current directory."""
+    """Locate the repository root independently of the current directory.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _find_project_root()
+    """
     for candidate in (_SCRIPT_PATH.parent, *_SCRIPT_PATH.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -62,7 +87,15 @@ DATASETS = ("2d_time", "2d_wga_dapi")
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write validation rows as UTF-8 CSV."""
+    """Write validation rows as UTF-8 CSV.
+
+    Args:
+        path (Path): Filesystem path to the required input or output resource.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Example:
+        >>> _write_csv(path=Path("path/to/resource"), rows="rows")
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("status\nno_rows\n", encoding="utf-8")
@@ -82,7 +115,17 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _read_processing_attrs(zarr_path: Path) -> dict[str, Any]:
-    """Read the saved processing provenance when zarr is available."""
+    """Read the saved processing provenance when zarr is available.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        dict[str, Any]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _read_processing_attrs(zarr_path=Path("path/to/resource"))
+    """
     try:
         import zarr
 
@@ -101,7 +144,27 @@ def _validate_image(
     *,
     level: int,
 ) -> list[dict[str, Any]]:
-    """Validate every selected plane in one saved image."""
+    """Validate every selected plane in one saved image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        source_path (Path): Filesystem path associated with source.
+        filtered_path (Path): Filesystem path associated with filtered.
+        params (LocalThresholdParams): Value specifying params for the operation.
+        level (int): Numerical value controlling level.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _validate_image(
+        ...     dataset="2d_time",
+        ...     source_path=Path("path/to/resource"),
+        ...     filtered_path=Path("path/to/resource"),
+        ...     params=...,
+        ...     level=1,
+        ... )
+    """
     source_array, source_axes = load_ome_zarr(source_path, level=level, as_numpy=False)
     saved_array, saved_axes = load_ome_zarr(filtered_path, level=0, as_numpy=False)
     source, source_axes = _ensure_cyx(_to_numpy(source_array), source_axes)
@@ -201,7 +264,18 @@ def _validate_image(
     return rows
 
 def _summary_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Create one compact dataset-level validation summary."""
+    """Create one compact dataset-level validation summary.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        rows (list[dict[str, Any]]): Text value specifying rows.
+
+    Returns:
+        list[dict[str, Any]]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = _summary_rows(dataset="2d_time", rows="rows")
+    """
     failures = [row for row in rows if row["status"] == "FAIL"]
     return [
         {
@@ -225,7 +299,14 @@ def _summary_rows(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse saved-output validation options."""
+    """Parse saved-output validation options.
+
+    Returns:
+        argparse.Namespace: Result produced by the operation.
+
+    Example:
+        >>> result = _parse_args()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Check that saved local-threshold OME-Zarr images retain original "
@@ -259,7 +340,15 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Validate all requested saved local-threshold images and write CSV reports."""
+    """Validate all requested saved local-threshold images and write CSV reports.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     args = _parse_args()
     params = LocalThresholdParams(
         high_percentile=args.high_percentile,

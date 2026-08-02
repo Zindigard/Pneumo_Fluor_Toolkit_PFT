@@ -1,4 +1,4 @@
-"""Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
+r"""Create raw or deconvolved 2D MIPs from the configured 3D PFT stacks.
 
 Interactive mode allows selection of:
 
@@ -10,6 +10,32 @@ Interactive mode allows selection of:
 One configured source or all configured sources can be processed. The final
 quantitative product is saved as CYX ``image.ome.zarr`` and the QC figure is a
 merged-RGB comparison against the configured raw target slice.
+
+
+Examples
+--------
+Interactive selection:
+
+    python scripts/segmentation/create_mip_3d_terminal.py
+
+Create a raw unmasked MIP for one stack:
+
+    python scripts/segmentation/create_mip_3d_terminal.py \
+        --mode raw_unmasked \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --level 0 \
+        --scale-bar-um 2
+
+Create deconvolved and completely masked MIPs for the four-stack test cohort:
+
+    python scripts/segmentation/create_mip_3d_terminal.py \
+        --mode deconv_masked \
+        --test-four \
+        --scale-bar-um 2 \
+        --outside-suppression-percent 100 \
+        --iters-blue 3 \
+        --iters-green 3 \
+        --iters-red 2
 """
 
 from __future__ import annotations
@@ -25,6 +51,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -68,7 +105,20 @@ MODE_LABELS: dict[str, str] = {
 
 
 def _configured_raw_zarrs(raw_root: Path) -> list[Path]:
-    """Resolve the 29 mapped raw volumes in stable mapping order."""
+    """Resolve the 29 mapped raw volumes in stable mapping order.
+
+    Args:
+        raw_root (Path): Directory used for raw.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _configured_raw_zarrs(raw_root=Path("path/to/resource"))
+    """
     output: list[Path] = []
     for key in TARGET_SLICE_BY_VOLUME_KEY:
         path = raw_root / Path(*key.split("/")) / "image.ome.zarr"
@@ -79,6 +129,17 @@ def _configured_raw_zarrs(raw_root: Path) -> list[Path]:
 
 
 def _select_mode_interactively() -> MIPMode:
+    """Select mode interactively according to the configured criteria.
+
+    Returns:
+        MIPMode: Result produced by the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_mode_interactively()
+    """
     print("\nSelect MIP product:")
     print("  [1] Raw MIP without mask")
     print("  [2] Raw MIP followed by existing 2.5D mask")
@@ -97,6 +158,21 @@ def _select_mode_interactively() -> MIPMode:
 
 
 def _select_inputs_interactively(paths: Sequence[Path], raw_root: Path) -> list[Path]:
+    """Select inputs interactively according to the configured criteria.
+
+    Args:
+        paths (Sequence[Path]): Filesystem path used for paths.
+        raw_root (Path): Directory used for raw.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _select_inputs_interactively(paths=Path("path/to/resource"), raw_root=Path("path/to/resource"))
+    """
     print("\nProcess:")
     print("  [1] One configured image")
     print("  [2] Same four representative test images used for deconvolution")
@@ -124,6 +200,23 @@ def _select_inputs_interactively(paths: Sequence[Path], raw_root: Path) -> list[
 
 
 def _write_summary(rows: list[dict[str, str]], output_root: Path, mode: str) -> Path:
+    """Write summary to persistent storage.
+
+    Args:
+        rows (list[dict[str, str]]): Text value specifying rows.
+        output_root (Path): Directory used for output.
+        mode (str): Text value specifying mode.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_summary(
+        ...     rows="rows",
+        ...     output_root=Path("path/to/resource"),
+        ...     mode="mode",
+        ... )
+    """
     output_root.mkdir(parents=True, exist_ok=True)
     path = output_root / f"mip_{mode}_summary.csv"
     fieldnames = [
@@ -152,6 +245,14 @@ def _write_summary(rows: list[dict[str, str]], output_root: Path, mode: str) -> 
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Create a 40-plane 2D MIP from raw or selected BW-deconvolved 3D "

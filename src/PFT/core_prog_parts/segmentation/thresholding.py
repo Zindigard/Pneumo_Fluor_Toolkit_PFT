@@ -1,3 +1,5 @@
+"""Provide command-line and programmatic utilities for thresholding."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,7 +27,17 @@ except Exception:
 
 
 def build_base_intensity(img: np.ndarray) -> np.ndarray:
-    """Create a normalized intensity image used for thresholding."""
+    """Create a normalized intensity image used for thresholding.
+
+    Args:
+        img (np.ndarray): Array containing img.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = build_base_intensity(img=image_array)
+    """
     return norm01_percentile(img)
 
 
@@ -34,7 +46,19 @@ def classify_base_intensity(
     t_low: float = 0.33,
     t_high: float = 0.66,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Split pixels into low, mid, and high intensity groups."""
+    """Split pixels into low, mid, and high intensity groups.
+
+    Args:
+        base_n (np.ndarray): Array containing base n.
+        t_low (float): Numerical value controlling t low. Defaults to ``0.33``.
+        t_high (float): Numerical value controlling t high. Defaults to ``0.66``.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = classify_base_intensity(base_n=image_array)
+    """
     low_mask = base_n < t_low
     mid_mask = (base_n >= t_low) & (base_n < t_high)
     high_mask = base_n >= t_high
@@ -42,7 +66,18 @@ def classify_base_intensity(
 
 
 def dilate_mask(mask: np.ndarray, size: int = 1) -> np.ndarray:
-    """Expand a mask slightly to keep nearby pixels together."""
+    """Expand a mask slightly to keep nearby pixels together.
+
+    Args:
+        mask (np.ndarray): Binary or labeled segmentation mask associated with the input image.
+        size (int): Requested size or size constraint for the operation. Defaults to ``1``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = dilate_mask(mask=image_array)
+    """
     if size <= 1:
         return mask.copy()
 
@@ -64,7 +99,23 @@ def high_band_weights(
     high_mask: np.ndarray,
     t_high: float,
 ) -> np.ndarray:
-    """Assign stronger weights to the brightest pixels."""
+    """Assign stronger weights to the brightest pixels.
+
+    Args:
+        base_n (np.ndarray): Array containing base n.
+        high_mask (np.ndarray): Array containing high mask.
+        t_high (float): Numerical value controlling t high.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = high_band_weights(
+        ...     base_n=image_array,
+        ...     high_mask=image_array,
+        ...     t_high=0.5,
+        ... )
+    """
     weights = np.zeros_like(base_n, dtype=np.float32)
     if not np.any(high_mask):
         return weights
@@ -91,7 +142,29 @@ def apply_threshold_filter_single(
     t_high: float = 0.66,
     mid_over_low_factor: float = 1.0,
 ) -> tuple[np.ndarray, dict]:
-    """Apply thresholding rules to one image plane."""
+    """Apply thresholding rules to one image plane.
+
+    Args:
+        raw_img (np.ndarray): Array containing raw img.
+        base_n (np.ndarray): Array containing base n.
+        image_name (str): Text value specifying image name.
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        kernel_size (int): Size parameter controlling kernel. Defaults to ``1``.
+        t_low (float): Numerical value controlling t low. Defaults to ``0.33``.
+        t_high (float): Numerical value controlling t high. Defaults to ``0.66``.
+        mid_over_low_factor (float): Numerical value controlling mid over low factor. Defaults to ``1.0``.
+
+    Returns:
+        tuple[np.ndarray, dict]: Mapping containing the generated or resolved values.
+
+    Example:
+        >>> result = apply_threshold_filter_single(
+        ...     raw_img=image_array,
+        ...     base_n=image_array,
+        ...     image_name="image_name",
+        ...     dataset="2d_time",
+        ... )
+    """
     name_l = image_name.lower()
     is_120min = "120min" in name_l
 
@@ -195,7 +268,17 @@ def apply_threshold_filter_single(
 
 
 def extract_all_channels_and_axes(zarr_path: Path) -> tuple[np.ndarray, str]:
-    """Load one OME-Zarr image and return data with axes."""
+    """Load one OME-Zarr image and return data with axes.
+
+    Args:
+        zarr_path (Path): Filesystem path associated with Zarr.
+
+    Returns:
+        tuple[np.ndarray, str]: Collection containing the generated or selected values.
+
+    Example:
+        >>> result = extract_all_channels_and_axes(zarr_path=Path("path/to/resource"))
+    """
     arr, axes = load_ome_zarr(zarr_path, level=0, as_numpy=False)
     x = _to_numpy(arr)
     x, axes = _ensure_cyx(x, axes)
@@ -203,7 +286,23 @@ def extract_all_channels_and_axes(zarr_path: Path) -> tuple[np.ndarray, str]:
 
 
 def make_rgb_raw(dataset: str, x: np.ndarray, axes: str) -> np.ndarray:
-    """Build an RGB image using raw intensity scaling."""
+    """Build an RGB image using raw intensity scaling.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = make_rgb_raw(
+        ...     dataset="2d_time",
+        ...     x=image_array,
+        ...     axes="axes",
+        ... )
+    """
     if "c" in axes:
         c_i = axes.index("c")
         blue = np.take(x, indices=0, axis=c_i)
@@ -230,7 +329,23 @@ def make_rgb_raw(dataset: str, x: np.ndarray, axes: str) -> np.ndarray:
 
 
 def make_rgb_norm(dataset: str, x: np.ndarray, axes: str) -> np.ndarray:
-    """Build an RGB image using display normalization."""
+    """Build an RGB image using display normalization.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        x (np.ndarray): Horizontal coordinate or numerical input value used by the operation.
+        axes (str): Axis specification describing the dimensional order of the image data.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = make_rgb_norm(
+        ...     dataset="2d_time",
+        ...     x=image_array,
+        ...     axes="axes",
+        ... )
+    """
     if "c" in axes:
         c_i = axes.index("c")
         blue = np.take(x, indices=0, axis=c_i)
@@ -266,7 +381,33 @@ def save_thresholded_image(
     mid_over_low_factor: float,
     overwrite: bool = False,
 ) -> Path:
-    """Create and save thresholded outputs for one image."""
+    """Create and save thresholded outputs for one image.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        in_path (Path): Filesystem path associated with in.
+        kernel_size (int): Size parameter controlling kernel.
+        t_low (float): Numerical value controlling t low.
+        t_high (float): Numerical value controlling t high.
+        mid_over_low_factor (float): Numerical value controlling mid over low factor.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``False``.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = save_thresholded_image(
+        ...     dataset="2d_time",
+        ...     in_path=Path("path/to/resource"),
+        ...     kernel_size=1,
+        ...     t_low=0.5,
+        ...     t_high=0.5,
+        ...     mid_over_low_factor=0.5,
+        ... )
+    """
     stem = in_path.parent.name
     out_dir = filtered_img_root() / dataset / stem
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -390,7 +531,31 @@ def prepare_thresholded_dataset(
     mid_over_low_factor: float,
     overwrite: bool = False,
 ) -> list[Path]:
-    """Create thresholded cached images for a dataset when needed."""
+    """Create thresholded cached images for a dataset when needed.
+
+    Args:
+        dataset (str): Dataset identifier that selects the supported acquisition and processing workflow, for example ``"2d_time"`` or ``"3d_data"``.
+        kernel_size (int): Size parameter controlling kernel.
+        t_low (float): Numerical value controlling t low.
+        t_high (float): Numerical value controlling t high.
+        mid_over_low_factor (float): Numerical value controlling mid over low factor.
+        overwrite (bool): Whether an existing output may be replaced. Defaults to ``False``.
+
+    Returns:
+        list[Path]: Resolved or generated filesystem path.
+
+    Raises:
+        SystemExit: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = prepare_thresholded_dataset(
+        ...     dataset="2d_time",
+        ...     kernel_size=1,
+        ...     t_low=0.5,
+        ...     t_high=0.5,
+        ...     mid_over_low_factor=0.5,
+        ... )
+    """
     src_zarrs = list_omezarr_images(dataset)
     if not src_zarrs:
         raise SystemExit(f"No source OME-Zarr images found for dataset={dataset}")

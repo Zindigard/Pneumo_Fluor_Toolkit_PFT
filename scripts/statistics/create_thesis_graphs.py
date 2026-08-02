@@ -1,3 +1,12 @@
+r"""Provide command-line and programmatic utilities for create thesis graphs.
+
+Examples
+--------
+Generate the thesis graphs using the paths configured in the script:
+
+    python scripts/statistics/create_thesis_graphs.py
+"""
+
 # Configure imports for direct execution from the repository source tree.
 import sys as _pft_sys
 from pathlib import Path as _PFTPath
@@ -11,6 +20,18 @@ def _pft_project_root(start: _PFTPath | None = None) -> _PFTPath:
     The lookup is based on this script's physical location and therefore does
     not depend on the current working directory. An explicit error is raised
     when the expected repository layout cannot be found.
+
+    Args:
+        start (_PFTPath | None): Filesystem path used for start. ``None`` selects the function's default behavior.
+
+    Returns:
+        _PFTPath: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _pft_project_root()
     """
     current = (start or _PFT_SCRIPT_FILE).resolve()
     search_start = current if current.is_dir() else current.parent
@@ -43,8 +64,16 @@ import pandas as pd
 
 
 def find_project_root(start_path: Path | None = None) -> Path:
-    """
-    Find project root independently of computer-specific path.
+    """Find project root independently of computer-specific path.
+
+    Args:
+        start_path (Path | None): Filesystem path associated with start. ``None`` selects the function's default behavior.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = find_project_root()
     """
     if start_path is None:
         start_path = Path(__file__).resolve()
@@ -68,6 +97,11 @@ DARK_BLUE = "#0B2C6B"
 
 
 def setup_thesis_style() -> None:
+    """Return setup thesis style for the supplied inputs.
+
+    Example:
+        >>> setup_thesis_style()
+    """
     plt.rcParams.update({
         "font.family": "sans-serif",
         "font.size": 11,
@@ -85,6 +119,20 @@ def setup_thesis_style() -> None:
 
 def save_figure(fig, output_dir: Path, filename_stem: str) -> None:
  
+    """Save figure to persistent storage.
+
+    Args:
+        fig (Any): Matplotlib figure object containing the generated visualization.
+        output_dir (Path): Directory where generated resources are written.
+        filename_stem (str): Text value specifying filename stem.
+
+    Example:
+        >>> save_figure(
+        ...     fig=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     filename_stem="filename_stem",
+        ... )
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     png_path = output_dir / f"{filename_stem}.png"
@@ -104,12 +152,37 @@ def save_figure_and_collect(
     figure_collection: list,
 ) -> None:
     
+    """Save figure and collect to persistent storage.
+
+    Args:
+        fig (Any): Matplotlib figure object containing the generated visualization.
+        output_dir (Path): Directory where generated resources are written.
+        filename_stem (str): Text value specifying filename stem.
+        figure_collection (list): Value specifying figure collection for the operation.
+
+    Example:
+        >>> save_figure_and_collect(
+        ...     fig=...,
+        ...     output_dir=Path("path/to/resource"),
+        ...     filename_stem="filename_stem",
+        ...     figure_collection=[],
+        ... )
+    """
     save_figure(fig, output_dir, filename_stem)
     figure_collection.append(fig)
 
 
 def save_combined_pdf(figures: list, output_pdf_path: Path) -> None:
   
+    """Save combined pdf to persistent storage.
+
+    Args:
+        figures (list): Value specifying figures for the operation.
+        output_pdf_path (Path): Filesystem path associated with output pdf.
+
+    Example:
+        >>> save_combined_pdf(figures=[], output_pdf_path=Path("path/to/resource"))
+    """
     output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not figures:
@@ -124,9 +197,16 @@ def save_combined_pdf(figures: list, output_pdf_path: Path) -> None:
 
 
 def require_csv(csv_path: Path) -> None:
-    """
-    This script does not create CSV files.
-    It only reads already existing CSV files.
+    """This script does not create CSV files. It only reads already existing CSV files.
+
+    Args:
+        csv_path (Path): Filesystem path associated with CSV data.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> require_csv(csv_path=Path("path/to/resource"))
     """
     if not csv_path.exists():
         raise FileNotFoundError(
@@ -138,6 +218,17 @@ def require_csv(csv_path: Path) -> None:
 
 
 def load_csv(csv_filename: str) -> pd.DataFrame:
+    """Load CSV data from persistent storage.
+
+    Args:
+        csv_filename (str): Filesystem path associated with CSV data.
+
+    Returns:
+        pd.DataFrame: Result produced by the operation.
+
+    Example:
+        >>> result = load_csv(csv_filename="csv_filename")
+    """
     csv_path = GRAPH_FILES_DIR / csv_filename
     require_csv(csv_path)
     return pd.read_csv(csv_path)
@@ -152,6 +243,27 @@ def scatter_small_dots(
     dot_size: float = 7,
 ) -> np.ndarray:
  
+    """Return scatter small dots for the supplied inputs.
+
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        x_position (float): Numerical value controlling x position.
+        values (np.ndarray): Array containing values.
+        rng (np.random.Generator): Random-number generator used for reproducible sampling or augmentation.
+        jitter_width (float): Numerical value controlling jitter width. Defaults to ``0.060``.
+        dot_size (float): Size parameter controlling dot. Defaults to ``7``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = scatter_small_dots(
+        ...     ax=...,
+        ...     x_position=0.5,
+        ...     values=image_array,
+        ...     rng=...,
+        ... )
+    """
     values = np.asarray(values, dtype=float)
 
     x = np.full(len(values), x_position, dtype=float)
@@ -180,6 +292,29 @@ def scatter_small_dots_with_errorbars(
     dot_size: float = 7,
 ) -> np.ndarray:
   
+    """Return scatter small dots with errorbars for the supplied inputs.
+
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        x_position (float): Numerical value controlling x position.
+        values (np.ndarray): Array containing values.
+        errors (np.ndarray): Array containing errors.
+        rng (np.random.Generator): Random-number generator used for reproducible sampling or augmentation.
+        jitter_width (float): Numerical value controlling jitter width. Defaults to ``0.060``.
+        dot_size (float): Size parameter controlling dot. Defaults to ``7``.
+
+    Returns:
+        np.ndarray: Array containing the processed result.
+
+    Example:
+        >>> result = scatter_small_dots_with_errorbars(
+        ...     ax=...,
+        ...     x_position=0.5,
+        ...     values=image_array,
+        ...     errors=image_array,
+        ...     rng=...,
+        ... )
+    """
     values = np.asarray(values, dtype=float)
     errors = np.asarray(errors, dtype=float)
 
@@ -212,9 +347,22 @@ def draw_single_boxplot_light(
     width: float,
     patch_alpha: float = 0.10,
 ) -> None:
-    """
-    Draw one boxplot with thin, light whiskers and caps.
+    """Draw one boxplot with thin, light whiskers and caps.
 
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        values (np.ndarray): Array containing values.
+        position (float): Numerical value controlling position.
+        width (float): Numerical value controlling width.
+        patch_alpha (float): Numerical value controlling patch alpha. Defaults to ``0.10``.
+
+    Example:
+        >>> draw_single_boxplot_light(
+        ...     ax=...,
+        ...     values=image_array,
+        ...     position=0.5,
+        ...     width=0.5,
+        ... )
     """
     values = np.asarray(values, dtype=float)
 
@@ -266,9 +414,34 @@ def draw_two_group_boxplot(
     ylim: tuple[float, float] | None = None,
     dot_size: float = 7,
 ) -> None:
-    """
-    Two-column boxplot.
+    """Two-column boxplot.
 
+    Args:
+        ax (Any): Matplotlib axes object on which graphical elements are drawn.
+        before_values (np.ndarray): Array containing before values.
+        after_values (np.ndarray): Array containing after values.
+        before_errors (np.ndarray | None): Array containing before errors.
+        after_errors (np.ndarray | None): Array containing after errors.
+        ylabel (str): Text value specifying ylabel.
+        title (str): Title displayed on the generated figure or report section.
+        connect_points (bool): Boolean flag controlling connect points. Defaults to ``False``.
+        show_sample_errorbars (bool): Boolean flag controlling show sample errorbars. Defaults to ``False``.
+        ylim (tuple[float, float] | None): Numerical value controlling ylim. ``None`` selects the function's default behavior.
+        dot_size (float): Size parameter controlling dot. Defaults to ``7``.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> draw_two_group_boxplot(
+        ...     ax=...,
+        ...     before_values=image_array,
+        ...     after_values=image_array,
+        ...     before_errors=image_array,
+        ...     after_errors=image_array,
+        ...     ylabel="ylabel",
+        ...     title="title",
+        ... )
     """
     before_values = np.asarray(before_values, dtype=float)
     after_values = np.asarray(after_values, dtype=float)
@@ -370,9 +543,26 @@ def plot_2d_1channel_grouped_before_after_from_csv(
     connect_points: bool = False,
     show_sample_errorbars: bool = False,
 ) -> None:
-    """
-    2D timelapse / single-channel SNR graph.
+    """2D timelapse / single-channel SNR graph.
 
+    Args:
+        csv_filename (str): Filesystem path associated with CSV data.
+        title (str): Title displayed on the generated figure or report section.
+        filename_stem (str): Text value specifying filename stem.
+        figure_collection (list): Value specifying figure collection for the operation.
+        connect_points (bool): Boolean flag controlling connect points. Defaults to ``False``.
+        show_sample_errorbars (bool): Boolean flag controlling show sample errorbars. Defaults to ``False``.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> plot_2d_1channel_grouped_before_after_from_csv(
+        ...     csv_filename="csv_filename",
+        ...     title="title",
+        ...     filename_stem="filename_stem",
+        ...     figure_collection=[],
+        ... )
     """
     df = load_csv(csv_filename)
 
@@ -578,11 +768,31 @@ def plot_snr_boxplot_from_csv(
     ylim: tuple[float, float] | None = None,
     dot_size: float = 7,
 ) -> None:
-    """
-    Generic SNR boxplot.
+    """Generic SNR boxplot.
 
     Required CSV columns:
 
+    Args:
+        csv_filename (str): Filesystem path associated with CSV data.
+        title (str): Title displayed on the generated figure or report section.
+        filename_stem (str): Text value specifying filename stem.
+        figure_collection (list): Value specifying figure collection for the operation.
+        connect_points (bool): Boolean flag controlling connect points.
+        show_sample_errorbars (bool): Boolean flag controlling show sample errorbars. Defaults to ``False``.
+        ylim (tuple[float, float] | None): Numerical value controlling ylim. ``None`` selects the function's default behavior.
+        dot_size (float): Size parameter controlling dot. Defaults to ``7``.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> plot_snr_boxplot_from_csv(
+        ...     csv_filename="csv_filename",
+        ...     title="title",
+        ...     filename_stem="filename_stem",
+        ...     figure_collection=[],
+        ...     connect_points=True,
+        ... )
     """
     df = load_csv(csv_filename)
 
@@ -629,9 +839,26 @@ def plot_iou_boxplot_from_csv(
     show_sample_errorbars: bool = False,
     ylim: tuple[float, float] = (0.48, 0.88),
 ) -> None:
-    """
-    IoU distribution graph.
+    """IoU distribution graph.
 
+    Args:
+        csv_filename (str): Filesystem path associated with CSV data.
+        title (str): Title displayed on the generated figure or report section.
+        filename_stem (str): Text value specifying filename stem.
+        figure_collection (list): Value specifying figure collection for the operation.
+        show_sample_errorbars (bool): Boolean flag controlling show sample errorbars. Defaults to ``False``.
+        ylim (tuple[float, float]): Numerical value controlling ylim. Defaults to ``(0.48, 0.88)``.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> plot_iou_boxplot_from_csv(
+        ...     csv_filename="csv_filename",
+        ...     title="title",
+        ...     filename_stem="filename_stem",
+        ...     figure_collection=[],
+        ... )
     """
     df = load_csv(csv_filename)
 
@@ -703,10 +930,26 @@ def plot_cellpose_finetuning_from_csv(
     filename_stem: str,
     figure_collection: list,
 ) -> None:
-    """
-    Cellpose fine-tuning remains an epoch-based line graph.
+    """Cellpose fine-tuning remains an epoch-based line graph.
 
     Required CSV columns:
+
+    Args:
+        csv_filename (str): Filesystem path associated with CSV data.
+        title (str): Title displayed on the generated figure or report section.
+        filename_stem (str): Text value specifying filename stem.
+        figure_collection (list): Value specifying figure collection for the operation.
+
+    Raises:
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> plot_cellpose_finetuning_from_csv(
+        ...     csv_filename="csv_filename",
+        ...     title="title",
+        ...     filename_stem="filename_stem",
+        ...     figure_collection=[],
+        ... )
     """
     df = load_csv(csv_filename)
 
@@ -750,6 +993,11 @@ def plot_cellpose_finetuning_from_csv(
 
 
 def main() -> None:
+    """Execute the command-line workflow and return its process exit status.
+
+    Example:
+        >>> exit_code = main()
+    """
     setup_thesis_style()
 
     created_figures = []

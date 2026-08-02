@@ -1,10 +1,24 @@
-"""Run validated 3D Richardson-Lucy deconvolution without Fiji.
+r"""Run validated 3D Richardson-Lucy deconvolution without Fiji.
 
 With no ``--zarr`` argument, the script processes the fixed four-stack test
 cohort, containing one source OME-Zarr from each acquisition directory. Each
 stack uses its configured target slice for QC. The QC output contains raw
 before/after and independently normalized before/after views for the merged RGB
 image and all three wavelength-mapped channels; no difference image is saved.
+
+Examples
+--------
+Show all command-line parameters:
+
+    python scripts/denoising/deconvolve_3d_v2.py --help
+
+Representative execution:
+
+    python scripts/denoising/deconvolve_3d_v2.py \
+        --model BW \
+        --zarr results/img/3d_data/20220218_dynamic/DpspA_THY_HADA_NADA_TADA_40min_ROI1_SIM/image.ome.zarr \
+        --root-3d results/img/3d_data \
+        --level 0
 """
 
 from __future__ import annotations
@@ -19,6 +33,17 @@ SCRIPT_FILE = Path(__file__).resolve()
 
 
 def _project_root() -> Path:
+    """Return project root for the supplied inputs.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Raises:
+        RuntimeError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> result = _project_root()
+    """
     for candidate in (SCRIPT_FILE.parent, *SCRIPT_FILE.parents):
         if (candidate / "scripts").is_dir() and (candidate / "src" / "PFT").is_dir():
             return candidate
@@ -40,6 +65,18 @@ from PFT.core_prog_parts.denoising.validation_3d import (  # noqa: E402
 
 
 def _write_batch_summary(rows: list[dict[str, str]], out_root: Path) -> Path:
+    """Write batch summary to persistent storage.
+
+    Args:
+        rows (list[dict[str, str]]): Text value specifying rows.
+        out_root (Path): Directory used for out.
+
+    Returns:
+        Path: Resolved or generated filesystem path.
+
+    Example:
+        >>> result = _write_batch_summary(rows="rows", out_root=Path("path/to/resource"))
+    """
     out_root.mkdir(parents=True, exist_ok=True)
     path = out_root / "deconvolution_four_stack_test_summary.csv"
     fieldnames = [
@@ -61,6 +98,18 @@ def _write_batch_summary(rows: list[dict[str, str]], out_root: Path) -> Path:
 
 
 def main() -> int:
+    """Execute the command-line workflow and return its process exit status.
+
+    Returns:
+        int: Computed numerical result.
+
+    Raises:
+        FileNotFoundError: If the supplied inputs or runtime state violate the function's requirements.
+        ValueError: If the supplied inputs or runtime state violate the function's requirements.
+
+    Example:
+        >>> exit_code = main()
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Run raw-intensity-preserving 3D Richardson-Lucy deconvolution. "

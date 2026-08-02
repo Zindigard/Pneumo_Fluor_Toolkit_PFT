@@ -1,0 +1,361 @@
+PNEUMO-FLUOR TOOLKIT (PFT): ENVIRONMENT SETUP
+================================================================================
+Document version: 2026-08-02
+Platform used for the tested commands: Windows 10/11, PowerShell, NVIDIA GPU
+
+PFT uses isolated Python environments because the segmentation frameworks do not
+share one fully compatible dependency stack.
+
+Recommended environments:
+
+1. pft
+   Main toolkit environment.
+   Includes Cellpose 3 through pyproject.toml.
+   Used for CZI/OME-Zarr processing, filtering, deconvolution, statistics,
+   Cellpose, and the standard project utilities.
+
+2. pft_stardist
+   Dedicated TensorFlow 2.10.1 and StarDist 0.9.2 environment.
+   This separation protects the tested NumPy, TensorFlow, CSBDeep, Zarr, and
+   scikit-image versions.
+
+3. pft_omni
+   Dedicated Omnipose 1.1.4 and CUDA-enabled PyTorch environment.
+   This separation protects the cellpose_omni, AICSImageIO, Dask, Zarr, fsspec,
+   urllib3, and CUDA NVRTC compatibility requirements.
+
+Do not install all three framework stacks into one environment.
+
+
+PREREQUISITES
+
+Required:
+- Miniconda or Anaconda
+- Git
+- Windows PowerShell
+- NVIDIA driver for GPU execution
+- Local PFT repository
+
+Project location used in the examples:
+
+C:\Users\ra18qyqu\PycharmProjects\Pneumo_Fluor_Toolkit_PFT
+
+Set the project variable:
+
+$PROJECT = "C:\Users\ra18qyqu\PycharmProjects\Pneumo_Fluor_Toolkit_PFT"
+Set-Location -LiteralPath $PROJECT
+
+
+MAIN PFT ENVIRONMENT: CELLPOSE AND STANDARD PIPELINE
+
+Cellpose is the primary instance-segmentation framework and is therefore a
+normal dependency in pyproject.toml.
+
+conda create --name pft python=3.10.12 --yes
+conda activate pft
+
+python -m pip install --upgrade pip setuptools wheel
+
+conda install `
+    pytorch=2.5.1 `
+    torchvision=0.20.1 `
+    pytorch-cuda=11.8 `
+    -c pytorch `
+    -c nvidia `
+    --yes
+
+Install the project in editable mode
+Standard project plus Cellpose:
+
+python -m pip install -e .
+Add the TensorFlow U-Net stack:
+python -m pip install -e ".[unet]"
+Add BM3D and napari when required:
+python -m pip install -e ".[bm3d,napari]"
+Development tools:
+python -m pip install -e ".[dev]"
+
+Check the installation
+--------------------------------------------------------------------------------
+python -m pip check
+python scripts\check_project_imports.py
+
+@'
+import sys
+from importlib.metadata import version
+
+import numpy
+import torch
+import cellpose
+
+print("Executable:", sys.executable)
+print("Python:", sys.version)
+print("NumPy:", numpy.__version__)
+print("PyTorch:", torch.__version__)
+print("Cellpose:", version("cellpose"))
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+print("Main PFT environment check: PASS")
+'@ | python -
+
+
+STARDIST ENVIRONMENT
+================================================================================
+Principal versions:
+- Python 3.10
+- TensorFlow 2.10.1
+- Keras 2.10.0
+- StarDist 0.9.2
+- CSBDeep 0.8.2
+- NumPy 1.23.5
+- SciPy 1.10.1
+- scikit-image 0.21.0
+- Zarr 2.16.1
+- numcodecs 0.11.0
+- Dask and Distributed 2023.12.1
+
+Create the environment
+
+conda create --name pft_stardist python=3.10.20 --yes
+conda activate pft_stardist
+
+python -m pip install --upgrade pip setuptools wheel
+
+conda install `
+    cudatoolkit=11.2 `
+    cudnn=8.1 `
+    -c conda-forge `
+    --yes
+python -m pip install `
+    "numpy==1.23.5" `
+    "scipy==1.10.1" `
+    "scikit-image==0.21.0" `
+    "tensorflow==2.10.1" `
+    "keras==2.10.0" `
+    "protobuf<3.20" `
+    "csbdeep==0.8.2" `
+    "stardist==0.9.2" `
+    "ome-zarr==0.9.0" `
+    "zarr==2.16.1" `
+    "numcodecs==0.11.0" `
+    "dask[array]==2023.12.1" `
+    "distributed==2023.12.1" `
+    tifffile `
+    pillow `
+    matplotlib `
+    pandas
+
+Install only the PFT source code into this specialized environment:
+
+python -m pip install -e . --no-deps
+
+Check StarDist and TensorFlow
+--------------------------------------------------------------------------------
+python -m pip check
+
+@'
+import sys
+from importlib.metadata import version
+
+import numpy
+import tensorflow as tf
+import csbdeep
+import stardist
+
+print("Executable:", sys.executable)
+print("Python:", sys.version)
+print("NumPy:", numpy.__version__)
+print("TensorFlow:", tf.__version__)
+print("Keras:", version("keras"))
+print("CSBDeep:", version("csbdeep"))
+print("StarDist:", version("stardist"))
+print("TensorFlow GPUs:", tf.config.list_physical_devices("GPU"))
+print("StarDist environment check: PASS")
+'@ | python -
+
+
+OMNIPOSE ENVIRONMENT
+================================================================================
+Tested principal versions:
+- Python 3.10.12
+- PyTorch 2.5.1
+- CUDA runtime 11.8
+- Omnipose 1.1.4
+- NumPy 1.26.4
+- OME-Zarr 0.9.0
+- Zarr 2.15.0
+- Dask and Distributed 2024.4.1
+- fsspec and s3fs 2023.6.0
+- urllib3 1.26.20
+
+Create the CUDA-enabled environment
+
+conda create `
+    --name pft_omni `
+    python=3.10.12 `
+    pytorch=2.5.1 `
+    torchvision=0.20.1 `
+    pytorch-cuda=11.8 `
+    -c pytorch `
+    -c nvidia `
+    --yes
+
+conda activate pft_omni
+
+conda install `
+    --name pft_omni `
+    --channel nvidia `
+    "cuda-nvrtc=11.8.*" `
+    --yes
+
+python -m pip install --upgrade pip setuptools wheel
+
+Install the compatible versions together. Do not subsequently run an unrestricted
+pip install --upgrade command in this environment.
+
+python -m pip install `
+    "numpy==1.26.4" `
+    "omnipose==1.1.4" `
+    "aicsimageio==4.14.0" `
+    "dask-image==2026.5.0" `
+    "ome-zarr==0.9.0" `
+    "zarr==2.15.0" `
+    "numcodecs==0.11.0" `
+    "dask[array]==2024.4.1" `
+    "distributed==2024.4.1" `
+    "fsspec==2023.6.0" `
+    "s3fs==2023.6.0" `
+    "urllib3==1.26.20" `
+    tifffile `
+    pillow `
+    matplotlib `
+    pandas `
+    scikit-image
+
+Install only the PFT source code into this specialized environment:
+
+python -m pip install -e . --no-deps
+
+Configure the CUDA DLL path in PowerShell(original problem with instalation with example how to fix)
+
+When Python is executed through its absolute path rather than conda activate,
+the environment's bin directory must be added explicitly.
+
+$OMNI_ENV = "C:\Users\ra18qyqu\.conda\envs\pft_omni"
+$PY_OMNI = Join-Path $OMNI_ENV "python.exe"
+
+$env:PATH = @(
+    (Join-Path $OMNI_ENV "bin")
+    (Join-Path $OMNI_ENV "Library\bin")
+    (Join-Path $OMNI_ENV "Scripts")
+    $OMNI_ENV
+    $env:PATH
+) -join ";"
+
+$env:CUDA_PATH = $OMNI_ENV
+$env:CUDA_PATH_V11_8 = $OMNI_ENV
+
+Check the NVRTC built-ins library:
+
+where.exe nvrtc-builtins64_118.dll
+
+Expected location:
+
+C:\Users\ra18qyqu\.conda\envs\pft_omni\bin\nvrtc-builtins64_118.dll
+
+python -m pip check
+
+@'
+import sys
+from importlib.metadata import version
+
+import numpy
+import torch
+import omnipose
+import cellpose_omni
+
+print("Executable:", sys.executable)
+print("Python:", sys.version)
+print("NumPy:", numpy.__version__)
+print("PyTorch:", torch.__version__)
+print("Omnipose:", version("omnipose"))
+print("CUDA available:", torch.cuda.is_available())
+print("CUDA runtime:", torch.version.cuda)
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+print("Omnipose environment check: PASS")
+'@ | python -
+
+
+CHECKING, ACTIVATING, AND CHANGING ENVIRONMENTS
+================================================================================
+E1. List all environments
+conda env list
+
+or:
+
+conda info --envs
+
+Main PFT and Cellpose:
+
+conda activate pft
+
+StarDist:
+
+conda activate pft_stardist
+
+Omnipose:
+
+conda activate pft_omni
+
+
+Interpreter
+--------------------------------------------------------------------------------
+where.exe python
+python --version
+
+@'
+import sys
+print(sys.executable)
+print(sys.version)
+'@ | python -
+
+If problem with activationg env
+This is the most reliable method when PowerShell activation is unavailable.
+
+$PY_PFT = "C:\Users\ra18qyqu\.conda\envs\pft\python.exe"
+$PY_SD = "C:\Users\ra18qyqu\.conda\envs\pft_stardist\python.exe"
+$PY_OMNI = "C:\Users\ra18qyqu\.conda\envs\pft_omni\python.exe"
+
+Examples:
+
+& $PY_PFT scripts\segmentation\run_cellpose_terminal.py --help
+& $PY_SD scripts\segmentation\run_stardist_terminal.py --help
+& $PY_OMNI scripts\segmentation\run_omnipose_terminal.py --help
+
+
+Env used for
+================================================================================
+Use pft:
+- CZI reading and OME-Zarr creation
+- OME-Zarr validation
+- filtering and deconvolution
+- standard visualizations
+- Cellpose training, inference, screening, and validation
+- quantitative analysis, graphs, and statistics
+- napari integration
+- U-Net CPU execution or the locally configured TensorFlow runtime
+
+Use pft_stardist:
+- StarDist pretrained-model screening
+- StarDist fine-tuning
+- StarDist inference and validation
+- TensorFlow GPU execution on native Windows
+
+Use pft_omni:
+- Omnipose pretrained-model screening
+- Omnipose fine-tuning
+- Omnipose inference and validation
+
+
